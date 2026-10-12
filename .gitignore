@@ -2,3 +2,4 @@
 *.pem
 motion-licenca-privada*
 node_modules/
+.ai/respostas/
