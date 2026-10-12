@@ -1093,7 +1093,12 @@ function renderTimeline() {
   const muteOff = '<svg viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>';
   const depth = L => { let d = 0, c = L; while (c.parent && d < 6) { c = byId(c.parent); if (!c) break; d++; } return d; };
   $('#tlRows').innerHTML = p.layers.map(L => {
-    const kfs = kfTimes(L).map(t => `<button class="kf${S.selKf && S.selKf.id === L.id && Math.abs(S.selKf.t - t) < 1e-4 ? ' sel' : ''}" data-kf-t="${t}" style="left:${tx(t)}px" aria-label="Keyframe em ${t.toFixed(2)}s"></button>`).join('');
+    // keyframes gerados por código viram uma faixa única; os losangos ficam só para os feitos à mão
+    const codeSet = new Set(L.codeKf || []);
+    const handTimes = [...new Set(Object.entries(L.kf).filter(([prop]) => !codeSet.has(prop)).flatMap(([, ks]) => ks.map(k => round(k.t, 4))))].sort((a, b) => a - b);
+    const codeTimes = [...codeSet].flatMap(prop => (L.kf[prop] || []).map(k => k.t));
+    const codeSpan = codeTimes.length ? `<div class="code-span" title="Animado por código" style="left:${tx(Math.min(...codeTimes))}px;width:${Math.max(4, (Math.max(...codeTimes) - Math.min(...codeTimes)) * S.pps)}px"></div>` : '';
+    const kfs = codeSpan + handTimes.map(t => `<button class="kf${S.selKf && S.selKf.id === L.id && Math.abs(S.selKf.t - t) < 1e-4 ? ' sel' : ''}" data-kf-t="${t}" style="left:${tx(t)}px" aria-label="Keyframe em ${t.toFixed(2)}s"></button>`).join('');
     const d = depth(L);
     const tag = L.s.clip ? '<span class="tag" title="Recortada na camada de baixo">↳</span>' : '';
     const muteBtn = MEDIA(L.type) ? `<button class="mute${L.s.muted ? ' is-muted' : ''}" data-mute aria-label="${L.s.muted ? 'Ativar som' : 'Desativar som'}">${L.s.muted ? muteOn : muteOff}</button>` : '';
@@ -1425,7 +1430,8 @@ function layerPanel(L) {
   const look = visual && L.type !== 'group';
 
   return `
-  <div class="sec"><div class="panel-title"><i class="type-dot ${L.type}"></i><input class="field" id="layer-name" data-name value="${esc(L.name)}" aria-label="Nome da camada"></div></div>
+  <div class="sec"><div class="panel-title"><i class="type-dot ${L.type}"></i><input class="field" id="layer-name" data-name value="${esc(L.name)}" aria-label="Nome da camada"></div>
+    ${L.codeKf && L.codeKf.length ? `<p class="hint code-note">${L.fromCode ? 'Criada' : 'Animada'} pelo código (${L.codeKf.map(k => CODE_UNITS[k][0]).join(', ')}). Para mudar o movimento, edite em <button class="linkish" data-act="open-code">Código</button>.</p>` : ''}</div>
   ${kfBox}
   ${content ? `<div class="sec"><h3>${TYPE_NAMES[L.type]}</h3>${content}</div>` : ''}
   ${media}
@@ -1622,6 +1628,7 @@ panel.addEventListener('click', e => {
     } else if (act === 'kf-deselect') {
       S.selKf = null; renderTimeline(); renderPanel();
     } else if (act === 'split' && L) splitLayer(L);
+    else if (act === 'open-code') codeModal();
     else if (act === 'dup' && L) duplicateLayer(L);
     else if (act === 'del' && L) deleteLayer(L);
     else if ((act === 'up' || act === 'down') && L) moveLayer(L, act === 'up' ? -1 : 1);
@@ -2471,6 +2478,7 @@ function aiMenu() {
   const img = L && L.type === 'image';
   showModal('Ferramentas de IA', `<div class="ai-list">
     <button class="ai-item" data-ai="gen"><b>Criar animação com texto</b><span>Descreva e a IA monta camadas e keyframes.</span></button>
+    <button class="ai-item" data-ai="code"><b>Animar com código (GSAP)</b><span>A IA escreve o código da animação e o editor transforma em keyframes.</span></button>
     <button class="ai-item" data-ai="cap"><b>Legendas automáticas</b><span>Transcreve a fala de um vídeo ou áudio e cria legendas animadas.</span></button>
     <button class="ai-item" data-ai="bg"${img ? '' : ' disabled'}><b>Remover fundo</b><span>${img ? 'Recorta a imagem selecionada.' : 'Selecione uma camada de imagem primeiro.'}</span></button>
     <button class="ai-item" data-ai="cfg"><b>Configurar chave do Gemini</b><span>${aiCfg().key ? 'Chave configurada neste aparelho.' : 'Necessária para criar animações e legendas.'}</span></button>
@@ -2481,6 +2489,7 @@ function aiMenu() {
     setTimeout(() => {
       if (a === 'gen') aiGenerate();
       else if (a === 'cap') aiCaptionsPicker();
+      else if (a === 'code') codeModal();
       else if (a === 'bg' && img) removeBackground(L);
       else if (a === 'cfg') aiSettings();
     }, 30);
@@ -2693,6 +2702,471 @@ function templatesModal() {
 }
 $('#btnTemplates').onclick = templatesModal;
 
+/* ======================= animação por código (GSAP) ======================= */
+/* O código roda isolado: um iframe sandbox (origem opaca, sem acesso a localStorage/IndexedDB)
+   cria um worker que carrega o GSAP, executa o código e amostra cada quadro.
+   O resultado volta como números e vira keyframes lineares simplificados. */
+const GSAP_URL = 'https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js';
+// propriedade do editor -> [nome no código, fator]. No código as unidades seguem o GSAP: scale 1 = 100%, opacidade 0 a 1.
+const CODE_UNITS = {
+  x: ['x', 1], y: ['y', 1], scale: ['scale', 100], rotation: ['rotation', 1], opacity: ['opacity', 100],
+  blur: ['blur', 1], glow: ['glow', 1], brightness: ['brightness', 100], contrast: ['contrast', 100],
+  saturate: ['saturate', 100], hue: ['hue', 1], trim: ['draw', 100],
+};
+const CODE_TOL = { x: 1, y: 1, scale: 0.5, rotation: 0.5, opacity: 0.5, blur: 0.5, glow: 1, brightness: 1, contrast: 1, saturate: 1, hue: 1, trim: 0.5 };
+
+function codeWorkerMain() {
+  var KEYS = ['x', 'y', 'scale', 'rotation', 'opacity', 'blur', 'glow', 'brightness', 'contrast', 'saturate', 'hue', 'draw'];
+  var DEF = { x: 0, y: 0, scale: 1, rotation: 0, opacity: 1, blur: 0, glow: 0, brightness: 1, contrast: 1, saturate: 1, hue: 0, draw: 1 };
+  var TYPES = ['text', 'rect', 'ellipse', 'star', 'path'];
+  var LABEL = { text: 'Texto', rect: 'Retângulo', ellipse: 'Círculo', star: 'Estrela', path: 'Traço' };
+  self.onmessage = function (e) {
+    var d = e.data, logs = [], fns = [], created = [], req = {};
+    var seed = 20261012;
+    Math.random = function () {
+      seed = seed + 0x6D2B79F5 | 0;
+      var t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+    function target(info) {
+      var o = {};
+      KEYS.forEach(function (k) { o[k] = info.init && typeof info.init[k] === 'number' ? info.init[k] : DEF[k]; });
+      Object.defineProperty(o, 'autoAlpha', { get: function () { return o.opacity; }, set: function (v) { o.opacity = v; } });
+      Object.defineProperty(o, 'alpha', { get: function () { return o.opacity; }, set: function (v) { o.opacity = v; } });
+      ['name', 'type', 'start', 'end'].forEach(function (k) { Object.defineProperty(o, k, { value: info[k] }); });
+      return o;
+    }
+    var layers = (d.layers || []).map(target);
+    function layer(q) {
+      if (typeof q === 'number') {
+        var byIndex = layers[q < 0 ? layers.length + q : q];
+        if (!byIndex) throw new Error('Não existe a camada número ' + q + '. O projeto tem ' + layers.length + ' camadas visuais.');
+        return byIndex;
+      }
+      var i, low = String(q).toLowerCase();
+      for (i = 0; i < layers.length; i++) if (layers[i].name === q) return layers[i];
+      for (i = 0; i < layers.length; i++) if (layers[i].name.toLowerCase() === low) return layers[i];
+      throw new Error('Camada "' + q + '" não encontrada. Camadas: ' + layers.map(function (l) { return l.name; }).join(', '));
+    }
+    function add(type, opts) {
+      opts = opts || {};
+      if (TYPES.indexOf(type) < 0) throw new Error('Tipo "' + type + '" não existe. Use text, rect, ellipse, star ou path.');
+      var init = { x: d.W / 2, y: d.H / 2 }, s = {};
+      Object.keys(opts).forEach(function (k) {
+        if (KEYS.indexOf(k) >= 0) { if (typeof opts[k] === 'number' && isFinite(opts[k])) init[k] = opts[k]; }
+        else if (k !== 'name' && k !== 'start' && k !== 'end') s[k] = opts[k];
+      });
+      var count = created.filter(function (c) { return c.type === type; }).length + 1;
+      var info = {
+        type: type, name: String(opts.name || (LABEL[type] + ' ' + count)).slice(0, 40),
+        start: typeof opts.start === 'number' ? opts.start : 0,
+        end: typeof opts.end === 'number' ? opts.end : null, init: init,
+      };
+      var t = target(info);
+      created.push({ type: type, name: info.name, start: info.start, end: info.end, s: JSON.parse(JSON.stringify(s)), init: init, t: t });
+      return t;
+    }
+    var say = function () { logs.push(Array.prototype.map.call(arguments, function (a) { return typeof a === 'object' ? JSON.stringify(a) : String(a); }).join(' ')); };
+    try {
+      var gsap = self.gsap || (self.window && self.window.gsap);
+      if (!gsap) throw new Error('Não consegui carregar o GSAP. Confira a internet.');
+      var tl = gsap.timeline({ defaults: { duration: 0.8, ease: 'power3.out' } });
+      var run = new Function('gsap', 'tl', 'layer', 'layers', 'add', 'every', 'duration', 'background', 'W', 'H', 'D', 'FPS', 'random', 'console', '"use strict";\n' + d.code);
+      run(gsap, tl, layer, layers, add,
+        function (f) { if (typeof f !== 'function') throw new Error('every() precisa de uma função, ex.: every(t => { ... })'); fns.push(f); },
+        function (sec) { req.duration = Number(sec); },
+        function (c) { req.background = String(c); },
+        d.W, d.H, d.D, d.FPS,
+        function (a, b) { if (b === undefined) { b = a; a = 0; } return a + Math.random() * (b - a); },
+        { log: say, info: say, warn: say, error: say });
+      var dur = req.duration > 0 ? Math.min(600, Math.max(0.5, req.duration)) : d.D;
+      var root = gsap.exportRoot();
+      root.pause();
+      var all = layers.concat(created.map(function (c) { return c.t; }));
+      var n = Math.round(dur * d.FPS) + 1;
+      if (n * all.length > 3e6) throw new Error('Animação grande demais para calcular. Diminua a duração ou o número de camadas.');
+      var series = all.map(function () { var o = {}; KEYS.forEach(function (k) { o[k] = new Float64Array(n); }); return o; });
+      for (var i = 0; i < n; i++) {
+        var time = Math.min(dur, i / d.FPS);
+        root.seek(time, false);
+        for (var f = 0; f < fns.length; f++) fns[f](time);
+        for (var j = 0; j < all.length; j++) {
+          for (var k = 0; k < KEYS.length; k++) { var v = Number(all[j][KEYS[k]]); series[j][KEYS[k]][i] = isFinite(v) ? v : 0; }
+        }
+      }
+      self.postMessage({
+        ok: true, dur: dur, n: n, series: series, req: req, logs: logs.slice(0, 50),
+        created: created.map(function (c) { return { type: c.type, name: c.name, start: c.start, end: c.end, s: c.s, init: c.init }; }),
+      });
+    } catch (err) {
+      var m = String(err && err.stack || '').match(/(?:<anonymous>|Function):(\d+):\d+/);
+      self.postMessage({ ok: false, error: String(err && err.message || err), line: m ? Number(m[1]) - 3 : null, logs: logs });
+    }
+  };
+}
+const CODE_WORKER_SRC = `importScripts(${JSON.stringify(GSAP_URL)});\n(${codeWorkerMain.toString()})();`;
+const CODE_FRAME_SRC = `<script>
+onmessage = function (e) {
+  var w;
+  try { w = new Worker(URL.createObjectURL(new Blob([e.data.src], { type: 'text/javascript' }))); }
+  catch (err) { parent.postMessage({ ok: false, error: 'Este navegador não deixou rodar o código isolado.' }, '*'); return; }
+  w.onmessage = function (m) { parent.postMessage(m.data, '*'); };
+  w.onerror = function (err) { if (err.preventDefault) err.preventDefault(); parent.postMessage({ ok: false, error: /importScripts|NetworkError|load/i.test(err.message || '') ? 'Não consegui carregar o GSAP. Confira a internet.' : (err.message || 'Erro no código.') }, '*'); };
+  w.postMessage(e.data.payload);
+};
+<\/script>`;
+
+function runCodeSandbox(payload, timeoutMs = 12000) {
+  return new Promise((resolve, reject) => {
+    const f = document.createElement('iframe');
+    f.setAttribute('sandbox', 'allow-scripts');
+    f.hidden = true;
+    let done = false;
+    const finish = (fn, v) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      window.removeEventListener('message', onMsg);
+      f.remove();          // destrói o iframe e o worker junto
+      fn(v);
+    };
+    const onMsg = e => {
+      if (e.source !== f.contentWindow) return;
+      const d = e.data || {};
+      if (d.ok) finish(resolve, d);
+      else finish(reject, Object.assign(new Error(d.error || 'Erro no código.'), { line: d.line, logs: d.logs }));
+    };
+    window.addEventListener('message', onMsg);
+    const timer = setTimeout(() => finish(reject, new Error('O código demorou demais (mais de 12 s). Veja se não tem um laço infinito.')), timeoutMs);
+    f.onload = () => f.contentWindow.postMessage({ src: CODE_WORKER_SRC, payload }, '*');
+    f.srcdoc = CODE_FRAME_SRC;
+    document.body.appendChild(f);
+  });
+}
+
+/* Ramer-Douglas-Peucker em 1D: guarda só os quadros que a interpolação linear não reproduz */
+function simplifySeries(vals, fps, tol) {
+  const n = vals.length;
+  if (n < 2) return [{ t: 0, v: round(vals[0] || 0, 3), e: 'linear' }];
+  const keep = new Uint8Array(n);
+  keep[0] = keep[n - 1] = 1;
+  const stack = [[0, n - 1]];
+  while (stack.length) {
+    const [a, b] = stack.pop();
+    let maxD = 0, idx = -1;
+    const va = vals[a], vb = vals[b];
+    for (let i = a + 1; i < b; i++) {
+      const d = Math.abs(vals[i] - (va + (vb - va) * (i - a) / (b - a)));
+      if (d > maxD) { maxD = d; idx = i; }
+    }
+    if (maxD > tol && idx > 0) { keep[idx] = 1; stack.push([a, idx], [idx, b]); }
+  }
+  const out = [];
+  for (let i = 0; i < n; i++) if (keep[i]) out.push({ t: round(i / fps, 4), v: round(vals[i], 3), e: 'linear' });
+  return out;
+}
+
+/* valor inicial que o código enxerga para cada propriedade da camada */
+function codeBase(L, prop) {
+  if ((L.codeKf || []).includes(prop) || !isAnimated(L, prop)) return L.p[prop];
+  return val(L, prop, L.start);
+}
+function codeInit(L) {
+  const init = {};
+  for (const [prop, [name, f]] of Object.entries(CODE_UNITS)) init[name] = codeBase(L, prop) / f;
+  return init;
+}
+
+function seriesToKf(L, series, base, fps) {
+  let count = 0;
+  const baked = [];
+  for (const [prop, [name, f]] of Object.entries(CODE_UNITS)) {
+    if (prop === 'trim' && L.type !== 'path') continue;
+    const raw = series[name];
+    if (!raw) continue;
+    const d = PROPS[prop];
+    const vals = Array.from(raw, v => { v *= f; return d.min != null ? clamp(v, d.min, d.max) : v; });
+    const b = base(prop);
+    if (!vals.some(v => Math.abs(v - b) > CODE_TOL[prop] / 2)) continue;
+    const kf = simplifySeries(vals, fps, CODE_TOL[prop]);
+    L.kf[prop] = kf;
+    baked.push(prop);
+    count += kf.length;
+  }
+  return { baked, count };
+}
+
+function clearCodeResults(p) {
+  const removed = new Set(p.layers.filter(L => L.fromCode).map(L => L.id));
+  p.layers = p.layers.filter(L => !L.fromCode);
+  for (const L of p.layers) {
+    if (L.parent && removed.has(L.parent)) L.parent = null;
+    for (const prop of L.codeKf || []) delete L.kf[prop];
+    delete L.codeKf;
+  }
+  return removed.size;
+}
+
+function bakeCode(res, exposed, code) {
+  const p = P();
+  const created = [];
+  // a nova execução substitui tudo o que a anterior gerou
+  clearCodeResults(p);
+  if (res.req.duration > 0 && Math.abs(res.dur - p.duration) > 1e-6) {
+    const old = p.duration;
+    p.duration = res.dur;
+    for (const l of p.layers) {
+      if (Math.abs(l.end - old) < 1e-6) l.end = MEDIA(l.type) ? Math.min(res.dur, l.start + mediaRemaining(l)) : res.dur;
+      l.end = clamp(l.end, 0.1, res.dur); l.start = clamp(l.start, 0, l.end - 0.1);
+    }
+  }
+  const bg = typeof res.req.background === 'string' && res.req.background.trim().match(/^#?([0-9a-f]{6})$/i);
+  if (bg) p.background = '#' + bg[1].toLowerCase();
+
+  let layersAnimated = 0, kfCount = 0;
+  exposed.forEach((L, i) => {
+    if (!p.layers.includes(L)) return;
+    const { baked, count } = seriesToKf(L, res.series[i], prop => codeBase(L, prop), p.fps);
+    if (baked.length) { L.codeKf = baked; layersAnimated++; kfCount += count; }
+  });
+  res.created.forEach((c, j) => {
+    const pVals = {};
+    for (const [prop, [name, f]] of Object.entries(CODE_UNITS)) if (typeof c.init[name] === 'number') pVals[prop] = c.init[name] * f;
+    let L;
+    try {
+      L = sanitizeAI({ layers: [{ type: c.type, name: c.name, start: c.start, end: c.end == null ? p.duration : c.end, p: pVals, s: c.s }] }, false).layers[0];
+    } catch { return; }
+    L.fromCode = true;
+    const { baked, count } = seriesToKf(L, res.series[exposed.length + j], prop => L.p[prop], p.fps);
+    if (baked.length) L.codeKf = baked;
+    kfCount += count;
+    created.push(L);
+  });
+  for (const L of created) p.layers.unshift(L);   // a última criada fica na frente
+  p.code = code;
+  return { layersAnimated, created: created.length, kfCount };
+}
+
+async function applyCode(code) {
+  const p = P();
+  const exposed = p.layers.filter(L => VISUAL(L.type) && !L.fromCode);
+  const res = await runCodeSandbox({
+    code, W: p.width, H: p.height, D: p.duration, FPS: p.fps,
+    layers: exposed.map(L => ({ name: L.name, type: L.type, start: L.start, end: L.end, init: codeInit(L) })),
+  });
+  const stats = bakeCode(res, exposed, code);
+  stats.logs = res.logs || [];
+  S.sel = null; S.selKf = null;
+  commit();
+  renderTimeline(); renderPanel(); refreshTime();
+  return stats;
+}
+
+const CODE_EXAMPLES = {
+  cascade: ['Entrada em cascata', `// Todas as camadas entram, uma depois da outra
+tl.from(layers, {
+  y: '+=80',
+  opacity: 0,
+  duration: 0.7,
+  stagger: 0.1,
+});`],
+  elastic: ['Primeira camada elástica', `const alvo = layers[0];
+
+tl.fromTo(alvo,
+  { scale: 0, rotation: -20 },
+  { scale: 1, rotation: 0, duration: 1.2, ease: 'elastic.out(1, 0.5)' }
+);`],
+  title: ['Título do zero', `duration(4);
+background('#0f1020');
+
+const titulo = add('text', {
+  name: 'Título', text: 'OLÁ!', font: 'Unbounded', size: 180,
+  color: '#ffffff', glow: 40, glowColor: '#ff3df5',
+});
+const linha = add('path', {
+  name: 'Linha', points: [[-260, 0], [260, 0]],
+  stroke: '#ff3df5', width: 10, y: H / 2 + 150,
+});
+
+tl.from(titulo, { scale: 0, rotation: -10, duration: 0.9, ease: 'back.out(2)' })
+  .from(linha, { draw: 0, duration: 0.8 }, '-=0.3')
+  .to([titulo, linha], { opacity: 0, duration: 0.5, ease: 'power2.in' }, 3.5);`],
+  orbit: ['Órbita (cálculo por quadro)', `// every() roda a cada quadro: bom para movimento com matemática
+const bola = add('ellipse', {
+  name: 'Bolinha', w: 90, h: 90, fill: '#6fd8ff',
+  glow: 40, glowColor: '#6fd8ff',
+});
+
+every(t => {
+  bola.x = W / 2 + Math.cos(t * 2) * 320;
+  bola.y = H / 2 + Math.sin(t * 2) * 320;
+  bola.scale = 0.8 + Math.sin(t * 4) * 0.2;
+});`],
+  stars: ['Chuva de estrelas', `const estrelas = [];
+for (let i = 0; i < 14; i++) {
+  estrelas.push(add('star', {
+    name: 'Estrela ' + (i + 1),
+    x: random(80, W - 80),
+    y: random(80, H - 80),
+    w: random(40, 120),
+    fill: i % 2 ? '#ffb547' : '#ff6b4a',
+  }));
+}
+
+tl.from(estrelas, {
+  y: '-=400',
+  opacity: 0,
+  rotation: -180,
+  duration: 1,
+  ease: 'bounce.out',
+  stagger: { each: 0.08, from: 'random' },
+});`],
+  pulse: ['Pulsar no ritmo', `// Pulsa a primeira camada o vídeo todo (120 batidas por minuto)
+tl.to(layers[0], {
+  scale: 1.12,
+  duration: 0.25,
+  ease: 'sine.inOut',
+  yoyo: true,
+  repeat: -1,
+});`],
+};
+
+function codeHelpHTML() {
+  return `<div class="code-help" id="codeHelp" hidden>
+    <p><code>layers</code> é a lista de camadas (a primeira é a da frente). <code>layer('Título')</code> ou <code>layer(0)</code> pega uma.</p>
+    <p><code>tl</code> é uma linha do tempo do GSAP (padrão 0,8 s e <code>power3.out</code>). <code>gsap</code> também está disponível.</p>
+    <p>Propriedades: <code>x</code>, <code>y</code> (centro, em px), <code>scale</code> (1 = normal), <code>rotation</code> (graus), <code>opacity</code> (0 a 1), <code>blur</code>, <code>glow</code>, <code>brightness</code>/<code>contrast</code>/<code>saturate</code> (1 = normal), <code>hue</code>, <code>draw</code> (0 a 1, traços).</p>
+    <p><code>add(tipo, opções)</code> cria camada: <code>'text'</code>, <code>'rect'</code>, <code>'ellipse'</code>, <code>'star'</code>, <code>'path'</code>. As opções aceitam os campos do painel (text, font, size, color, fill, w, h, points, stroke…).</p>
+    <p><code>every(t =&gt; { … })</code> roda a cada quadro. Também: <code>W</code>, <code>H</code>, <code>D</code> (duração), <code>FPS</code>, <code>duration(s)</code>, <code>background('#hex')</code>, <code>random(min, max)</code>, e <code>.start</code>/<code>.end</code> de cada camada.</p>
+    <p>O código roda isolado: não acessa seus arquivos nem sua chave. Camadas criadas pelo código são recriadas a cada vez que você aplica.</p>
+  </div>`;
+}
+
+function codeModal() {
+  const p = P();
+  showModal('Animar com código', `
+    <p>Escreva a animação em JavaScript com o <b>GSAP</b>. Ao aplicar, ela vira keyframes normais que você pode editar na linha do tempo.</p>
+    <div class="code-tools">
+      <select id="codeEx" aria-label="Exemplos"><option value="">Exemplos…</option>${Object.entries(CODE_EXAMPLES).map(([k, [label]]) => `<option value="${k}">${esc(label)}</option>`).join('')}</select>
+      <button class="btn btn-small" id="codeHelpBtn" type="button">Referência</button>
+    </div>
+    ${codeHelpHTML()}
+    <textarea id="codeIn" class="code" spellcheck="false" autocapitalize="off" autocomplete="off" rows="14" aria-label="Código da animação"></textarea>
+    <div class="code-ai">
+      <input class="field" id="codeAsk" placeholder="Peça à IA, ex.: título entra girando e as luzes pulsam">
+      <button class="btn btn-small btn-ai" id="codeAskBtn" type="button">Gerar com IA</button>
+    </div>
+    <p class="code-status" id="codeStatus" role="status"></p>`, [
+    { label: 'Fechar' },
+    ...(p.layers.some(L => L.fromCode || (L.codeKf && L.codeKf.length)) ? [{ label: 'Desfazer código', keepOpen: true, onClick: () => {
+      const n = clearCodeResults(P()); commit(); renderTimeline(); renderPanel(); refreshTime();
+      codeStatus(`Animações do código removidas${n ? ` e ${n} camada(s) criada(s) apagada(s)` : ''}.`);
+    } }] : []),
+    { label: 'Aplicar', cls: 'btn-primary', keepOpen: true, onClick: () => runCodeFromModal() },
+  ]);
+  $('.modal-card').classList.add('wide');
+  const ta = $('#codeIn');
+  ta.value = p.code || CODE_EXAMPLES.cascade[1];
+  ta.addEventListener('keydown', e => {
+    if (e.key === 'Tab' && !e.shiftKey) {
+      e.preventDefault();
+      const s = ta.selectionStart;
+      ta.setRangeText('  ', s, ta.selectionEnd, 'end');
+    } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runCodeFromModal(); }
+  });
+  $('#codeEx').onchange = e => { const ex = CODE_EXAMPLES[e.target.value]; if (ex) { ta.value = ex[1]; codeStatus(''); } e.target.value = ''; };
+  $('#codeHelpBtn').onclick = () => { const h = $('#codeHelp'); h.hidden = !h.hidden; };
+  $('#codeAskBtn').onclick = () => aiWriteCode($('#codeAsk').value.trim());
+  $('#codeAsk').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); aiWriteCode(e.target.value.trim()); } });
+}
+const codeStatus = (msg, bad) => { const el = $('#codeStatus'); if (el) { el.textContent = msg; el.classList.toggle('bad', !!bad); } };
+
+function codeErrorText(err) {
+  return (err.line ? `Linha ${err.line}: ` : '') + (err.message || 'Erro no código.');
+}
+
+async function runCodeFromModal() {
+  const ta = $('#codeIn');
+  if (!ta) return;
+  const code = ta.value;
+  if (!code.trim()) { codeStatus('Escreva algum código primeiro.', true); return; }
+  codeStatus('Calculando a animação…');
+  try {
+    const st = await applyCode(code);
+    finishCode(st);
+  } catch (err) {
+    codeStatus(codeErrorText(err), true);
+  }
+}
+
+function finishCode(st) {
+  if (!st.layersAnimated && !st.created) { codeStatus('O código rodou, mas nada se mexeu. Confira se os tweens estão na linha do tempo (tl) ou no gsap.', true); return; }
+  hideModal();
+  setTime(0);
+  play();
+  const parts = [];
+  if (st.layersAnimated) parts.push(`${st.layersAnimated} camada(s) animada(s)`);
+  if (st.created) parts.push(`${st.created} criada(s)`);
+  toast(`Pronto: ${parts.join(', ')}, ${st.kfCount} keyframes.${st.logs.length ? ' Log: ' + st.logs[0] : ''}`);
+}
+
+/* ---------- a IA escreve o código, seguindo as boas práticas da skill de GSAP ---------- */
+function aiCodePrompt(ask, fix) {
+  const p = P();
+  const ls = p.layers.filter(L => VISUAL(L.type) && !L.fromCode).map((L, i) => {
+    const extra = L.type === 'text' ? ` texto="${String(L.s.text).replace(/\n/g, ' ').slice(0, 40)}"` : '';
+    return `layers[${i}] "${L.name}" (${L.type}${extra}) de ${round(L.start, 2)}s a ${round(L.end, 2)}s, x=${Math.round(codeBase(L, 'x'))} y=${Math.round(codeBase(L, 'y'))}`;
+  }).join('\n') || '(nenhuma camada ainda)';
+  return `Você escreve animações em JavaScript com GSAP 3 para um editor de motion graphics. Responda SOMENTE com o código, sem markdown e sem explicação.
+
+AMBIENTE (já existe, não importe nada, não use DOM, seletores CSS, ScrollTrigger nem SplitText):
+- tl: gsap.timeline({ defaults: { duration: 0.8, ease: 'power3.out' } }). gsap também existe.
+- layers: array de objetos-alvo (o primeiro é o da frente). layer('Nome') ou layer(índice).
+- Propriedades animáveis: x, y (centro em px), scale (1 = normal), rotation (graus), opacity (0 a 1, autoAlpha também funciona), blur (px), glow (0 a 150), brightness/contrast/saturate (1 = normal), hue (graus), draw (0 a 1, só path).
+- add(tipo, opções) cria camada e devolve o alvo. Tipos: 'text' (text, font: ${FONTS.join('|')}, size, weight, color, glowColor, stroke, strokeColor), 'rect' (w, h, radius, fill), 'ellipse' (w, h, fill), 'star' (w, points, inner, fill), 'path' (points: [[x,y],...] relativos ao centro, stroke, width). As opções também aceitam x, y, scale, opacity etc. como valor inicial e name, start, end.
+- every(t => {...}) roda a cada quadro para movimento com matemática.
+- W=${p.width}, H=${p.height}, D=${p.duration} (duração em s), FPS=${p.fps}. duration(s) muda a duração. background('#rrggbb'). random(min, max) é determinístico. Cada alvo tem .start e .end (tempo em que a camada aparece).
+
+CAMADAS DO PROJETO:
+${ls}
+
+BOAS PRÁTICAS:
+- Sequências numa timeline só, com parâmetro de posição ("-=0.3", "<", ">", tempos absolutos), nunca delays encadeados.
+- Prefira fromTo quando o valor inicial importa. Anime uma camada só a partir do .start dela.
+- Durações: 0.6 a 1 s em entradas, até 1.2 s em destaques. Eases: power2.out/power3.out para entradas, power2.inOut de A para B, expo.out para algo dramático, elastic/bounce com parcimônia, 'none' só em loops contínuos.
+- Deslocamentos pequenos (20 a 80 px) ficam mais elegantes. Stagger entre 0.04 e 0.12.
+- Uma entrada bem orquestrada vale mais que tudo se mexendo ao mesmo tempo. Tudo deve terminar dentro do quadro.
+${fix ? `\nO CÓDIGO ABAIXO DEU ERRO. Corrija e devolva o código completo.\nErro: ${fix.error}\nCódigo:\n${fix.code}\n` : ''}
+PEDIDO: ${ask}`;
+}
+const stripFences = t => String(t).replace(/^\s*```(?:js|javascript)?\s*/i, '').replace(/```\s*$/, '').trim();
+
+async function aiWriteCode(ask) {
+  if (!ask) { codeStatus('Escreva o que você quer no campo da IA.', true); return; }
+  codeStatus('A IA está escrevendo o código…');
+  let code = '';
+  try {
+    code = stripFences(await gemini([{ text: aiCodePrompt(ask) }], false));
+    if ($('#codeIn')) $('#codeIn').value = code;
+    codeStatus('Calculando a animação…');
+    finishCode(await applyCode(code));
+  } catch (err) {
+    if (err.code === 'nokey') { aiError(err, () => { codeModal(); }); return; }
+    if (!code) { codeStatus(err.message || 'A IA não respondeu.', true); return; }
+    // uma tentativa de correção automática com a mensagem de erro
+    try {
+      codeStatus('O código deu erro. Pedindo para a IA corrigir…');
+      code = stripFences(await gemini([{ text: aiCodePrompt(ask, { code, error: codeErrorText(err) }) }], false));
+      if ($('#codeIn')) $('#codeIn').value = code;
+      finishCode(await applyCode(code));
+    } catch (err2) {
+      codeStatus(codeErrorText(err2), true);
+    }
+  }
+}
+$('#btnCode').onclick = codeModal;
+
 /* ======================= menu ======================= */
 const menu = $('#menu');
 $('#btnMenu').onclick = e => { e.stopPropagation(); menu.hidden = !menu.hidden; };
@@ -2758,6 +3232,7 @@ $('#projectInput').addEventListener('change', async e => {
 
 /* ======================= modal e aviso ======================= */
 function showModal(title, body, actions = []) {
+  $('.modal-card').classList.remove('wide');
   $('#modalTitle').textContent = title;
   $('#modalBody').innerHTML = body;
   const box = $('#modalActions');

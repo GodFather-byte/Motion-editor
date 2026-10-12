@@ -29,6 +29,12 @@ Editor de motion graphics que roda direto no navegador e pode ser instalado como
 - Seis looks de cor com intensidade: Cinema, Vibrante, Quente, Frio, Vintage e Preto e branco. Combinam com os ajustes manuais de cor.
 - Exportação em MP4 (Chrome recente e Safari) ou WEBM, com som. Frame atual em PNG.
 
+**Animação por código (GSAP)** (botão Código)
+- Escreva a animação em JavaScript com GSAP 3 (`tl.from(layers, { y: '+=80', opacity: 0, stagger: 0.1 })`), ou peça para a IA escrever.
+- O código vira keyframes normais, editáveis. `add()` cria camadas, `every(t => …)` calcula movimento quadro a quadro.
+- Roda isolado (iframe sandbox + worker): não acessa arquivos nem chaves do app, e laço infinito é interrompido em 12 s.
+- Precisa de internet na hora de aplicar, para baixar o GSAP.
+
 **IA** (botão IA, usa o Gemini com a chave do próprio usuário)
 - Criar animação a partir de uma descrição em texto.
 - Legendas automáticas a partir da fala, sincronizadas e animadas.
@@ -79,6 +85,7 @@ Testes de navegador, no ambiente de desenvolvimento com Playwright, Chromium, FF
 ```bash
 node --check app.js
 node --test tests/video-editor.cjs
+node --test tests/code-animation.cjs   # painel Código (baixa o GSAP, precisa de internet)
 ```
 
 O teste inicia seu próprio servidor e gera mídia temporária. Confere recorte, cores, transições, divisão, desfazer/refazer, persistência, exportação e áudio em diferentes velocidades; inclui layout de 360 px. Defina `CHROMIUM_PATH` se o Chromium não estiver em `/usr/bin/chromium`. Essas ferramentas são apenas para testes; o app continua sem instalação de dependências ou build.
