@@ -1,36 +1,40 @@
 # Handoff
-Atualizado por: Claude em 12/10/2026
+Atualizado por: Codex em 12/10/2026
 
 ## Objetivo atual
-Animação por código (GSAP) integrada ao editor. Próximo: validar com usuários reais.
+Repaginar o visual do editor. Tema, layout e controles atualizados.
 
 ## Feito nesta sessão
-- Botão **Código** (barra de adicionar) e item no menu IA: o usuário escreve GSAP 3 e o editor converte em keyframes.
-- Execução isolada: iframe `sandbox="allow-scripts"` (origem opaca) cria um Worker que carrega gsap@3.15.0 do jsDelivr, roda o código, usa `gsap.exportRoot()` e amostra cada quadro. Timeout de 12 s mata laço infinito.
-- Amostras viram keyframes lineares simplificados (Ramer-Douglas-Peucker, tolerâncias em `CODE_TOL`).
-- API do código: `tl`, `gsap`, `layers`, `layer(nome|índice)`, `add(tipo, opções)`, `every(t => …)`, `duration()`, `background()`, `random()` determinístico, `W H D FPS`, `.start/.end`.
-- Reaplicar substitui o resultado anterior (`L.codeKf` lista as props geradas; `L.fromCode` marca camadas criadas). Botão "Desfazer código".
-- Timeline mostra animação de código como faixa tracejada, não como dezenas de losangos.
-- IA escreve o código com as boas práticas da skill de GSAP e tenta corrigir uma vez se der erro.
-- 6 exemplos prontos e referência no próprio modal. `tests/code-animation.cjs` (4 testes). Os 6 testes de `tests/video-editor.cjs` continuam passando.
-- sw.js em motion-v9.
+- Tema grafite/verde-lima, nova marca na barra e botão Exportar destacado.
+- Prévia com formato, resolução e FPS; barra de criação destaca vídeo/imagem/música.
+- Painel de propriedades com cabeçalho fixo, cartões, campos e foco mais legíveis.
+- Timeline com nomes nos clipes, grade sincronizada com zoom e controles redesenhados.
+- Desktop: painel à direita da prévia e da timeline. Mobile: blocos empilhados com rolagem.
+- Nome do projeto editável no celular, alvos maiores e zoom de acessibilidade liberado.
+- Status de salvamento reflete sucesso/falha real do localStorage.
+- Alças, curvas e ondas de áudio usam as variáveis do tema; conteúdo dos projetos preservado.
+- PWA em motion-v11; preservados o painel Código e a exportação rápida/GIF recém-adicionados.
 
 ## Próximo passo
-Testar "Gerar com IA" no painel Código com a chave real do Gemini.
+Validar o visual e gestos em aparelhos reais, sobretudo Safari.
 
 ## Arquivos relevantes
-- app.js: seção "animação por código (GSAP)"
-- tests/code-animation.cjs
+- style.css, index.html: tema, estrutura e responsividade.
+- app.js: cabeçalhos, tokens visuais, rótulos dos clipes e status de salvamento.
+- tests/video-editor.cjs, code-animation.cjs e export.cjs: 13 testes passaram.
 
 ## Decisões tomadas e motivo
-- Código nunca roda ao abrir um projeto, só ao clicar Aplicar, e sempre isolado: projetos compartilhados não executam nada sozinhos.
-- Unidades do código seguem o GSAP (scale 1, opacity 0–1, draw 0–1); a conversão está em `CODE_UNITS`.
-- Bake em keyframes (e não código ao vivo) mantém exportação e edição iguais ao resto do editor.
+- Sem dependências, build ou mudanças no modelo de projetos.
+- Celular usa rolagem da página para manter uma prévia útil em telas curtas.
+- Cartões e cabeçalhos mantêm os mesmos IDs/eventos e a edição existente.
 
 ## Pendências e armadilhas
-- Precisa de internet para aplicar (GSAP vem do CDN; o service worker não cacheia o worker isolado).
-- Camadas criadas pelo código são recriadas a cada aplicação: edições manuais nelas se perdem.
-- Testes de navegador: `CHROMIUM_PATH=/opt/pw-browsers/.../chrome` se não houver /usr/bin/chromium.
+- Layout conferido em 1440x900, 860x800, 360x800, 360x640 e 740x360.
+- Instalar, exportação e Código conferidos em mobile sem overflow horizontal.
+- Gemini real e remoção de fundo não foram exercitados nesta sessão.
+- Exportação é em tempo real e exige a aba visível.
+- Sempre aumentar VERSION em sw.js quando mudar o app.
 
 ## Como rodar e testar
-`python3 -m http.server 8000`. `node --check app.js`. `node --test tests/video-editor.cjs tests/code-animation.cjs`.
+`python3 -m http.server 8000`, `node --check app.js`, `CHROMIUM_PATH=/usr/bin/chromium node --test tests/video-editor.cjs tests/code-animation.cjs tests/export.cjs`.
+Ferramentas já presentes. Testes do CDN precisam de acesso autorizado ao NSS existente do Chromium; não desative TLS.

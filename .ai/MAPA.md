@@ -1,7 +1,7 @@
 # Mapa do repositório
 
 ## Arquivos
-- `index.html`: estrutura da interface (barra superior, preview, botões de adicionar, linha do tempo, painel, modal).
+- `index.html`: estrutura da interface (barra de projeto, status de salvamento, cabeçalho de prévia com formato/fps, ferramentas de criação, linha do tempo, painel, modal).
 - `style.css`: visual. Variáveis no topo; bloco `@media (max-width: 860px)` é o layout de celular.
 - `app.js`: o editor inteiro, num único IIFE, dividido em seções (abaixo).
 - `pro-config.js`: chave pública ECDSA e textos/preço do plano Pro.
@@ -23,10 +23,10 @@
 | seleção no preview | caminho de movimento, caneta, alças, `fitStage`, arrastar no canvas |
 | tempo e reprodução | `refreshTime`, `play`, `pause` |
 | linha do tempo | `renderTimeline`, forma de onda, arrastar keyframes e blocos, botão de mudo, snap magnético |
-| painel de propriedades | `layerPanel`, `projectPanel`, `syncPanel`, editor de curva `setupCurve`, eventos do painel |
+| painel de propriedades | `renderPanel` (cabeçalho fixo e cartões), `layerPanel`, `projectPanel`, `syncPanel`, editor de curva `setupCurve`, eventos do painel |
 | animações prontas | `applyPreset` (fade, zoom, slide, flash, shake, bounce, etc.) |
 | camadas | adicionar, duplicar, dividir (`splitLayer`), congelar quadro (`freezeFrame`), excluir, `setAspect`, importação de mídia |
-| desfazer / salvar | `commit` (sempre chame após uma mudança), localStorage, `setProject` |
+| desfazer / salvar | `commit` (sempre chame após uma mudança), `scheduleSave` (status real em #saveStatus), localStorage, `setProject` |
 | exemplo inicial | `demoProject` |
 | exportação | `exportModal`, `exportVideo` (MediaRecorder + Web Audio, fallback MP4 → WEBM) |
 | exportação rápida | `fastExport` (WebCodecs + mp4-muxer), `renderAudioMix` (OfflineAudioContext), `seekVideosExact`, `exportGif` (gifenc), `exportPng`, `fileReady`. `renderFrame(c, t, {k, transparent})` desenha em qualquer escala (`RK`) |
@@ -42,3 +42,5 @@ Camada: `{ id, type, name, start, end, visible, parent, p{valores fixos}, kf{pro
 `layers[0]` fica na frente. Arquivos (imagem, vídeo, áudio) ficam no IndexedDB; `assets` guarda só nome e tipo.
 
 Novos campos em `s`: `colorLook`, `lookIntensity`, `transitionIn/Out`, `transitionInDuration/OutDuration`, `mediaFit`, `focalX/Y`. `transitionStart/End` são âncoras opcionais preservadas pelo split, deslocadas ao mover o clipe e removidas ao editar a borda ou a transição correspondente. Projetos antigos usam look Original, sem transição e enquadramento livre.
+
+Tema do editor: tokens no início de `style.css`; `theme` em app.js lê essas variáveis para alças, caminho de movimento, curvas e ondas de áudio. Cores de conteúdo dos projetos são independentes. No desktop, propriedades ocupam a coluna direita inteira; em <=860 px a página empilha os blocos com rolagem, sem reduzir a prévia em telas curtas.

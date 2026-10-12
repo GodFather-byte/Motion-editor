@@ -2,10 +2,10 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Motion Editor</title>
 <meta name="description" content="Editor de motion graphics no navegador: camadas, keyframes, efeitos e exportação de vídeo.">
-<meta name="theme-color" content="#0E0F14">
+<meta name="theme-color" content="#0c0f11">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
@@ -20,16 +20,19 @@
 <!-- APP:START -->
 <div id="app">
   <header class="topbar">
-    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Motion</span></div>
-    <input id="projectName" class="project-name" aria-label="Nome do projeto" spellcheck="false">
+    <div class="brand"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 16 5-8 4 8 5-8"/></svg></span><div><span class="brand-name">Motion<span class="brand-period">.</span></span><span class="brand-caption">EDITOR DE VÍDEO</span></div></div>
+    <div class="project-meta"><label class="eyebrow" for="projectName">Seu projeto</label><input id="projectName" class="project-name" aria-label="Nome do projeto" spellcheck="false"></div>
+    <span class="save-status" id="saveStatus" role="status" aria-live="polite">Salvando…</span>
     <div class="top-actions">
+      <div class="history-actions" role="group" aria-label="Histórico e projeto">
       <button class="icon-btn" id="btnUndo" title="Desfazer (Ctrl+Z)" aria-label="Desfazer"><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
       <button class="icon-btn" id="btnRedo" title="Refazer (Ctrl+Shift+Z)" aria-label="Refazer"><svg viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg></button>
       <button class="icon-btn" id="btnMenu" title="Projeto" aria-label="Menu do projeto"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="19" r="1.4"/></svg></button>
+      </div>
       <button class="btn btn-pro" id="btnPro">Seja Pro</button>
-      <button class="btn btn-ai" id="btnAI" title="Ferramentas de IA"><svg viewBox="0 0 24 24"><path d="M12 3l1.8 4.6L18.5 9.5l-4.7 1.9L12 16l-1.8-4.6L5.5 9.5l4.7-1.9z"/><path d="M19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></svg><span>IA</span></button>
+      <button class="btn btn-ai" id="btnAI" title="Ferramentas de IA" aria-label="Ferramentas de IA"><svg viewBox="0 0 24 24"><path d="M12 3l1.8 4.6L18.5 9.5l-4.7 1.9L12 16l-1.8-4.6L5.5 9.5l4.7-1.9z"/><path d="M19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/></svg><span>IA</span></button>
       <button class="btn btn-install" id="btnInstall" hidden>Instalar app</button>
-      <button class="btn btn-primary" id="btnExport">Exportar</button>
+      <button class="btn btn-primary btn-export" id="btnExport"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M5 16v5h14v-5"/></svg> Exportar</button>
     </div>
     <div class="menu" id="menu" hidden>
       <button data-menu="new">Novo projeto</button>
@@ -42,29 +45,35 @@
   </header>
 
   <main class="stage-wrap" id="stageWrap">
+    <div class="workspace-head"><div><span class="eyebrow">Crie do seu jeito</span><h1>Prévia</h1></div><span class="preview-info" id="previewInfo"></span></div>
     <div class="stage" id="stage">
       <canvas id="canvas"></canvas>
       <canvas id="overlay"></canvas>
     </div>
     <div class="add-bar" role="toolbar" aria-label="Adicionar camada">
-      <button class="chip chip-accent" id="btnTemplates"><i class="sw sw-tpl"></i> Modelos</button>
-      <button class="chip chip-accent" id="btnCode"><i class="sw sw-code"></i> Código</button>
+      <span class="add-label">Adicionar</span>
+      <button class="chip chip-media" data-add="video"><i class="sw sw-video"></i> Vídeo</button>
+      <button class="chip chip-media" data-add="image"><i class="sw sw-image"></i> Imagem</button>
+      <button class="chip chip-media" data-add="audio"><i class="sw sw-audio"></i> Música</button>
+      <span class="tool-divider" aria-hidden="true"></span>
       <button class="chip" data-add="text"><b>T</b> Texto</button>
       <button class="chip" data-add="rect"><i class="sw sw-rect"></i> Retângulo</button>
       <button class="chip" data-add="ellipse"><i class="sw sw-ellipse"></i> Círculo</button>
       <button class="chip" data-add="star"><i class="sw sw-star"></i> Estrela</button>
       <button class="chip" data-add="path"><i class="sw sw-pen"></i> Caneta</button>
-      <button class="chip" data-add="image"><i class="sw sw-image"></i> Imagem</button>
-      <button class="chip" data-add="video"><i class="sw sw-video"></i> Vídeo</button>
-      <button class="chip" data-add="audio"><i class="sw sw-audio"></i> Música</button>
       <button class="chip" data-add="group"><i class="sw sw-group"></i> Grupo</button>
+      <span class="tool-divider" aria-hidden="true"></span>
+      <button class="chip chip-accent" id="btnTemplates"><i class="sw sw-tpl"></i> Modelos</button>
+      <button class="chip chip-accent" id="btnCode"><i class="sw sw-code"></i> Código</button>
       <input type="file" id="mediaInput" hidden>
       <input type="file" id="projectInput" accept=".json,application/json" hidden>
     </div>
+    <p class="stage-hint">Arraste para mover <span>·</span> <kbd>Espaço</kbd> para reproduzir <span>·</span> <kbd>K</kbd> para animar</p>
   </main>
 
   <section class="timeline" id="timeline" aria-label="Linha do tempo">
     <div class="tl-head">
+      <h2 class="timeline-title">Linha do tempo</h2>
       <button class="icon-btn play" id="btnPlay" aria-label="Reproduzir (Espaço)" title="Reproduzir (Espaço)"><svg viewBox="0 0 24 24" class="i-play"><path d="M7 4.5v15l12.5-7.5z"/></svg><svg viewBox="0 0 24 24" class="i-pause"><path d="M7 4.5h3.5v15H7zM13.5 4.5H17v15h-3.5z"/></svg></button>
       <button class="icon-btn" id="btnStart" aria-label="Voltar ao início" title="Voltar ao início (Home)"><svg viewBox="0 0 24 24"><path d="M6 5v14"/><path d="m18 5-9 7 9 7z"/></svg></button>
       <button class="icon-btn" id="btnSplit" aria-label="Dividir camada na agulha (S)" title="Dividir camada na agulha (S)"><svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg></button>

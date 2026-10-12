@@ -133,6 +133,8 @@ const canvas = $('#canvas');
 const ctx = canvas.getContext('2d');
 const overlay = $('#overlay');
 const octx = overlay.getContext('2d');
+const themeStyle = getComputedStyle(document.documentElement);
+const theme = Object.fromEntries(['accent', 'select', 'bg', 'line', 'muted', 'white', 'audio'].map(k => [k, themeStyle.getPropertyValue(`--${k}`).trim()]));
 const off = document.createElement('canvas');
 const offCtx = off.getContext('2d');
 const P = () => S.project;
@@ -856,9 +858,9 @@ function drawMotionPath(L, k, dpr) {
     const on = Math.abs(t - S.time) < 0.5 / P().fps;
     octx.beginPath();
     octx.rect(q.x - 5 * dpr, q.y - 5 * dpr, 10 * dpr, 10 * dpr);
-    octx.fillStyle = on ? '#ffffff' : '#ffb547';
+    octx.fillStyle = on ? theme.white : theme.accent;
     octx.fill();
-    octx.lineWidth = 1.5 * dpr; octx.strokeStyle = '#0e0f14'; octx.stroke();
+    octx.lineWidth = 1.5 * dpr; octx.strokeStyle = theme.bg; octx.stroke();
   }
 }
 
@@ -869,7 +871,7 @@ function drawOverlay() {
   octx.clearRect(0, 0, overlay.width, overlay.height);
   if (penPts && penPts.length > 1) {
     const k = S.view * dpr;
-    octx.strokeStyle = '#ffb547'; octx.lineWidth = 3 * dpr; octx.lineCap = 'round'; octx.lineJoin = 'round';
+    octx.strokeStyle = theme.accent; octx.lineWidth = 3 * dpr; octx.lineCap = 'round'; octx.lineJoin = 'round';
     octx.beginPath(); penPts.forEach((q, i) => (i ? octx.lineTo(q.x * k, q.y * k) : octx.moveTo(q.x * k, q.y * k))); octx.stroke();
     return;
   }
@@ -880,7 +882,7 @@ function drawOverlay() {
   const k = S.view * dpr;
   const m = pt => [pt.x * k, pt.y * k];
   octx.lineWidth = 1.5 * dpr;
-  octx.strokeStyle = '#6fd8ff';
+  octx.strokeStyle = theme.select;
   octx.setLineDash(L.type === 'group' ? [6 * dpr, 4 * dpr] : []);
   octx.beginPath();
   h.corners.forEach((pt, i) => (i ? octx.lineTo(...m(pt)) : octx.moveTo(...m(pt))));
@@ -892,8 +894,8 @@ function drawOverlay() {
   }
   octx.beginPath(); octx.moveTo(...m(h.top)); octx.lineTo(...m(h.rotate)); octx.stroke();
   const dot = (pt, r, fill) => { octx.beginPath(); octx.arc(...m(pt), r * dpr, 0, Math.PI * 2); octx.fillStyle = fill; octx.fill(); octx.stroke(); };
-  dot(h.rotate, 6, '#0e0f14');
-  dot(h.scale, 7, '#6fd8ff');
+  dot(h.rotate, 6, theme.bg);
+  dot(h.scale, 7, theme.select);
   drawMotionPath(L, k, dpr);
 }
 
@@ -1044,6 +1046,8 @@ function refreshTime() {
   syncMedia();
   renderMain(); drawOverlay(); updatePlayhead();
   $('#timecode').textContent = fmtTime(S.time);
+  const info = `${P().aspect} · ${P().width} × ${P().height} · ${P().fps} fps`;
+  if ($('#previewInfo').textContent !== info) $('#previewInfo').textContent = info;
   syncPanel();
 }
 function setTime(t) { S.time = clamp(snap(t), 0, P().duration); refreshTime(); }
@@ -1089,6 +1093,7 @@ function renderTimeline() {
   if (!p) return;
   const trackW = TL_PAD * 2 + p.duration * S.pps;
   $('#tlInner').style.width = labelW() + trackW + 'px';
+  $('#tlInner').style.setProperty('--grid-step', `${S.pps}px`);
   $('#tlDur').textContent = '/ ' + fmtTime(p.duration);
 
   const ticks = $('#tlTicks');
@@ -1120,7 +1125,7 @@ function renderTimeline() {
     return `<div class="tl-row${L.id === S.sel ? ' sel' : ''}${L.visible ? '' : ' off'}" data-id="${L.id}">
       <div class="tl-label" style="padding-left:${8 + d * 10}px"><button class="eye" data-eye aria-label="${L.visible ? 'Ocultar' : 'Mostrar'} camada">${L.visible ? eyeOn : eyeOff}</button>${muteBtn}<i class="type-dot ${L.type}"></i>${tag}<span class="name">${esc(L.name)}</span></div>
       <div class="tl-track" style="width:${trackW}px">
-        <div class="clip ${L.type}" style="left:${tx(L.start)}px;width:${(L.end - L.start) * S.pps}px">${MEDIA(L.type) ? `<canvas class="wave" data-wave="${L.id}"></canvas>` : ''}<span class="h l"></span><span class="h r"></span></div>
+        <div class="clip ${L.type}" style="left:${tx(L.start)}px;width:${(L.end - L.start) * S.pps}px">${MEDIA(L.type) ? `<canvas class="wave" data-wave="${L.id}"></canvas>` : ''}<span class="clip-label">${esc(L.name)}</span><span class="h l"></span><span class="h r"></span></div>
         ${kfs}
       </div></div>`;
   }).join('') || `<div class="tl-row"><div class="tl-label" style="color:var(--muted)">Vazio</div><div class="tl-track" style="width:${trackW}px"></div></div>`;
@@ -1139,7 +1144,7 @@ function drawWaves() {
     cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
     const c = cv.getContext('2d');
     c.scale(dpr, dpr);
-    c.fillStyle = L.type === 'audio' ? 'rgba(111,216,255,.75)' : 'rgba(255,255,255,.35)';
+    c.fillStyle = hexA(L.type === 'audio' ? theme.audio : theme.white, L.type === 'audio' ? 0.55 : 0.25);
     const mid = h / 2;
     const sp = L.s && L.s.speed ? L.s.speed : 1;
     for (let x = 0; x < w; x += 2) {
@@ -1291,7 +1296,7 @@ const fillRows = (colorKey, label) => `${selectRow('fillType', 'Preenchimento', 
 function renderPanel() {
   const scroll = panel.scrollTop;
   const L = selLayer();
-  panel.innerHTML = L ? layerPanel(L) : projectPanel();
+  panel.innerHTML = `<div class="inspector-head"><div><span class="eyebrow">${L ? TYPE_NAMES[L.type] : 'Seu espaço de criação'}</span><h2>Propriedades</h2></div><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/></svg></div>` + (L ? layerPanel(L) : projectPanel());
   panel.scrollTop = scroll;
   syncPanel(true);
   const cv = $('#curveCv', panel);
@@ -1312,22 +1317,22 @@ function setupCurve(cv, L) {
     cv.width = Math.round(g.W * dpr); cv.height = Math.round(g.H * dpr);
     const c = cv.getContext('2d');
     c.scale(dpr, dpr);
-    c.strokeStyle = '#2b2f45'; c.lineWidth = 1;
+    c.strokeStyle = theme.line; c.lineWidth = 1;
     for (const y of [0, 1]) { c.beginPath(); c.moveTo(X(0, g), Y(y, g)); c.lineTo(X(1, g), Y(y, g)); c.stroke(); }
     const fn = easeFn(k);
-    c.strokeStyle = '#ffb547'; c.lineWidth = 2.5; c.beginPath();
+    c.strokeStyle = theme.accent; c.lineWidth = 2.5; c.beginPath();
     for (let i = 0; i <= 80; i++) { const x = i / 80, y = fn(x); i ? c.lineTo(X(x, g), Y(y, g)) : c.moveTo(X(x, g), Y(y, g)); }
     c.stroke();
     const bz = k.e === 'custom' && k.bz ? k.bz : BEZ_OF[k.e];
     if (bz) {
-      c.strokeStyle = '#6fd8ff'; c.lineWidth = 1.5;
+      c.strokeStyle = theme.select; c.lineWidth = 1.5;
       const hs = [[0, 0, bz[0], bz[1]], [1, 1, bz[2], bz[3]]];
       for (const [ax, ay, hx, hy] of hs) {
         c.beginPath(); c.moveTo(X(ax, g), Y(ay, g)); c.lineTo(X(hx, g), Y(hy, g)); c.stroke();
-        c.beginPath(); c.arc(X(hx, g), Y(hy, g), 6, 0, Math.PI * 2); c.fillStyle = '#6fd8ff'; c.fill();
+        c.beginPath(); c.arc(X(hx, g), Y(hy, g), 6, 0, Math.PI * 2); c.fillStyle = theme.select; c.fill();
       }
     } else {
-      c.fillStyle = '#8a8ea9'; c.font = '12px Figtree, sans-serif'; c.fillText('Arraste para editar como curva', X(0, g), Y(1.3, g));
+      c.fillStyle = theme.muted; c.font = '12px Figtree, sans-serif'; c.fillText('Arraste para editar como curva', X(0, g), Y(1.3, g));
     }
   };
   draw();
@@ -2011,7 +2016,12 @@ $('#btnRedo').onclick = redo;
 let saveTimer = null;
 function scheduleSave() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => { try { localStorage.setItem(STORE_KEY, snapshot()); } catch { /* armazenamento indisponível */ } }, 600);
+  const status = $('#saveStatus');
+  status.textContent = 'Salvando…'; status.dataset.state = 'pending';
+  saveTimer = setTimeout(() => {
+    try { localStorage.setItem(STORE_KEY, snapshot()); status.textContent = 'Salvo neste aparelho'; status.dataset.state = 'saved'; }
+    catch { status.textContent = 'Só nesta sessão'; status.dataset.state = 'error'; }
+  }, 600);
 }
 function loadSaved() {
   try {
