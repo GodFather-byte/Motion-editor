@@ -1,32 +1,39 @@
 # Handoff
-Atualizado por: Claude em 12/10/2026
+Atualizado por: Codex em 12/10/2026
 
 ## Objetivo atual
-App completo e publicado. Fase atual: testar com usuários reais e corrigir o que aparecer.
+Adicionar ferramentas de edição de vídeo. Novos recursos implementados e testados.
 
 ## Feito nesta sessão
-- Revisei o commit do Antigravity (dividir, velocidade, mudo, congelar quadro, espelhar, novas animações, modal de exportação). Tudo mantido.
-- Corrigido: com velocidade diferente de 1x o som da exportação cortava cedo (2x) ou passava do fim do bloco (0,5x). `start()` do Web Audio recebe duração em segundos do arquivo.
-- Corrigido: velocidade era salva como texto; agora é número (inclusive em projetos antigos, via `normalize`).
-- Mudar a velocidade agora reajusta o tamanho do bloco na timeline (mesmo trecho do arquivo).
-- Dividir camada mantém todos os keyframes nas duas partes (antes a curva mudava no corte).
-- Congelar quadro herda o "Seguir camada" do vídeo; botão Exportar não quebra sem MediaRecorder.
-- sw.js em motion-v7.
+- Looks Cinema, Vibrante, Quente, Frio, Vintage e Preto e branco, com intensidade.
+- Transições ajustáveis de entrada/saída: dissolver, zoom e cortina lateral.
+- Enquadramento inteiro/recorte/livre, ponto focal X/Y e botão Quadro do projeto.
+- Split preserva a continuidade das transições, inclusive no quadro exato do corte.
+- Congelar quadro preserva enquadramento, look e vínculo com camada pai.
+- Corrigidos duração de áudio por velocidade, trim em segundos de fonte e fades longos.
+- Testes de navegador com vídeo/áudio reais; seis testes passaram, incluindo 360 px e exportação.
+- Integradas correções de velocidade numérica e curvas de keyframe no split.
+- Cache PWA atualizado para motion-v8.
 
 ## Próximo passo
-Testar com a chave real do Gemini e com vídeos longos gravados no celular.
+Validar arquivos longos e exportação em aparelhos reais, sobretudo Safari.
 
 ## Arquivos relevantes
-- app.js: `scheduleAudio`, painel (`key === 'speed'`), `splitLayer`, `freezeFrame`, `exportModal`
+- app.js: transitionState, drawFramedMedia, COLOR_LOOKS, controles do painel e áudio.
+- tests/video-editor.cjs: regressões de edição, persistência, exportação e áudio.
+- README.md: uso e comando de testes. .ai/MAPA.md atualizado.
 
 ## Decisões tomadas e motivo
-- Keyframes ficam em tempo absoluto; dividir só muda start/end (e trimIn da mídia).
-- Animação de texto (pop, rise…) recomeça na parte 2 de um texto dividido, igual a outros editores.
+- Efeitos independentes de p/kf preservam animações e compatibilidade com projetos antigos.
+- Transições são de camada; não fazem união automática/crossfade entre clipes.
+- Enquadramento usa recorte da fonte no canvas, sem dependências nem build.
 
 ## Pendências e armadilhas
-- Remover fundo usa @imgly/background-removal (AGPL).
-- Exportação é em tempo real: a aba precisa ficar visível.
-- Tecla S divide a camada mesmo com Ctrl (Ctrl+S não salva a página).
+- Exportação é em tempo real e exige a aba visível.
+- Congelar quadro captura o frame da mídia com enquadramento/look, sem congelar transições.
+- Gemini real e remoção de fundo não foram exercitados nesta sessão.
+- Sempre aumentar VERSION em sw.js quando mudar o app.
 
 ## Como rodar e testar
-`python3 -m http.server 8000` e abrir http://localhost:8000. `node --check app.js` para sintaxe.
+`python3 -m http.server 8000`, `node --check app.js`, `node --test tests/video-editor.cjs`.
+Testes requerem Playwright, Chromium, FFmpeg e Python (presentes neste ambiente).

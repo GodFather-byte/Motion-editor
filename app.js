@@ -83,6 +83,17 @@ const PROPS = {
 };
 const TRANSFORM = ['x', 'y', 'scale', 'rotation', 'opacity'];
 const COLOR_PROPS = ['brightness', 'contrast', 'saturate', 'hue'];
+const COLOR_LOOKS = {
+  none: { label: 'Original' },
+  cinema: { label: 'Cinema', contrast: 118, saturate: 85, sepia: 12 },
+  vivid: { label: 'Vibrante', contrast: 110, saturate: 140 },
+  warm: { label: 'Quente', sepia: 35, saturate: 115 },
+  cool: { label: 'Frio', sepia: 25, hue: 170, saturate: 85 },
+  vintage: { label: 'Vintage', brightness: 110, contrast: 88, saturate: 75, sepia: 45 },
+  mono: { label: 'Preto e branco', saturate: 0, contrast: 115 },
+};
+const TRANSITIONS = { none: 'Nenhuma', fade: 'Dissolver', zoom: 'Zoom suave', wipe: 'Cortina lateral' };
+const MEDIA_FITS = { stretch: 'Livre (esticar)', contain: 'Mostrar inteiro', cover: 'Preencher e recortar' };
 const TEXT_ANIMS = {
   none: 'Nenhuma', typewriter: 'Máquina de escrever', rise: 'Subir letra por letra',
   pop: 'Estourar letras', fade: 'Aparecer letra por letra', words: 'Palavra por palavra',
@@ -269,7 +280,7 @@ function syncMedia() {
     const rec = A.get(L.s.asset);
     const sp = L.s.speed || 1;
     const local = (S.time - L.start) * sp + (L.s.trimIn || 0);
-    const active = L.visible && S.time >= L.start && S.time <= L.end && local <= (rec.duration || Infinity);
+    const active = L.visible && S.time >= L.start && (S.time < L.end || S.time === P().duration && L.end === P().duration) && local <= (rec.duration || Infinity);
     if (!active) { if (!v.paused) v.pause(); continue; }
     if (Math.abs(v.playbackRate - sp) > 1e-4) { try { v.playbackRate = sp; } catch {} }
     if (running) {
@@ -304,17 +315,30 @@ function scheduleAudio(ac, dest, from) {
     if (src.playbackRate) { try { src.playbackRate.setValueAtTime(sp, when); } catch {} }
     const g = ac.createGain();
     src.connect(g); g.connect(dest);
-    const fi = L.s.fadeIn || 0, fo = L.s.fadeOut || 0;
+    const rem = (rec.buffer.duration - offset) / sp;
+    const duration = Math.min(len - into, rem);
+    if (duration <= 0) continue;
+    let fi = Math.max(0, L.s.fadeIn || 0), fo = Math.max(0, L.s.fadeOut || 0);
+    // Fades longos dividem o clipe proporcionalmente, sem eventos no passado.
+    const fadeScale = Math.min(1, len / (fi + fo || 1));
+    fi *= fadeScale; fo *= fadeScale;
     const env = x => vol * Math.max(0, Math.min(1, fi > 0 ? x / fi : 1, fo > 0 ? (len - x) / fo : 1));
     g.gain.setValueAtTime(env(into), when);
-    if (fi > 0 && into < fi) g.gain.linearRampToValueAtTime(env(Math.min(fi, len - fo)), when + (Math.min(fi, len - fo) - into));
+    if (fi > 0 && into < fi) {
+      const end = Math.min(fi, into + duration);
+      g.gain.linearRampToValueAtTime(env(end), when + end - into);
+    }
     if (fo > 0) {
       const foStart = Math.max(into, len - fo);
-      g.gain.setValueAtTime(env(foStart), when + (foStart - into));
-      g.gain.linearRampToValueAtTime(0, when + (len - into));
+      if (foStart < into + duration) {
+        g.gain.setValueAtTime(env(foStart), when + (foStart - into));
+        const end = into + duration;
+        g.gain.linearRampToValueAtTime(env(end), when + duration);
+      }
     }
-    // start() conta a duração em segundos do arquivo; com velocidade, a timeline anda sp vezes mais rápido
-    src.start(when, offset, Math.max(0.01, Math.min((len - into) * sp, rec.buffer.duration - offset)));
+    // start() usa segundos da fonte; stop() usa segundos de reprodução.
+    src.start(when, offset, duration * sp);
+    src.stop(when + duration);
     out.push(src);
   }
   return out;
@@ -330,7 +354,8 @@ function newProject(aspect = '9:16') {
 
 function defaultS(type) {
   const p = P(), m = Math.min(p.width, p.height);
-  const look = { blend: 'source-over', clip: false, shadowX: 0, shadowY: 0, shadowBlur: 0, shadowColor: '#000000', shadowOpacity: 60, fillType: 'solid', gradAngle: 90, flipH: false, flipV: false };
+  const look = { blend: 'source-over', clip: false, shadowX: 0, shadowY: 0, shadowBlur: 0, shadowColor: '#000000', shadowOpacity: 60, fillType: 'solid', gradAngle: 90, flipH: false, flipV: false, colorLook: 'none', lookIntensity: 100, transitionIn: 'none', transitionOut: 'none', transitionInDuration: 0.5, transitionOutDuration: 0.5 };
+  const framing = { mediaFit: 'stretch', focalX: 50, focalY: 50 };
   const media = { asset: null, trimIn: 0, volume: 100, fadeIn: 0, fadeOut: 0, speed: 1, muted: false };
   switch (type) {
     case 'text': return { ...look, text: 'Seu texto', font: 'Montserrat', size: Math.round(m * 0.11), weight: 900, color: '#ffffff', fill2: '#ffb547', align: 'center', stroke: 0, strokeColor: '#000000', glowColor: '#ffb547', anim: 'none' };
@@ -338,8 +363,8 @@ function defaultS(type) {
     case 'ellipse': return { ...look, w: Math.round(m * 0.36), h: Math.round(m * 0.36), fill: '#b89cff', fill2: '#6fd8ff', glowColor: '#b89cff' };
     case 'star': return { ...look, w: Math.round(m * 0.4), points: 5, inner: 0.45, fill: '#ffb547', fill2: '#ff6b4a', glowColor: '#ffb547' };
     case 'path': return { ...look, points: [], stroke: '#ffb547', width: Math.max(4, Math.round(m * 0.012)), fillOn: false, fill: '#ffb547', fill2: '#ff6b4a', glowColor: '#ffb547' };
-    case 'image': return { ...look, asset: null, w: 400, h: 400, glowColor: '#ffffff' };
-    case 'video': return { ...look, ...media, w: 800, h: 450, glowColor: '#ffffff' };
+    case 'image': return { ...look, ...framing, asset: null, w: 400, h: 400, glowColor: '#ffffff' };
+    case 'video': return { ...look, ...framing, ...media, w: 800, h: 450, glowColor: '#ffffff' };
     case 'audio': return { ...media };
     case 'group': return { blend: 'source-over', clip: false };
   }
@@ -443,15 +468,34 @@ function deleteKeyframesAt(L, t) {
 }
 
 /* transformações encadeadas (camada que segue outra) */
-const localMatrix = (L, t) => { const sc = val(L, 'scale', t) / 100; return new DOMMatrix().translate(val(L, 'x', t), val(L, 'y', t)).rotate(val(L, 'rotation', t)).scale(sc, sc); };
+function transitionState(L, t) {
+  const s = L.s;
+  // Uma divisão mantém as bordas originais para não repetir a transição no corte.
+  const start = s.transitionStart ?? L.start, end = s.transitionEnd ?? L.end;
+  const len = Math.max(0, end - start);
+  let di = s.transitionIn !== 'none' ? clamp(+s.transitionInDuration || 0, 0, 10) : 0;
+  let dout = s.transitionOut !== 'none' ? clamp(+s.transitionOutDuration || 0, 0, 10) : 0;
+  const k = Math.min(1, len / (di + dout || 1));
+  di *= k; dout *= k;
+  const enter = di > 0 ? EASES.easeInOut(clamp((t - start) / di, 0, 1)) : 1;
+  const exit = dout > 0 ? EASES.easeInOut(clamp((end - t) / dout, 0, 1)) : 1;
+  const fades = type => type === 'fade' || type === 'zoom';
+  return {
+    alpha: (fades(s.transitionIn) ? enter : 1) * (fades(s.transitionOut) ? exit : 1),
+    zoom: (s.transitionIn === 'zoom' ? 0.85 + 0.15 * enter : 1) * (s.transitionOut === 'zoom' ? 0.85 + 0.15 * exit : 1),
+    left: s.transitionOut === 'wipe' ? 1 - exit : 0,
+    right: s.transitionIn === 'wipe' ? enter : 1,
+  };
+}
+const localMatrix = (L, t) => { const sc = val(L, 'scale', t) / 100 * transitionState(L, t).zoom; return new DOMMatrix().translate(val(L, 'x', t), val(L, 'y', t)).rotate(val(L, 'rotation', t)).scale(sc, sc); };
 function parentMatrix(L, t, depth = 0) {
   const par = L.parent && byId(L.parent);
   return par && depth < 16 ? worldMatrix(par, t, depth + 1) : new DOMMatrix();
 }
 function worldMatrix(L, t, depth = 0) { return parentMatrix(L, t, depth).multiply(localMatrix(L, t)); }
 function worldOpacity(L, t) {
-  let op = clamp(val(L, 'opacity', t), 0, 100) / 100, cur = L, n = 0;
-  while (cur.parent && n++ < 16) { cur = byId(cur.parent); if (!cur) break; op *= clamp(val(cur, 'opacity', t), 0, 100) / 100; }
+  let op = clamp(val(L, 'opacity', t), 0, 100) / 100 * transitionState(L, t).alpha, cur = L, n = 0;
+  while (cur.parent && n++ < 16) { cur = byId(cur.parent); if (!cur) break; op *= clamp(val(cur, 'opacity', t), 0, 100) / 100 * transitionState(cur, t).alpha; }
   return op;
 }
 const mScale = m => Math.hypot(m.a, m.b);
@@ -467,7 +511,7 @@ function setParent(L, parentId) {
   L.parent = parentId || null;
   const pm = parentMatrix(L, t);
   const local = pm.inverse().transformPoint(pos);
-  const target = { x: local.x, y: local.y, rotation: rot - mRot(pm), scale: sc / (mScale(pm) || 1) };
+  const target = { x: local.x, y: local.y, rotation: rot - mRot(pm), scale: sc / (mScale(pm) || 1) / transitionState(L, t).zoom };
   for (const prop of ['x', 'y', 'rotation']) {
     const d = target[prop] - val(L, prop, t);
     L.p[prop] += d; (L.kf[prop] || []).forEach(k => (k.v += d));
@@ -621,6 +665,19 @@ function drawMissing(c, w, h, label) {
   c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(label, 0, 0);
 }
 
+function drawFramedMedia(c, source, sw, sh, s) {
+  const { w, h } = s;
+  if (s.mediaFit === 'cover') {
+    const k = Math.max(w / sw, h / sh), cw = w / k, ch = h / k;
+    const x = (sw - cw) * clamp((s.focalX ?? 50) / 100, 0, 1);
+    const y = (sh - ch) * clamp((s.focalY ?? 50) / 100, 0, 1);
+    c.drawImage(source, x, y, cw, ch, -w / 2, -h / 2, w, h);
+  } else if (s.mediaFit === 'contain') {
+    const k = Math.min(w / sw, h / sh), dw = sw * k, dh = sh * k;
+    c.drawImage(source, -dw / 2, -dh / 2, dw, dh);
+  } else c.drawImage(source, -w / 2, -h / 2, w, h);
+}
+
 function drawShape(c, L, local) {
   const s = L.s;
   if (s.flipH || s.flipV) c.scale(s.flipH ? -1 : 1, s.flipV ? -1 : 1);
@@ -645,13 +702,13 @@ function drawShape(c, L, local) {
     case 'path': return drawPath(c, L, local + L.start);
     case 'image': {
       const rec = A.get(s.asset);
-      if (rec && rec.el && rec.el.naturalWidth) c.drawImage(rec.el, -s.w / 2, -s.h / 2, s.w, s.h);
+      if (rec && rec.el && rec.el.naturalWidth) drawFramedMedia(c, rec.el, rec.el.naturalWidth, rec.el.naturalHeight, s);
       else drawMissing(c, s.w, s.h, 'Imagem');
       return { w: s.w, h: s.h };
     }
     case 'video': {
       const v = VIDS.get(L.id) || videoFor(L);
-      if (v && v.readyState >= 2) c.drawImage(v, -s.w / 2, -s.h / 2, s.w, s.h);
+      if (v && v.readyState >= 2) drawFramedMedia(c, v, v.videoWidth, v.videoHeight, s);
       else drawMissing(c, s.w, s.h, A.get(s.asset) ? 'Carregando…' : 'Vídeo');
       return { w: s.w, h: s.h };
     }
@@ -660,7 +717,7 @@ function drawShape(c, L, local) {
 }
 
 function drawLayer(c, L, t, comp) {
-  if (!VISUAL(L.type) || !L.visible || t < L.start || t > L.end) { S.bounds.delete(L.id); return; }
+  if (!VISUAL(L.type) || !L.visible || t < L.start || t > L.end || t === L.end && t < P().duration) { S.bounds.delete(L.id); return; }
   const m = worldMatrix(L, t);
   const op = worldOpacity(L, t);
   if (op <= 0 || mScale(m) < 1e-6) { S.bounds.delete(L.id); return; }
@@ -674,6 +731,15 @@ function drawLayer(c, L, t, comp) {
   if (co !== 100) f.push(`contrast(${co}%)`);
   if (sa !== 100) f.push(`saturate(${sa}%)`);
   if (hu) f.push(`hue-rotate(${hu}deg)`);
+  const look = COLOR_LOOKS[s.colorLook] || COLOR_LOOKS.none;
+  const intensity = clamp((s.lookIntensity ?? 100) / 100, 0, 1);
+  // O look é independente dos ajustes manuais e dos keyframes de cor.
+  for (const key of ['sepia', 'brightness', 'contrast', 'saturate', 'hue']) {
+    if (look[key] == null || intensity === 0) continue;
+    const base = key === 'sepia' || key === 'hue' ? 0 : 100;
+    const v = base + (look[key] - base) * intensity;
+    f.push(key === 'hue' ? `hue-rotate(${v}deg)` : `${key}(${v}%)`);
+  }
   const filter = f.join(' ') || 'none';
   const glow = Math.max(0, val(L, 'glow', t));
   const shadowOn = (s.shadowBlur > 0 || s.shadowX || s.shadowY) && s.shadowOpacity > 0;
@@ -687,6 +753,12 @@ function drawLayer(c, L, t, comp) {
     c.globalAlpha = op;
     c.globalCompositeOperation = comp || s.blend || 'source-over';
     c.filter = filter;
+    if ((L.type === 'image' || L.type === 'video') && (s.transitionIn === 'wipe' || s.transitionOut === 'wipe')) {
+      const tr = transitionState(L, t);
+      c.beginPath();
+      c.rect(-s.w / 2 + s.w * tr.left, -s.h / 2, s.w * Math.max(0, tr.right - tr.left), s.h);
+      c.clip();
+    }
     if (pass === 'shadow') {
       c.shadowColor = hexA(s.shadowColor, s.shadowOpacity / 100);
       c.shadowBlur = s.shadowBlur; c.shadowOffsetX = s.shadowX; c.shadowOffsetY = s.shadowY;
@@ -833,7 +905,7 @@ const toProject = e => { const r = overlay.getBoundingClientRect(); return { x: 
 
 function hitTest(pt) {
   for (const L of P().layers) {
-    if (!VISUAL(L.type) || L.type === 'group' || !L.visible || S.time < L.start || S.time > L.end) continue;
+    if (!VISUAL(L.type) || L.type === 'group' || !L.visible || S.time < L.start || S.time > L.end || S.time === L.end && S.time < P().duration) continue;
     const b = S.bounds.get(L.id);
     if (!b) continue;
     const m = worldMatrix(L, S.time);
@@ -1124,6 +1196,7 @@ rows.addEventListener('pointerdown', e => {
 
   const mode = e.target.classList.contains('l') ? 'l' : e.target.classList.contains('r') ? 'r' : 'move';
   const s0 = L.start, e0 = L.end, dur = P().duration, trim0 = L.s.trimIn || 0, isMedia = MEDIA(L.type);
+  const trStart0 = L.s.transitionStart, trEnd0 = L.s.transitionEnd;
   const sp = L.s.speed || 1;
   if (L.id !== S.sel) select(L.id);
   const clip = row.querySelector('.clip');
@@ -1137,18 +1210,24 @@ rows.addEventListener('pointerdown', e => {
       if (Math.abs(ns - S.time) < 8 / S.pps) { dt = S.time - s0; ns = s0 + dt; ne = e0 + dt; }
       else if (Math.abs(ne - S.time) < 8 / S.pps) { dt = S.time - e0; ns = s0 + dt; ne = e0 + dt; }
       L.start = ns; L.end = ne;
+      if (trStart0 != null) L.s.transitionStart = trStart0 + dt;
+      if (trEnd0 != null) L.s.transitionEnd = trEnd0 + dt;
       kfEls.forEach(k => (k.el.style.left = tx(k.t + dt) + 'px'));
     } else if (mode === 'l') {
       const minStart = isMedia ? Math.max(0, s0 - trim0 / sp) : 0;
       let ns = clamp(snap(s0 + dt), minStart, L.end - 0.1);
       if (Math.abs(ns - S.time) < 8 / S.pps && S.time >= minStart && S.time <= L.end - 0.1) ns = snap(S.time);
       L.start = ns;
+      if (ns !== s0) delete L.s.transitionStart;
+      else if (trStart0 != null) L.s.transitionStart = trStart0;
       if (isMedia) L.s.trimIn = round(trim0 + (L.start - s0) * sp, 4);
     } else {
       const maxEnd = isMedia ? Math.min(dur, L.start + mediaRemaining(L)) : dur;
       let ne = clamp(snap(e0 + dt), L.start + 0.1, maxEnd);
       if (Math.abs(ne - S.time) < 8 / S.pps && S.time >= L.start + 0.1 && S.time <= maxEnd) ne = snap(S.time);
       L.end = ne;
+      if (ne !== e0) delete L.s.transitionEnd;
+      else if (trEnd0 != null) L.s.transitionEnd = trEnd0;
     }
     clip.style.left = tx(L.start) + 'px';
     clip.style.width = (L.end - L.start) * S.pps + 'px';
@@ -1180,7 +1259,7 @@ const propRow = prop => {
 const numRow = (key, label, mn, mx, step = 1) =>
   `<div class="row"><label for="s-${key}">${label}</label>
     <input type="range" data-s="${key}" min="${mn}" max="${mx}" step="${step}" aria-label="${label}">
-    <input type="number" id="s-${key}" data-s="${key}" step="${step}"><span></span></div>`;
+    <input type="number" id="s-${key}" data-s="${key}" min="${mn}" max="${mx}" step="${step}"><span></span></div>`;
 const colorRow = (key, label) => `<div class="row plain"><label for="s-${key}">${label}</label><input type="color" id="s-${key}" data-s="${key}"></div>`;
 const selectRow = (key, label, opts) =>
   `<div class="row plain"><label for="s-${key}">${label}</label><select id="s-${key}" data-s="${key}">${Object.entries(opts).map(([v, t]) => `<option value="${esc(v)}">${esc(t)}</option>`).join('')}</select></div>`;
@@ -1302,6 +1381,10 @@ function layerPanel(L) {
       <div data-show="fillOn">${fillRows('fill', 'Cor do preenchimento')}</div>`;
   } else if (L.type === 'image' || L.type === 'video') {
     content = numRow('w', 'Largura', 1, 6000) + numRow('h', 'Altura', 1, 6000) +
+      selectRow('mediaFit', 'Enquadrar', MEDIA_FITS) +
+      `<div data-show="focal">${numRow('focalX', 'Foco X %', 0, 100)}${numRow('focalY', 'Foco Y %', 0, 100)}</div>
+      <p class="hint">Preencher recorta sem deformar. Ajuste o foco para manter a pessoa ou o objeto no quadro.</p>
+      <div class="actions"><button class="btn btn-small" data-act="media-frame">Quadro do projeto</button></div>` +
       `<div class="actions"><button class="btn btn-small" data-act="replace-media">Trocar arquivo</button><button class="btn btn-small" data-act="media-ratio">Proporção original</button><button class="btn btn-small" data-act="media-fill">Preencher a tela</button>${L.type === 'video' ? '<button class="btn btn-small" data-act="freeze-frame" title="Congela o quadro atual como nova camada">Congelar quadro</button>' : ''}${L.type === 'image' ? '<button class="btn btn-small btn-ai" data-act="remove-bg">Remover fundo (IA)</button>' : ''}</div>`;
   } else if (L.type === 'group') {
     content = '<p class="hint">Um grupo não aparece no vídeo. Ele move, gira, escala e esmaece todas as camadas que o seguem. Escolha este grupo em "Seguir camada" nas outras camadas.</p>';
@@ -1353,6 +1436,18 @@ function layerPanel(L) {
     ${selectRow('blend', 'Mistura', BLENDS)}
     ${checkRow('clip', 'Recortar na camada de baixo (máscara)')}</div>
   <div class="sec"><h3>Cor</h3>${COLOR_PROPS.map(propRow).join('')}</div>
+  <div class="sec"><h3>Looks de cor</h3>
+    ${selectRow('colorLook', 'Estilo', Object.fromEntries(Object.entries(COLOR_LOOKS).map(([k, v]) => [k, v.label])))}
+    ${numRow('lookIntensity', 'Intensidade %', 0, 100)}
+    <p class="hint">O estilo se combina com os ajustes de cor. Escolha Original para removê-lo.</p>
+  </div>
+  <div class="sec"><h3>Transições</h3>
+    ${selectRow('transitionIn', 'Entrada', L.type === 'image' || L.type === 'video' ? TRANSITIONS : Object.fromEntries(Object.entries(TRANSITIONS).filter(([k]) => k !== 'wipe')))}
+    ${numRow('transitionInDuration', 'Duração (s)', 0, 10, 0.1)}
+    ${selectRow('transitionOut', 'Saída', L.type === 'image' || L.type === 'video' ? TRANSITIONS : Object.fromEntries(Object.entries(TRANSITIONS).filter(([k]) => k !== 'wipe')))}
+    ${numRow('transitionOutDuration', 'Duração (s)', 0, 10, 0.1)}
+    <p class="hint">Entrada e saída da camada, sem apagar suas animações. Em clipes curtos, as durações se ajustam para caber.</p>
+  </div>
   <div class="sec"><h3>Sombra</h3>${numRow('shadowX', 'Deslocar X', -200, 200)}${numRow('shadowY', 'Deslocar Y', -200, 200)}${numRow('shadowBlur', 'Suavidade', 0, 200)}${numRow('shadowOpacity', 'Opacidade %', 0, 100)}${colorRow('shadowColor', 'Cor')}</div>` : ''}
   ${visual ? `<div class="sec"><h3>Animações prontas</h3>
     <div class="presets">
@@ -1414,6 +1509,7 @@ function syncPanel(full) {
     });
     $$('[data-show="grad"]', panel).forEach(el => (el.hidden = !L.s.fillType || L.s.fillType === 'solid'));
     $$('[data-show="fillOn"]', panel).forEach(el => (el.hidden = !L.s.fillOn));
+    $$('[data-show="focal"]', panel).forEach(el => (el.hidden = L.s.mediaFit !== 'cover'));
     const ts = $('#t-start', panel), te = $('#t-end', panel);
     if (ts && ts !== active) ts.value = round(L.start, 2);
     if (te && te !== active) te.value = round(L.end, 2);
@@ -1439,16 +1535,23 @@ panel.addEventListener('input', e => {
     if (key === 'speed') {
       v = clamp(parseFloat(v) || 1, 0.25, 4);
       const old = Number(L.s.speed) || 1;
+      const oldEnd = L.end;
       L.s.speed = v;
       // mantém o mesmo trecho do arquivo: mais rápido encurta o bloco, mais lento alonga
       L.end = clamp(snap(L.start + (L.end - L.start) * old / v), L.start + 0.1, Math.min(P().duration, L.start + mediaRemaining(L)));
-      renderTimeline(); refreshTime();
+      if (L.end !== oldEnd) delete L.s.transitionEnd;
+      renderTimeline(); refreshTime(); syncPanel(true);
       return;
     }
+    if (['lookIntensity', 'focalX', 'focalY'].includes(key)) v = clamp(v, 0, 100);
+    if (['transitionInDuration', 'transitionOutDuration'].includes(key)) v = clamp(v, 0, 10);
+    if (key === 'transitionIn' || key === 'transitionInDuration') delete L.s.transitionStart;
+    if (key === 'transitionOut' || key === 'transitionOutDuration') delete L.s.transitionEnd;
     L.s[key] = v;
     $$(`[data-s="${key}"]`, panel).forEach(o => { if (o !== el && o.type !== 'checkbox') o.value = v; });
     if (key === 'fillType') $$('[data-show="grad"]', panel).forEach(x => (x.hidden = v === 'solid'));
     if (key === 'fillOn') $$('[data-show="fillOn"]', panel).forEach(x => (x.hidden = !v));
+    if (key === 'mediaFit') $$('[data-show="focal"]', panel).forEach(x => (x.hidden = v !== 'cover'));
     if (key === 'clip' || key === 'trimIn') renderTimeline();
     refreshTime();
   } else if (el.dataset.name !== undefined && L) {
@@ -1472,8 +1575,8 @@ panel.addEventListener('change', e => {
   if (el.dataset.time && L) {
     const v = parseFloat(el.value);
     if (!Number.isNaN(v)) {
-      if (el.dataset.time === 'start') L.start = clamp(snap(v), 0, L.end - 0.1);
-      else L.end = clamp(snap(v), L.start + 0.1, p.duration);
+      if (el.dataset.time === 'start') { L.start = clamp(snap(v), 0, L.end - 0.1); delete L.s.transitionStart; }
+      else { L.end = clamp(snap(v), L.start + 0.1, p.duration); delete L.s.transitionEnd; }
     }
     commit(); renderTimeline(); syncPanel(true); refreshTime();
     return;
@@ -1531,6 +1634,14 @@ panel.addEventListener('click', e => {
     else if (act === 'media-ratio' && L) {
       const rec = A.get(L.s.asset);
       if (rec && rec.w) { L.s.h = Math.round(L.s.w * rec.h / rec.w); commit(); syncPanel(true); refreshTime(); }
+    } else if (act === 'media-frame' && L) {
+      const p = P(), pm = parentMatrix(L, S.time);
+      const center = pm.inverse().transformPoint(new DOMPoint(p.width / 2, p.height / 2));
+      if (![center.x, center.y].every(Number.isFinite)) { toast('A camada que você segue está com escala zero.'); return; }
+      L.s.w = p.width; L.s.h = p.height; L.s.mediaFit = 'cover';
+      setProp(L, 'x', center.x); setProp(L, 'y', center.y);
+      setProp(L, 'scale', 100 / (mScale(pm) || 1)); setProp(L, 'rotation', -mRot(pm));
+      commit(); renderPanel(); renderTimeline(); refreshTime();
     } else if (act === 'media-fill' && L) {
       const rec = A.get(L.s.asset), p = P();
       if (rec && rec.w) {
@@ -1540,8 +1651,8 @@ panel.addEventListener('click', e => {
         commit(); syncPanel(true); renderTimeline(); refreshTime();
       }
     } else if (act === 'fit-project' && L) {
-      const d = mediaDur(L);
-      if (isFinite(d)) { setDuration(Math.ceil((d - (L.s.trimIn || 0)) * 10) / 10 + L.start); L.end = P().duration; commit(); renderTimeline(); renderPanel(); }
+      const d = mediaRemaining(L);
+      if (isFinite(d)) { setDuration(Math.ceil(d * 10) / 10 + L.start); L.end = P().duration; commit(); renderTimeline(); renderPanel(); }
     }
   }
 });
@@ -1552,8 +1663,11 @@ function setDuration(d) {
   const old = p.duration;
   p.duration = d;
   for (const l of p.layers) {
+    const oldStart = l.start, oldEnd = l.end;
     if (Math.abs(l.end - old) < 1e-6) l.end = MEDIA(l.type) ? Math.min(d, l.start + mediaRemaining(l)) : d;
     l.end = clamp(l.end, 0.1, d); l.start = clamp(l.start, 0, l.end - 0.1);
+    if (l.start !== oldStart) delete l.s.transitionStart;
+    if (l.end !== oldEnd) delete l.s.transitionEnd;
   }
   S.time = clamp(S.time, 0, d);
   commit(); renderTimeline(); renderPanel(); refreshTime();
@@ -1659,6 +1773,13 @@ function splitLayer(L, t = S.time) {
   L2.id = uid();
   L2.name = L.name + ' (parte 2)';
   const origEnd = L.end;
+  // Preserve a transição externa mesmo quando o corte ocorre dentro dela.
+  const transitionStart = L.s.transitionStart ?? L.start;
+  const transitionEnd = L.s.transitionEnd ?? origEnd;
+  for (const part of [L, L2]) {
+    part.s.transitionStart = transitionStart;
+    part.s.transitionEnd = transitionEnd;
+  }
   L.end = cut;
   L2.start = cut;
   L2.end = origEnd;
@@ -1703,7 +1824,7 @@ function freezeFrame(L) {
         start: cut,
         end: clamp(snap(cut + 2), cut + 0.5, p.duration),
         p: { ...L.p, x: val(L, 'x'), y: val(L, 'y'), scale: val(L, 'scale'), rotation: val(L, 'rotation'), opacity: val(L, 'opacity') },
-        s: { asset: rec.id, w: L.s.w, h: L.s.h, flipH: !!L.s.flipH, flipV: !!L.s.flipV },
+        s: { asset: rec.id, w: L.s.w, h: L.s.h, flipH: !!L.s.flipH, flipV: !!L.s.flipV, mediaFit: L.s.mediaFit, focalX: L.s.focalX, focalY: L.s.focalY, colorLook: L.s.colorLook, lookIntensity: L.s.lookIntensity },
       });
       addLayer(imgL, true);
       toast('Quadro congelado criado como camada.');

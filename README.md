@@ -23,6 +23,10 @@ Editor de motion graphics que roda direto no navegador e pode ser instalado como
 
 **Som e vídeo**
 - Vídeo e música na linha do tempo, com forma de onda, volume, entrada/saída suave e corte.
+- Dividir na agulha (`S` ou `Ctrl+K`), mudar velocidade de 0,25x a 4x, silenciar (`M`) e congelar quadro.
+- Enquadrar sem deformar: mostrar inteiro ou preencher e recortar, com ponto focal horizontal e vertical. Use **Quadro do projeto** para adaptar um vídeo horizontal ao formato vertical.
+- Transições de entrada e saída com duração ajustável: dissolver, zoom suave e cortina lateral (imagem/vídeo). Preservam os keyframes e continuam no ponto correto após dividir um clipe.
+- Seis looks de cor com intensidade: Cinema, Vibrante, Quente, Frio, Vintage e Preto e branco. Combinam com os ajustes manuais de cor.
 - Exportação em MP4 (Chrome recente e Safari) ou WEBM, com som. Frame atual em PNG.
 
 **IA** (botão IA, usa o Gemini com a chave do próprio usuário)
@@ -67,6 +71,17 @@ O cliente cola a chave em **Seja Pro → Ativar**. Para trocar o par de chaves (
 python3 -m http.server 8000
 # abra http://localhost:8000
 ```
+
+Para usar as novas ferramentas, selecione uma camada e procure **Enquadrar**, **Looks de cor** e **Transições** no painel de propriedades. Os efeitos também são aplicados na exportação.
+
+Testes de navegador, no ambiente de desenvolvimento com Playwright, Chromium, FFmpeg e Python disponíveis:
+
+```bash
+node --check app.js
+node --test tests/video-editor.cjs
+```
+
+O teste inicia seu próprio servidor e gera mídia temporária. Confere recorte, cores, transições, divisão, desfazer/refazer, persistência, exportação e áudio em diferentes velocidades; inclui layout de 360 px. Defina `CHROMIUM_PATH` se o Chromium não estiver em `/usr/bin/chromium`. Essas ferramentas são apenas para testes; o app continua sem instalação de dependências ou build.
 
 ## Estrutura
 
