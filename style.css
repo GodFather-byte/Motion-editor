@@ -226,6 +226,8 @@ textarea.code {
 .sw-image { border-radius: 2px; background: linear-gradient(135deg, var(--select) 0 50%, var(--accent) 50%); }
 .sw-video { border-radius: 2px; background: var(--select); clip-path: polygon(0 10%, 70% 10%, 70% 35%, 100% 15%, 100% 85%, 70% 65%, 70% 90%, 0 90%); }
 .sw-audio { background: var(--select); clip-path: polygon(0 40%, 15% 40%, 15% 20%, 30% 20%, 30% 0, 45% 0, 45% 100%, 30% 100%, 30% 80%, 15% 80%, 15% 60%, 0 60%, 0 40%, 55% 30%, 70% 30%, 70% 10%, 85% 10%, 85% 90%, 70% 90%, 70% 70%, 55% 70%); }
+.sw-photopea { width: 13px; height: 13px; border-radius: 3px; background: #18a499; position: relative; flex-shrink: 0; }
+.sw-photopea::after { content: 'P'; position: absolute; inset: 0; display: grid; place-items: center; font: 800 8.5px/1 var(--font-display); color: #fff; }
 .sw-pen { background: none; border-bottom: 3px solid var(--accent); border-radius: 0 0 0 10px; transform: rotate(-20deg); height: 9px; }
 .chip.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 .chip.on .sw-pen { border-color: var(--accent-ink); }
@@ -451,6 +453,13 @@ input[type=color] { width: 100%; height: 34px; padding: 3px; background: var(--p
   .modal { padding: 12px; }
   .modal-card { padding: 18px; max-height: calc(100dvh - 24px); }
   .modal-actions .btn { min-height: 40px; height: auto; padding: 8px 12px; white-space: normal; }
+  .photopea-modal { padding: 0; }
+  .photopea-card { width: 100vw; height: 100dvh; max-height: 100dvh; border-radius: 0; border: none; }
+  .photopea-bar { padding: 6px 10px; gap: 6px; }
+  .photopea-doc-name { max-width: 110px; font-size: 12px; }
+  .photopea-actions { gap: 6px; }
+  .photopea-actions .btn { height: 34px; padding: 0 8px; font-size: 11px; }
+  .photopea-opt { font-size: 11px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -487,3 +496,34 @@ input[type=color] { width: 100%; height: 34px; padding: 3px; background: var(--p
 .sticker svg { width: 24px; height: 24px; fill: var(--fg); stroke: none; }
 .vu { width: 100%; height: 36px; display: block; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; }
 .rec-time { font: 600 22px/1 var(--font-mono); color: var(--fg) !important; text-align: center; font-variant-numeric: tabular-nums; }
+
+/* photopea */
+.photopea-modal { position: fixed; inset: 0; z-index: 55; display: grid; place-items: center; padding: 16px; background: var(--overlay-backdrop); }
+.photopea-card {
+  width: min(1360px, calc(100vw - 32px)); height: min(920px, calc(100vh - 32px));
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 24px 64px var(--shadow);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.photopea-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--panel-2); flex-shrink: 0; flex-wrap: wrap;
+}
+.photopea-info { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.photopea-badge {
+  background: #18a499; color: #fff; font: 800 11px/1 var(--font-display);
+  border-radius: 4px; padding: 3px 6px; letter-spacing: .04em;
+}
+.photopea-doc-name {
+  font: 600 13px var(--font-ui); color: var(--fg);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px;
+}
+.photopea-status { font-size: 11px; color: var(--muted); }
+.photopea-status.ok { color: var(--accent); }
+.photopea-status.bad { color: var(--danger); }
+.photopea-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.photopea-actions .btn svg { width: 15px; height: 15px; }
+.photopea-opt { font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+.photopea-opt input { cursor: pointer; accent-color: var(--accent); }
+.photopea-body { flex: 1; min-height: 0; width: 100%; position: relative; background: #202020; }
+.photopea-frame { width: 100%; height: 100%; border: 0; display: block; }
+

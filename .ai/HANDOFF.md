@@ -1,39 +1,37 @@
 # Handoff
-Atualizado por: Claude em 12/10/2026
+Atualizado por: Antigravity em 12/10/2026
 
 ## Objetivo atual
-Três blocos pedidos pelo dono: qualidade/velocidade, efeitos que vendem, música e redes sociais. Os três estão prontos.
+Integração com o Photopea concluída com sucesso.
 
 ## Feito nas últimas sessões
-- Exportação rápida (WebCodecs + mp4-muxer), GIF/PNG transparente, preview leve ao tocar.
-- Efeitos: chroma key, camada de efeito WebGL, partículas, câmera virtual, texto curvo e no traço.
-- Música: detectar batidas (BPM + marcas na régua, clipes grudam nas batidas), "Na batida" (pulsar, piscar, tremer), montagem de fotos/vídeos na batida.
-- Batidas prontas sem direitos (Eletrônica, Funk, Trap, Lo-fi), geradas no aparelho com as batidas já marcadas.
-- Gravar narração (microfone, medidor de volume), entra na posição da agulha.
-- Figurinhas: emojis (camada de texto) e tipo novo `icon` com 16 ícones vetoriais.
-- Painel Código recebe `beats` (tempos das batidas na timeline).
-- Correção geral: modal alto abria rolado para baixo no celular (foco no botão); agora abre no topo.
-- PWA em motion-v13.
+- Integração bidirecional do Photopea via iframe e Live Messaging (`postMessage` + `saveToOE`).
+- Chip "Photopea" na barra de adicionar (`.add-bar`) com modal de escolha (novo gráfico no tamanho do projeto, editar camada, editar frame atual, abrir arquivo/PSD).
+- Botão "Editar no Photopea" no painel de propriedades de camadas de imagem.
+- Opção "Editar frame atual no Photopea" no menu do projeto.
+- Atalho `Ctrl+S` / `Cmd+S` e `Arquivo > Salvar` dentro do Photopea mapeados via `customIO.save` para enviar o PNG direto ao projeto.
+- Opção para substituir a camada existente ou adicionar como nova camada.
+- Modal dedicado responsivo para desktop e celular (360 px), tema escuro e idioma em português.
+- Teclado do editor suspenso durante o uso do Photopea para evitar conflito de atalhos.
+- Testes unitários adicionados em `tests/photopea.cjs` (4/4 passando). PWA atualizado para `motion-v14`.
 
 ## Próximo passo
-Testar no celular real: microfone (permissão no Safari/Android), detecção de batida em músicas reais e montagem com vídeos.
+Testar no celular e desktop reais a edição de imagens com filtros e recortes PSD via Photopea online.
 
 ## Arquivos relevantes
-- app.js: seção "batida, narração, batidas prontas e figurinhas"; régua (`.beat-mark`), arraste de clipes (`magnet`), painel de áudio (Ritmo) e "Na batida".
-- index.html: chips Batidas, Gravar voz e Figurinhas. style.css: estilos `sw-beats`, `sw-mic`, `sw-sticker`, `sticker-*`, `vu`.
-- tests/music.cjs (5 testes). Todos os 23 testes passam.
+- `app.js`: seção `photopea` (`openPhotopea`, `closePhotopea`, `photopeaChoiceModal`, `applyPhotopeaResult`).
+- `index.html`: chip `#btnPhotopea`, menu `photopea-frame`, input `#photopeaFileInput` e `#photopeaModal`.
+- `style.css`: `.sw-photopea`, `.photopea-modal`, `.photopea-card`, `.photopea-bar`, estilos mobile.
+- `tests/photopea.cjs`: testes da integração. `sw.js`: versão `motion-v14`.
 
 ## Decisões tomadas e motivo
-- `s.beats` fica em segundos do arquivo; `beatsOf()` converte com corte e velocidade, então cortar/acelerar a música mantém as marcas certas.
-- Batidas sintetizadas por OfflineAudioContext: zero arquivos de música no repositório e zero risco de direitos autorais.
-- Keyframes são arredondados para quadros; o pulso usa 1 quadro antes da batida para o golpe cair na batida.
+- Imagens <800 KB passam via data URI no hash `files[]` para carregamento instantâneo no boot do Photopea; arquivos maiores usam `ArrayBuffer` via `postMessage`.
+- `customIO.save: 'app.activeDocument.saveToOE("png");'` intercepta o `Ctrl+S` nativo do Photoshop/Photopea e salva no projeto sem cliques extras.
+- PWA suspende teclas do editor enquanto Photopea estiver aberto; fecha suavemente com Escape ou botão Fechar.
 
 ## Pendências e armadilhas
-- Detecção de batida busca entre 60 e 180 BPM, com preferência perto de 120; músicas sem bateria podem não ter ritmo claro.
-- Gravar voz precisa de HTTPS ou localhost e permissão de microfone.
-- Exportação rápida depende de WebCodecs; Chromium headless não tem H.264/AAC, usa VP9/Opus.
-- Sempre aumentar VERSION em sw.js quando mudar o app.
+- O Photopea requer conexão ativa com a internet para carregar o iframe (`photopea.com`).
+- Manter `VERSION` em `sw.js` atualizado a cada mudança nos assets do app.
 
 ## Como rodar e testar
-`python3 -m http.server 8000`, `node --check app.js`,
-`CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chrome node --test tests/*.cjs` (precisa de internet e FFmpeg).
+`python3 -m http.server 8000`, `node --check app.js`, `node --test tests/photopea.cjs`.

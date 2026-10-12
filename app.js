@@ -2150,7 +2150,7 @@ function layerPanel(L) {
       <h4 class="subhead">Fundo verde (chroma key)</h4>
       ${checkRow('chromaOn', 'Remover a cor de fundo')}
       <div data-show="chroma">${colorRow('chromaColor', 'Cor a remover')}${numRow('chromaTol', 'Tolerância', 0, 100)}${numRow('chromaSoft', 'Suavidade', 0, 100)}</div>` +
-      `<div class="actions"><button class="btn btn-small" data-act="replace-media">Trocar arquivo</button><button class="btn btn-small" data-act="media-ratio">Proporção original</button><button class="btn btn-small" data-act="media-fill">Preencher a tela</button>${L.type === 'video' ? '<button class="btn btn-small" data-act="freeze-frame" title="Congela o quadro atual como nova camada">Congelar quadro</button>' : ''}${L.type === 'image' ? '<button class="btn btn-small btn-ai" data-act="remove-bg">Remover fundo (IA)</button>' : ''}</div>`;
+      `<div class="actions"><button class="btn btn-small" data-act="replace-media">Trocar arquivo</button><button class="btn btn-small" data-act="media-ratio">Proporção original</button><button class="btn btn-small" data-act="media-fill">Preencher a tela</button>${L.type === 'video' ? '<button class="btn btn-small" data-act="freeze-frame" title="Congela o quadro atual como nova camada">Congelar quadro</button>' : ''}${L.type === 'image' ? '<button class="btn btn-small" data-act="photopea-edit" title="Editar no Photopea"><i class="sw sw-photopea"></i> Editar no Photopea</button><button class="btn btn-small btn-ai" data-act="remove-bg">Remover fundo (IA)</button>' : ''}</div>`;
   } else if (L.type === 'icon') {
     content = `${selectRow('iconName', 'Ícone', Object.fromEntries(Object.keys(ICONS).map(k => [k, k[0].toUpperCase() + k.slice(1)])))}
       ${numRow('size', 'Tamanho', 4, 3000)}${fillRows('fill', 'Cor')}${numRow('stroke', 'Contorno', 0, 40)}${colorRow('strokeColor', 'Cor contorno')}`;
@@ -2468,6 +2468,7 @@ panel.addEventListener('click', e => {
     else if (act === 'freeze-frame' && L) freezeFrame(L);
     else if (act === 'replace-media' && L) pickMedia(L.type, L.id);
     else if (act === 'remove-bg' && L) removeBackground(L);
+    else if (act === 'photopea-edit' && L) openPhotopea({ mode: 'layer', layer: L });
     else if (act === 'captions' && L) aiCaptionsPicker();
     else if (act === 'media-ratio' && L) {
       const rec = A.get(L.s.asset);
@@ -4318,6 +4319,259 @@ $('#btnBeats').onclick = beatMakerModal;
 $('#btnVoice').onclick = recordVoiceModal;
 $('#btnStickers').onclick = stickersModal;
 
+/* ======================= photopea ======================= */
+let photopeaSession = null;
+
+function isPhotopeaOpen() {
+  const m = $('#photopeaModal');
+  return !!photopeaSession && !!m && !m.hidden;
+}
+
+function photopeaChoiceModal() {
+  const L = selLayer();
+  const hasImg = L && L.type === 'image';
+  const p = P();
+  showModal('Photopea — Editor de imagem', `
+    <p>O Photopea é um editor profissional no estilo Photoshop integrado diretamente ao Motion Editor.</p>
+    <div class="ai-list" style="margin-top: 10px;">
+      ${hasImg ? `<button class="ai-item" data-pp-act="layer"><b>Editar camada "${esc(L.name)}"</b><span>Abre a imagem desta camada no Photopea. Ao salvar, atualiza a camada no projeto.</span></button>` : ''}
+      <button class="ai-item" data-pp-act="new"><b>Novo documento em branco</b><span>Cria uma tela limpa no tamanho do projeto (${p.width}×${p.height} px, fundo transparente).</span></button>
+      <button class="ai-item" data-pp-act="frame"><b>Editar frame atual da prévia</b><span>Captura o momento atual (${S.time.toFixed(2)}s) para desenhar ou retocar.</span></button>
+      <button class="ai-item" data-pp-act="file"><b>Abrir imagem ou PSD do aparelho</b><span>Escolha um arquivo do computador ou celular para abrir no Photopea.</span></button>
+    </div>
+  `, [{ label: 'Fechar' }]);
+
+  $$('[data-pp-act]').forEach(b => (b.onclick = () => {
+    const act = b.dataset.ppAct || b.getAttribute('data-pp-act');
+    hideModal();
+    setTimeout(() => {
+      if (act === 'layer') openPhotopea({ mode: 'layer', layer: L });
+      else if (act === 'new') openPhotopea({ mode: 'new' });
+      else if (act === 'frame') openPhotopea({ mode: 'frame' });
+      else if (act === 'file') $('#photopeaFileInput').click();
+    }, 50);
+  }));
+}
+
+async function openPhotopea(opts = {}) {
+  if (!navigator.onLine) {
+    toast('O Photopea precisa de conexão com a internet para abrir.');
+    return;
+  }
+  const p = P();
+  let docName = 'Design Photopea';
+  let blob = null;
+  let replaceLayerId = null;
+
+  if (opts.mode === 'layer' && opts.layer) {
+    const L = opts.layer;
+    const rec = A.get(L.s.asset);
+    if (!rec || !rec.blob) {
+      toast('Imagem não encontrada neste aparelho.');
+      return;
+    }
+    blob = rec.blob;
+    docName = L.name;
+    replaceLayerId = L.id;
+  } else if (opts.mode === 'frame') {
+    docName = `${p.name} (${S.time.toFixed(2)}s)`;
+    pause();
+    const c = document.createElement('canvas');
+    c.width = p.width; c.height = p.height;
+    const cc = c.getContext('2d');
+    renderFrame(cc, S.time, { transparent: false });
+    blob = await new Promise(r => c.toBlob(r, 'image/png'));
+  } else if (opts.mode === 'file' && opts.file) {
+    blob = opts.file;
+    docName = blob.name.replace(/\.[^.]+$/, '').slice(0, 32);
+  } else {
+    docName = `Arte ${p.width}x${p.height}`;
+  }
+
+  photopeaSession = {
+    docName,
+    replaceLayerId,
+    ready: false,
+    sentInitial: false,
+    iframe: null,
+    onMessage: null,
+  };
+
+  const statusEl = $('#photopeaStatus');
+  const titleEl = $('#photopeaDocName');
+  const replaceOpt = $('#photopeaReplaceOpt');
+  const replaceChk = $('#photopeaReplaceCheck');
+  if (titleEl) titleEl.textContent = docName;
+  if (statusEl) {
+    statusEl.textContent = 'Carregando o Photopea…';
+    statusEl.className = 'photopea-status';
+  }
+  if (replaceOpt) {
+    replaceOpt.hidden = !replaceLayerId;
+    if (replaceChk) replaceChk.checked = !!replaceLayerId;
+  }
+
+  const cfg = {
+    environment: {
+      theme: 2,
+      lang: 'pt',
+      intro: false,
+      customIO: {
+        save: 'app.activeDocument.saveToOE("png");'
+      }
+    }
+  };
+
+  let bufferToSend = null;
+  if (blob) {
+    if (blob.size < 800000) {
+      try {
+        const dataUrl = await blobToDataURL(blob);
+        cfg.files = [dataUrl];
+        photopeaSession.sentInitial = true;
+      } catch {
+        bufferToSend = await blob.arrayBuffer();
+      }
+    } else {
+      bufferToSend = await blob.arrayBuffer();
+    }
+  } else {
+    const cleanName = docName.replace(/["'\\]/g, '').slice(0, 30);
+    cfg.script = `app.documents.add(${p.width}, ${p.height}, 72, "${cleanName}", 2, 3);`;
+    photopeaSession.sentInitial = true;
+  }
+
+  const hashString = encodeURIComponent(JSON.stringify(cfg));
+  const ppUrl = `https://www.photopea.com#${hashString}`;
+
+  const wrap = $('#photopeaBody');
+  wrap.innerHTML = '';
+  const iframe = document.createElement('iframe');
+  iframe.className = 'photopea-frame';
+  iframe.setAttribute('allow', 'clipboard-read; clipboard-write; display-capture');
+  iframe.setAttribute('title', 'Photopea');
+  photopeaSession.iframe = iframe;
+
+  const onMessage = async e => {
+    if (e.origin !== 'https://www.photopea.com') return;
+
+    if (e.data === 'done') {
+      if (!photopeaSession) return;
+      if (!photopeaSession.ready) {
+        photopeaSession.ready = true;
+        if (statusEl) statusEl.textContent = 'Pronto · (Ctrl+S salva no projeto)';
+      }
+      if (bufferToSend && !photopeaSession.sentInitial) {
+        photopeaSession.sentInitial = true;
+        iframe.contentWindow.postMessage(bufferToSend, '*');
+        bufferToSend = null;
+        if (statusEl) statusEl.textContent = 'Carregando imagem…';
+      }
+    } else if (e.data instanceof ArrayBuffer) {
+      await applyPhotopeaResult(e.data);
+    }
+  };
+
+  photopeaSession.onMessage = onMessage;
+  window.addEventListener('message', onMessage);
+
+  iframe.src = ppUrl;
+  wrap.appendChild(iframe);
+  $('#photopeaModal').hidden = false;
+}
+
+async function applyPhotopeaResult(buffer) {
+  const blob = new Blob([buffer], { type: 'image/png' });
+  const sess = photopeaSession;
+  if (!sess) return;
+  const statusEl = $('#photopeaStatus');
+  if (statusEl) {
+    statusEl.textContent = 'Salvando no projeto…';
+    statusEl.className = 'photopea-status';
+  }
+  try {
+    const shouldReplace = sess.replaceLayerId && $('#photopeaReplaceCheck')?.checked;
+    const existing = shouldReplace ? byId(sess.replaceLayerId) : null;
+    const name = sess.docName || 'Design Photopea';
+    const rec = await registerAsset(blob, 'image', name.endsWith('.png') ? name : `${name}.png`);
+    if (existing) {
+      existing.s.asset = rec.id;
+      if (rec.w && rec.h && existing.s.w) {
+        existing.s.h = Math.round(existing.s.w * rec.h / rec.w);
+      }
+      commit();
+      renderPanel();
+      renderTimeline();
+      refreshTime();
+      toast('Imagem atualizada pelo Photopea.');
+    } else {
+      const p = P();
+      const fit = Math.min(p.width * 0.7 / rec.w, p.height * 0.7 / rec.h, 1);
+      const L = makeLayer('image', {
+        name,
+        s: {
+          asset: rec.id,
+          w: Math.round(rec.w * fit),
+          h: Math.round(rec.h * fit)
+        }
+      });
+      addLayer(L);
+      commit();
+      renderPanel();
+      renderTimeline();
+      refreshTime();
+      sess.replaceLayerId = L.id;
+      const opt = $('#photopeaReplaceOpt');
+      if (opt) opt.hidden = false;
+      const chk = $('#photopeaReplaceCheck');
+      if (chk) chk.checked = true;
+      toast('Nova camada adicionada pelo Photopea.');
+    }
+    if (statusEl) {
+      const timeStr = new Date().toLocaleTimeString().slice(0, 5);
+      statusEl.textContent = `Salvo no projeto às ${timeStr} · (Ctrl+S salva de novo)`;
+      statusEl.className = 'photopea-status ok';
+    }
+  } catch (err) {
+    if (statusEl) {
+      statusEl.textContent = 'Erro ao salvar: ' + (err && err.message ? err.message : 'falha');
+      statusEl.className = 'photopea-status bad';
+    }
+    toast('Não foi possível salvar a imagem no projeto.');
+  }
+}
+
+function closePhotopea() {
+  if (photopeaSession && photopeaSession.onMessage) {
+    window.removeEventListener('message', photopeaSession.onMessage);
+  }
+  const wrap = $('#photopeaBody');
+  if (wrap) wrap.innerHTML = '';
+  const m = $('#photopeaModal');
+  if (m) m.hidden = true;
+  photopeaSession = null;
+  refreshTime();
+}
+
+$('#btnPhotopeaSave').onclick = () => {
+  if (!photopeaSession || !photopeaSession.iframe) return;
+  const statusEl = $('#photopeaStatus');
+  if (statusEl) {
+    statusEl.textContent = 'Exportando do Photopea…';
+    statusEl.className = 'photopea-status';
+  }
+  photopeaSession.iframe.contentWindow.postMessage('app.activeDocument.saveToOE("png");', '*');
+};
+
+$('#btnPhotopeaClose').onclick = closePhotopea;
+
+$('#photopeaFileInput').addEventListener('change', e => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (f) openPhotopea({ mode: 'file', file: f });
+});
+$('#btnPhotopea').onclick = photopeaChoiceModal;
+
 /* ======================= menu ======================= */
 const menu = $('#menu');
 $('#btnMenu').onclick = e => { e.stopPropagation(); menu.hidden = !menu.hidden; };
@@ -4351,6 +4605,8 @@ menu.addEventListener('click', async e => {
     pause();
     drawWatermark(ctx);
     canvas.toBlob(b => { renderMain(); if (b) download(b, `${fileBase()}-${S.time.toFixed(2)}s.png`); }, 'image/png');
+  } else if (act === 'photopea-frame') {
+    openPhotopea({ mode: 'frame' });
   } else if (act === 'help') {
     showModal('Atalhos', `<div class="keys">
       <kbd>Espaço</kbd><span>Reproduzir / pausar</span>
@@ -4414,7 +4670,8 @@ function toast(msg) {
 /* ======================= teclado ======================= */
 let arrowTimer;
 document.addEventListener('keydown', e => {
-  if (isTyping(e.target) || !$('#modal').hidden || S.exporting) return;
+  if (e.key === 'Escape' && isPhotopeaOpen()) { e.preventDefault(); closePhotopea(); return; }
+  if (isTyping(e.target) || !$('#modal').hidden || isPhotopeaOpen() || S.exporting) return;
   const L = selLayer();
   const mod = e.ctrlKey || e.metaKey;
   if (e.code === 'Space') { e.preventDefault(); S.playing ? pause() : play(); }
@@ -4465,5 +4722,5 @@ if (document.fonts) {
   Promise.all(FONTS.map(f => document.fonts.load(`700 40px "${f}"`).catch(() => {}))).then(() => refreshTime());
   document.fonts.ready.then(() => refreshTime());
 }
-window.__motion = { S, A, P, byId, select, setTime, setParent, makeLayer, addLayer, splitLayer, freezeFrame, registerAsset, commit };
+window.__motion = { S, A, P, byId, select, setTime, setParent, makeLayer, addLayer, splitLayer, freezeFrame, registerAsset, commit, openPhotopea, closePhotopea, photopeaChoiceModal };
 })();

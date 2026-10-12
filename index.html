@@ -40,6 +40,7 @@
       <button data-menu="open">Abrir projeto (.motion.json)</button>
       <button data-menu="save">Salvar projeto</button>
       <button data-menu="png">Exportar frame atual (PNG)</button>
+      <button data-menu="photopea-frame">Editar frame atual no Photopea</button>
       <button data-menu="help">Atalhos e ajuda</button>
     </div>
   </header>
@@ -57,6 +58,7 @@
       <button class="chip chip-media" data-add="audio"><i class="sw sw-audio"></i> Música</button>
       <button class="chip chip-media" id="btnBeats"><i class="sw sw-beats"></i> Batidas</button>
       <button class="chip chip-media" id="btnVoice"><i class="sw sw-mic"></i> Gravar voz</button>
+      <button class="chip chip-media" id="btnPhotopea" title="Criar ou editar no Photopea"><i class="sw sw-photopea"></i> Photopea</button>
       <span class="tool-divider" aria-hidden="true"></span>
       <button class="chip" data-add="text"><b>T</b> Texto</button>
       <button class="chip" data-add="rect"><i class="sw sw-rect"></i> Retângulo</button>
@@ -72,6 +74,7 @@
       <button class="chip chip-accent" id="btnTemplates"><i class="sw sw-tpl"></i> Modelos</button>
       <button class="chip chip-accent" id="btnCode"><i class="sw sw-code"></i> Código</button>
       <input type="file" id="mediaInput" hidden>
+      <input type="file" id="photopeaFileInput" accept="image/*,.psd" hidden>
       <input type="file" id="projectInput" accept=".json,application/json" hidden>
     </div>
     <p class="stage-hint">Arraste para mover <span>·</span> <kbd>Espaço</kbd> para reproduzir <span>·</span> <kbd>K</kbd> para animar</p>
@@ -105,6 +108,29 @@
     <h2 id="modalTitle"></h2>
     <div id="modalBody"></div>
     <div class="modal-actions" id="modalActions"></div>
+  </div>
+</div>
+
+<div class="modal photopea-modal" id="photopeaModal" hidden>
+  <div class="photopea-card" role="dialog" aria-modal="true" aria-label="Editor Photopea">
+    <div class="photopea-bar">
+      <div class="photopea-info">
+        <span class="photopea-badge">Photopea</span>
+        <span class="photopea-doc-name" id="photopeaDocName">Documento</span>
+        <span class="photopea-status" id="photopeaStatus">Carregando…</span>
+      </div>
+      <div class="photopea-actions">
+        <label class="photopea-opt" id="photopeaReplaceOpt" title="Substituir a camada original pela versão editada">
+          <input type="checkbox" id="photopeaReplaceCheck" checked> Substituir camada
+        </label>
+        <button class="btn btn-primary btn-small" id="btnPhotopeaSave" title="Salva a imagem diretamente no projeto">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+          Salvar no projeto
+        </button>
+        <button class="btn btn-small" id="btnPhotopeaClose" title="Fechar o editor">Fechar</button>
+      </div>
+    </div>
+    <div class="photopea-body" id="photopeaBody"></div>
   </div>
 </div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
