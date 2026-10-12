@@ -105,9 +105,10 @@ const BLENDS = {
   'source-over': 'Normal', screen: 'Tela (clarear)', multiply: 'Multiplicar', overlay: 'Sobrepor',
   lighter: 'Somar luz', 'soft-light': 'Luz suave', difference: 'Diferença', 'color-dodge': 'Subexposição de cor',
 };
-const TYPE_NAMES = { text: 'Texto', rect: 'Retângulo', ellipse: 'Círculo', star: 'Estrela', path: 'Traço', image: 'Imagem', video: 'Vídeo', audio: 'Áudio', group: 'Grupo', particles: 'Partículas', fx: 'Efeito', camera: 'Câmera', icon: 'Ícone' };
+const TYPE_NAMES = { text: 'Texto', rect: 'Retângulo', ellipse: 'Círculo', star: 'Estrela', path: 'Traço', image: 'Imagem', video: 'Vídeo', audio: 'Áudio', lottie: 'Lottie / dotLottie', group: 'Grupo', particles: 'Partículas', fx: 'Efeito', camera: 'Câmera', icon: 'Ícone' };
 const VISUAL = t => t !== 'audio';
 const MEDIA = t => t === 'video' || t === 'audio';
+const TIMED_MEDIA = t => MEDIA(t) || t === 'lottie';
 const STORE_KEY = 'motion-editor:v1';
 const TL_PAD = 12;
 const PEAKS_PER_SEC = 40;
@@ -193,10 +194,19 @@ async function decodeAudio(blob) {
 }
 
 async function loadAsset(id, blob, kind) {
-  if (A.has(id)) return A.get(id);
+  if (A.has(id)) { const loaded = A.get(id); if (loaded.ready) await loaded.ready; return loaded; }
   const rec = { id, kind, blob, url: URL.createObjectURL(blob) };
   A.set(id, rec);
-  if (kind === 'image') {
+  if (kind === 'lottie') {
+    rec.ready = window.MotionLottie.load(blob).then(animation => {
+      if (A.get(id) !== rec) { animation.player.destroy(); throw new Error('O projeto mudou durante a importação. Escolha o arquivo novamente.'); }
+      return Object.assign(rec, animation);
+    }).catch(err => {
+      if (A.get(id) === rec) A.delete(id);
+      URL.revokeObjectURL(rec.url); throw err;
+    });
+    await rec.ready; delete rec.ready;
+  } else if (kind === 'image') {
     const img = new Image();
     img.src = rec.url;
     await img.decode().catch(() => new Promise(r => { img.onload = img.onerror = r; }));
@@ -218,6 +228,23 @@ async function loadAsset(id, blob, kind) {
 
 async function registerAsset(blob, kind, name) {
   const id = uid();
+  // Lottie depende de leitura/validação e de um player remoto. Só registra o
+  // arquivo depois de abrir, sem deixar metadata inválida ou mudar outro projeto.
+  if (kind === 'lottie') {
+    const project = P(), rec = await loadAsset(id, blob, kind);
+    if (P() !== project) {
+      rec.player.destroy(); URL.revokeObjectURL(rec.url); A.delete(id);
+      throw new Error('O projeto mudou durante a importação. Escolha o arquivo novamente.');
+    }
+    project.assets[id] = { kind, name, mime: blob.type };
+    try { await idb.put(id, { blob, kind, name, mime: blob.type }); } catch { toast('A animação ficará nesta sessão. Salve o projeto para guardar o arquivo.'); }
+    if (P() !== project) {
+      rec.player.destroy(); URL.revokeObjectURL(rec.url); if (A.get(id) === rec) A.delete(id);
+      delete project.assets[id]; idb.del(id).catch(() => {});
+      throw new Error('O projeto mudou durante a importação. Escolha o arquivo novamente.');
+    }
+    return rec;
+  }
   P().assets[id] = { kind, name, mime: blob.type };
   try { await idb.put(id, { blob, kind, name, mime: blob.type }); } catch { /* sem IndexedDB: fica só na memória */ }
   return loadAsset(id, blob, kind);
@@ -245,6 +272,7 @@ async function loadAllAssets() {
     } catch { /* arquivo perdido: a camada mostra um aviso */ }
   }
   renderMain(); drawOverlay(); renderTimeline();
+  if (selLayer()?.type === 'lottie') renderPanel();
 }
 
 async function cleanupAssets() {
@@ -252,7 +280,7 @@ async function cleanupAssets() {
     const used = new Set(Object.keys(P().assets || {}));
     for (const k of await idb.keys()) if (!used.has(k)) await idb.del(k);
   } catch { /* ignora */ }
-  for (const [id, rec] of A) if (!P().assets[id]) { URL.revokeObjectURL(rec.url); A.delete(id); }
+  for (const [id, rec] of A) if (!P().assets[id]) { rec.player?.destroy(); URL.revokeObjectURL(rec.url); A.delete(id); }
 }
 
 function videoFor(L) {
@@ -368,6 +396,7 @@ function defaultS(type) {
     case 'path': return { ...look, points: [], stroke: '#ffb547', width: Math.max(4, Math.round(m * 0.012)), fillOn: false, fill: '#ffb547', fill2: '#ff6b4a', glowColor: '#ffb547' };
     case 'image': return { ...look, ...framing, ...chroma, asset: null, w: 400, h: 400, glowColor: '#ffffff' };
     case 'video': return { ...look, ...framing, ...media, ...chroma, w: 800, h: 450, glowColor: '#ffffff' };
+    case 'lottie': return { ...look, ...framing, asset: null, w: 400, h: 400, animationId: '', trimIn: 0, speed: 1, loop: true, reverse: false, glowColor: '#ffffff' };
     case 'particles': { const pr = PARTICLES.confetti; return { ...look, preset: 'confetti', ...Object.fromEntries(PARTICLE_KEYS.map(k => [k, pr[k]])), areaW: Math.round(p.width * 0.6), colorMode: 'preset', color1: '#ffb547', color2: '#6fd8ff', glowColor: '#ffb547' }; }
     case 'fx': return { effect: 'vignette', amount: 60, blend: 'source-over', clip: false };
     case 'icon': return { ...look, d: ICONS.coração, iconName: 'coração', size: Math.round(m * 0.25), fill: '#ff5a6e', fill2: '#ffb547', stroke: 0, strokeColor: '#000000', glowColor: '#ff5a6e' };
@@ -401,7 +430,7 @@ function normalize(p) {
   for (const L of p.layers) {
     L.p = { ...defaultP(), ...L.p };
     L.s = { ...defaultS(L.type), ...L.s };
-    if (MEDIA(L.type)) {
+    if (TIMED_MEDIA(L.type)) {
       L.s.speed = Number(L.s.speed) || 1;
       if (L.s.muted == null) L.s.muted = false;
     }
@@ -750,6 +779,13 @@ function drawShape(c, L, local) {
       else drawMissing(c, s.w, s.h, A.get(s.asset) ? 'Carregando…' : 'Vídeo');
       return { w: s.w, h: s.h };
     }
+    case 'lottie': {
+      const rec = A.get(s.asset);
+      const source = rec && window.MotionLottie.render(rec, s, local, RK * mScale(worldMatrix(L, local + L.start)));
+      if (source) drawFramedMedia(c, source, source.width, source.height, s);
+      else drawMissing(c, s.w, s.h, rec?.ready ? 'Carregando…' : 'Lottie');
+      return { w: s.w, h: s.h };
+    }
   }
   return { w: 0, h: 0 };
 }
@@ -800,7 +836,7 @@ function drawLayer(c, L, t, comp) {
     c.globalAlpha = op;
     c.globalCompositeOperation = comp || s.blend || 'source-over';
     c.filter = filter;
-    if ((L.type === 'image' || L.type === 'video') && (s.transitionIn === 'wipe' || s.transitionOut === 'wipe')) {
+    if ((L.type === 'image' || L.type === 'video' || L.type === 'lottie') && (s.transitionIn === 'wipe' || s.transitionOut === 'wipe')) {
       const tr = transitionState(L, t);
       c.beginPath();
       c.rect(-s.w / 2 + s.w * tr.left, -s.h / 2, s.w * Math.max(0, tr.right - tr.left), s.h);
@@ -1815,9 +1851,9 @@ $('#btnSplit').onclick = () => splitLayer();
 /* ======================= linha do tempo ======================= */
 const labelW = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--label-w')) || 112;
 const tx = t => TL_PAD + t * S.pps;
-const mediaSourceDur = L => { const r = A.get(L.s.asset); return r && r.duration ? r.duration : Infinity; };
+const mediaSourceDur = L => { const r = A.get(L.s.asset); return (L.type === 'lottie' ? window.MotionLottie.sourceInfo(r, L.s)?.duration : r?.duration) || Infinity; };
 const mediaDur = L => mediaSourceDur(L) / (L.s && L.s.speed ? L.s.speed : 1);
-const mediaRemaining = L => Math.max(0, (mediaSourceDur(L) - (L.s.trimIn || 0)) / (L.s && L.s.speed ? L.s.speed : 1));
+const mediaRemaining = L => L.type === 'lottie' && L.s.loop ? Infinity : Math.max(0, (mediaSourceDur(L) - (L.s.trimIn || 0)) / (L.s && L.s.speed ? L.s.speed : 1));
 
 function renderTimeline() {
   const p = P();
@@ -1952,7 +1988,7 @@ rows.addEventListener('pointerdown', e => {
   }
 
   const mode = e.target.classList.contains('l') ? 'l' : e.target.classList.contains('r') ? 'r' : 'move';
-  const s0 = L.start, e0 = L.end, dur = P().duration, trim0 = L.s.trimIn || 0, isMedia = MEDIA(L.type);
+  const s0 = L.start, e0 = L.end, dur = P().duration, trim0 = L.s.trimIn || 0, isMedia = TIMED_MEDIA(L.type);
   const trStart0 = L.s.transitionStart, trEnd0 = L.s.transitionEnd;
   const sp = L.s.speed || 1;
   if (L.id !== S.sel) select(L.id);
@@ -2151,6 +2187,20 @@ function layerPanel(L) {
       ${checkRow('chromaOn', 'Remover a cor de fundo')}
       <div data-show="chroma">${colorRow('chromaColor', 'Cor a remover')}${numRow('chromaTol', 'Tolerância', 0, 100)}${numRow('chromaSoft', 'Suavidade', 0, 100)}</div>` +
       `<div class="actions"><button class="btn btn-small" data-act="replace-media">Trocar arquivo</button><button class="btn btn-small" data-act="media-ratio">Proporção original</button><button class="btn btn-small" data-act="media-fill">Preencher a tela</button>${L.type === 'video' ? '<button class="btn btn-small" data-act="freeze-frame" title="Congela o quadro atual como nova camada">Congelar quadro</button><button class="btn btn-small" data-act="ffmpeg-media" title="Converter ou comprimir com FFmpeg"><i class="sw sw-ffmpeg"></i> FFmpeg</button><button class="btn btn-small" data-act="mediapipe-face" title="Auto-enquadrar no rosto com MediaPipe"><i class="sw sw-mediapipe"></i> Focar no rosto</button>' : ''}${L.type === 'image' ? '<button class="btn btn-small" data-act="photopea-edit" title="Editar no Photopea"><i class="sw sw-photopea"></i> Editar no Photopea</button><button class="btn btn-small btn-ai" data-act="mediapipe-segment" title="Recortar pessoa usando Google MediaPipe"><i class="sw sw-mediapipe"></i> Recortar pessoa</button><button class="btn btn-small" data-act="mediapipe-face" title="Auto-enquadrar no rosto com MediaPipe"><i class="sw sw-mediapipe"></i> Focar no rosto</button><button class="btn btn-small btn-ai" data-act="remove-bg">Remover fundo (@imgly)</button>' : ''}</div>`;
+  } else if (L.type === 'lottie') {
+    const rec = A.get(s.asset), animation = window.MotionLottie.sourceInfo(rec, s);
+    content = `${rec?.animations?.length > 1 ? selectRow('animationId', 'Animação', Object.fromEntries(rec.animations.map(a => [a.id, a.name]))) : ''}
+      ${numRow('w', 'Largura', 1, 6000)}${numRow('h', 'Altura', 1, 6000)}
+      ${selectRow('mediaFit', 'Enquadrar', MEDIA_FITS)}
+      <div data-show="focal">${numRow('focalX', 'Foco X %', 0, 100)}${numRow('focalY', 'Foco Y %', 0, 100)}</div>
+      ${selectRow('speed', 'Velocidade', { '0.25': '0.25x', '0.5': '0.5x', '0.75': '0.75x', '1': '1x', '1.5': '1.5x', '2': '2x', '3': '3x', '4': '4x' })}
+      ${numRow('trimIn', 'Começa em (s)', 0, s.loop ? 600 : (animation?.duration || 600), 0.1)}
+      ${checkRow('loop', 'Repetir enquanto estiver na tela')}${checkRow('reverse', 'Reproduzir ao contrário')}
+      <p class="hint">${animation ? `${esc(rec.format)} · ${round(animation.duration, 2)} s · ${Math.round(animation.frames / animation.duration)} quadros/s. Fundo transparente preservado.` : 'Animação não carregada. Confira a conexão ou troque o arquivo.'}</p>
+      <p class="hint">Importe .json Lottie ou .lottie. Imagens precisam estar embutidas; exporte textos como formas para preservar a fonte.</p>
+      <div class="actions"><button class="btn btn-small" data-act="replace-media">Trocar arquivo</button>${!animation ? '<button class="btn btn-small" data-act="reload-lottie">Tentar carregar</button>' : ''}
+      <button class="btn btn-small" data-act="media-ratio">Proporção original</button><button class="btn btn-small" data-act="media-frame">Quadro do projeto</button>
+      <button class="btn btn-small" data-act="freeze-frame">Congelar quadro</button></div>`;
   } else if (L.type === 'icon') {
     content = `${selectRow('iconName', 'Ícone', Object.fromEntries(Object.keys(ICONS).map(k => [k, k[0].toUpperCase() + k.slice(1)])))}
       ${numRow('size', 'Tamanho', 4, 3000)}${fillRows('fill', 'Cor')}${numRow('stroke', 'Contorno', 0, 40)}${colorRow('strokeColor', 'Cor contorno')}`;
@@ -2237,9 +2287,9 @@ function layerPanel(L) {
     <p class="hint">O estilo se combina com os ajustes de cor. Escolha Original para removê-lo.</p>
   </div>
   <div class="sec"><h3>Transições</h3>
-    ${selectRow('transitionIn', 'Entrada', L.type === 'image' || L.type === 'video' ? TRANSITIONS : Object.fromEntries(Object.entries(TRANSITIONS).filter(([k]) => k !== 'wipe')))}
+    ${selectRow('transitionIn', 'Entrada', L.type === 'image' || L.type === 'video' || L.type === 'lottie' ? TRANSITIONS : Object.fromEntries(Object.entries(TRANSITIONS).filter(([k]) => k !== 'wipe')))}
     ${numRow('transitionInDuration', 'Duração (s)', 0, 10, 0.1)}
-    ${selectRow('transitionOut', 'Saída', L.type === 'image' || L.type === 'video' ? TRANSITIONS : Object.fromEntries(Object.entries(TRANSITIONS).filter(([k]) => k !== 'wipe')))}
+    ${selectRow('transitionOut', 'Saída', L.type === 'image' || L.type === 'video' || L.type === 'lottie' ? TRANSITIONS : Object.fromEntries(Object.entries(TRANSITIONS).filter(([k]) => k !== 'wipe')))}
     ${numRow('transitionOutDuration', 'Duração (s)', 0, 10, 0.1)}
     <p class="hint">Entrada e saída da camada, sem apagar suas animações. Em clipes curtos, as durações se ajustam para caber.</p>
   </div>
@@ -2342,7 +2392,17 @@ panel.addEventListener('input', e => {
     if (el.type === 'checkbox') v = el.checked;
     else if (el.type === 'number' || el.type === 'range') { v = parseFloat(el.value); if (Number.isNaN(v)) return; }
     else v = el.value;
-    if (key === 'trimIn') v = clamp(v, 0, Math.max(0, mediaSourceDur(L) - 0.1));
+    if (key === 'trimIn') v = clamp(v, 0, L.type === 'lottie' && L.s.loop ? 600 : Math.max(0, mediaSourceDur(L) - 0.1));
+    if (key === 'animationId' && L.type === 'lottie') {
+      const animation = A.get(L.s.asset)?.animations?.find(a => a.id === v);
+      if (!animation) return;
+      const oldEnd = L.end;
+      L.s.animationId = v; L.s.trimIn = 0;
+      L.s.h = Math.max(1, Math.round(L.s.w * animation.h / animation.w));
+      if (!L.s.loop) L.end = Math.min(P().duration, L.start + animation.duration / L.s.speed);
+      if (L.end !== oldEnd) delete L.s.transitionEnd;
+      commit(); renderPanel(); renderTimeline(); refreshTime(); return;
+    }
     if (key === 'iconName' && ICONS[v]) L.s.d = ICONS[v];
     if (key === 'speed') {
       v = clamp(parseFloat(v) || 1, 0.25, 4);
@@ -2360,6 +2420,17 @@ panel.addEventListener('input', e => {
     if (key === 'transitionIn' || key === 'transitionInDuration') delete L.s.transitionStart;
     if (key === 'transitionOut' || key === 'transitionOutDuration') delete L.s.transitionEnd;
     L.s[key] = v;
+    if (key === 'trimIn' && L.type === 'lottie' && !L.s.loop) {
+      L.end = Math.min(L.end, L.start + mediaRemaining(L)); delete L.s.transitionEnd;
+    }
+    if (key === 'loop' && L.type === 'lottie') {
+      if (!v) {
+        const oldEnd = L.end;
+        L.s.trimIn %= mediaSourceDur(L); L.end = Math.min(L.end, L.start + mediaRemaining(L));
+        if (L.end !== oldEnd) delete L.s.transitionEnd;
+      }
+      commit(); renderPanel(); renderTimeline();
+    }
     $$(`[data-s="${key}"]`, panel).forEach(o => { if (o !== el && o.type !== 'checkbox') o.value = v; });
     if (key === 'fillType') $$('[data-show="grad"]', panel).forEach(x => (x.hidden = v === 'solid'));
     if (key === 'fillOn') $$('[data-show="fillOn"]', panel).forEach(x => (x.hidden = !v));
@@ -2467,6 +2538,7 @@ panel.addEventListener('click', e => {
     else if (act === 'flip-v' && L) { L.s.flipV = !L.s.flipV; commit(); renderPanel(); refreshTime(); }
     else if (act === 'freeze-frame' && L) freezeFrame(L);
     else if (act === 'replace-media' && L) pickMedia(L.type, L.id);
+    else if (act === 'reload-lottie' && L) { toast('Carregando animação…'); loadAllAssets().then(() => toast(A.get(L.s.asset)?.player ? 'Animação carregada.' : 'Não consegui carregar. Confira a conexão e tente novamente.')); }
     else if (act === 'remove-bg' && L) removeBackground(L);
     else if (act === 'mediapipe-segment' && L) mediaPipeCutPerson(L);
     else if (act === 'mediapipe-face' && L) mediaPipeFaceAutoFrame(L);
@@ -2475,7 +2547,8 @@ panel.addEventListener('click', e => {
     else if (act === 'captions' && L) aiCaptionsPicker();
     else if (act === 'media-ratio' && L) {
       const rec = A.get(L.s.asset);
-      if (rec && rec.w) { L.s.h = Math.round(L.s.w * rec.h / rec.w); commit(); syncPanel(true); refreshTime(); }
+      const source = L.type === 'lottie' ? window.MotionLottie.sourceInfo(rec, L.s) : rec;
+      if (source?.w) { L.s.h = Math.round(L.s.w * source.h / source.w); commit(); syncPanel(true); refreshTime(); }
     } else if (act === 'media-frame' && L) {
       const p = P(), pm = parentMatrix(L, S.time);
       const center = pm.inverse().transformPoint(new DOMPoint(p.width / 2, p.height / 2));
@@ -2506,7 +2579,7 @@ function setDuration(d) {
   p.duration = d;
   for (const l of p.layers) {
     const oldStart = l.start, oldEnd = l.end;
-    if (Math.abs(l.end - old) < 1e-6) l.end = MEDIA(l.type) ? Math.min(d, l.start + mediaRemaining(l)) : d;
+    if (Math.abs(l.end - old) < 1e-6) l.end = TIMED_MEDIA(l.type) ? Math.min(d, l.start + mediaRemaining(l)) : d;
     l.end = clamp(l.end, 0.1, d); l.start = clamp(l.start, 0, l.end - 0.1);
     if (l.start !== oldStart) delete l.s.transitionStart;
     if (l.end !== oldEnd) delete l.s.transitionEnd;
@@ -2644,7 +2717,7 @@ function splitLayer(L, t = S.time) {
   L2.start = cut;
   L2.end = origEnd;
 
-  if (MEDIA(L.type)) {
+  if (TIMED_MEDIA(L.type)) {
     const sp = L.s.speed || 1;
     L2.s.trimIn = round((L.s.trimIn || 0) + (cut - L.start) * sp, 4);
   }
@@ -2664,10 +2737,11 @@ function splitLayer(L, t = S.time) {
 
 function freezeFrame(L) {
   L = L || selLayer();
-  if (!L || L.type !== 'video') { toast('Selecione um vídeo para congelar o quadro.'); return; }
-  const v = VIDS.get(L.id) || videoFor(L);
-  if (!v || v.readyState < 2) { toast('Aguarde o vídeo carregar.'); return; }
-  const vw = v.videoWidth || L.s.w, vh = v.videoHeight || L.s.h;
+  if (!L || !['video', 'lottie'].includes(L.type)) { toast('Selecione um vídeo ou Lottie para congelar o quadro.'); return; }
+  const rec = A.get(L.s.asset);
+  const v = L.type === 'lottie' ? rec && window.MotionLottie.render(rec, L.s, S.time - L.start, 1) : VIDS.get(L.id) || videoFor(L);
+  if (!v || L.type === 'video' && v.readyState < 2) { toast('Aguarde a animação ou o vídeo carregar.'); return; }
+  const vw = v.videoWidth || v.width || L.s.w, vh = v.videoHeight || v.height || L.s.h;
   const fc = document.createElement('canvas');
   fc.width = vw; fc.height = vh;
   const fctx = fc.getContext('2d');
@@ -2738,12 +2812,12 @@ let pendingMedia = null;
 const mediaInput = $('#mediaInput');
 function pickMedia(kind, replaceId = null) {
   pendingMedia = { kind, replaceId };
-  mediaInput.accept = kind + '/*';
+  mediaInput.accept = kind === 'lottie' ? '.json,.lottie' : kind + '/*';
   mediaInput.click();
 }
 $$('[data-add]').forEach(b => b.addEventListener('click', () => {
   const type = b.dataset.add;
-  if (type === 'image' || type === 'video' || type === 'audio') { pickMedia(type); return; }
+  if (type === 'image' || type === 'video' || type === 'audio' || type === 'lottie') { pickMedia(type); return; }
   if (type === 'path') { setPen(!S.pen); return; }
   // câmera e efeito valem para o vídeo todo; o resto começa no cursor
   if (type === 'camera' || type === 'fx') { addLayer(makeLayer(type), true); return; }
@@ -2757,7 +2831,9 @@ mediaInput.addEventListener('change', async e => {
   const { kind, replaceId } = pendingMedia;
   pendingMedia = null;
   const fileKind = file.type.split('/')[0];
-  if (fileKind && fileKind !== kind) { toast(`Esse arquivo não é ${kind === 'image' ? 'uma imagem' : kind === 'video' ? 'um vídeo' : 'um áudio'}.`); return; }
+  if (kind === 'lottie' ? !/\.(json|lottie)$/i.test(file.name) || /\.motion\.json$/i.test(file.name) : fileKind && fileKind !== kind) {
+    toast(kind === 'lottie' ? 'Escolha uma animação Lottie .json ou dotLottie .lottie. Projetos .motion.json abrem pelo menu.' : `Esse arquivo não é ${kind === 'image' ? 'uma imagem' : kind === 'video' ? 'um vídeo' : 'um áudio'}.`); return;
+  }
   toast('Carregando arquivo…');
   try {
     const blob = kind === 'image' ? await shrinkImage(file) : file;
@@ -2770,11 +2846,16 @@ mediaInput.addEventListener('change', async e => {
       existing.s.asset = rec.id;
       if (rec.w) existing.s.h = Math.round(existing.s.w * rec.h / rec.w);
       existing.s.trimIn = 0;
-      if (MEDIA(kind)) existing.end = Math.min(p.duration, existing.start + (rec.duration || p.duration));
+      if (kind === 'lottie') existing.s.animationId = rec.defaultId;
+      if (TIMED_MEDIA(kind)) existing.end = Math.min(p.duration, existing.start + (rec.duration || p.duration) / (existing.s.speed || 1));
       commit(); renderPanel(); renderTimeline(); refreshTime();
       return;
     }
-    if (kind === 'image' || kind === 'video') {
+    if (kind === 'lottie') {
+      const fit = Math.min(p.width * 0.7 / rec.w, p.height * 0.5 / rec.h, 1);
+      const L = makeLayer('lottie', { name, s: { asset: rec.id, w: Math.max(1, Math.round(rec.w * fit)), h: Math.max(1, Math.round(rec.h * fit)), animationId: rec.defaultId, mediaFit: 'contain' } });
+      growForMedia(rec.duration, L); addLayer(L, true);
+    } else if (kind === 'image' || kind === 'video') {
       const fit = Math.min(p.width * (kind === 'video' ? 1 : 0.7) / rec.w, p.height * (kind === 'video' ? 1 : 0.5) / rec.h, kind === 'video' ? 10 : 1);
       const L = makeLayer(kind, { name, s: { asset: rec.id, w: Math.round(rec.w * fit), h: Math.round(rec.h * fit) } });
       if (kind === 'video') growForMedia(rec.duration, L);
@@ -2784,9 +2865,9 @@ mediaInput.addEventListener('change', async e => {
       growForMedia(rec.duration, L);
       addLayer(L, true);
     }
-    toast(rec.buffer || kind === 'image' ? 'Pronto.' : 'Adicionado. O som deste vídeo não pôde ser lido.');
-  } catch {
-    toast('Não consegui abrir esse arquivo. Tente outro formato (MP4, MP3, PNG, JPG).');
+    toast(rec.buffer || kind === 'image' || kind === 'lottie' ? 'Pronto.' : 'Adicionado. O som deste vídeo não pôde ser lido.');
+  } catch (err) {
+    toast(kind === 'lottie' ? err.message || 'Não consegui abrir essa animação.' : 'Não consegui abrir esse arquivo. Tente outro formato (MP4, MP3, PNG, JPG).');
   }
 });
 
@@ -2799,7 +2880,7 @@ function growForMedia(dur, L) {
   if (need > p.duration) {
     const old = p.duration;
     p.duration = need;
-    for (const l of p.layers) if (Math.abs(l.end - old) < 1e-6 && !MEDIA(l.type)) l.end = need;
+    for (const l of p.layers) if (Math.abs(l.end - old) < 1e-6 && (!TIMED_MEDIA(l.type) || l.type === 'lottie' && l.s.loop)) l.end = need;
     toast(`O projeto aumentou para ${need}s para caber o arquivo.`);
   }
   L.end = Math.min(p.duration, L.start + dur);
@@ -4749,7 +4830,7 @@ function bakeCode(res, exposed, code) {
     const old = p.duration;
     p.duration = res.dur;
     for (const l of p.layers) {
-      if (Math.abs(l.end - old) < 1e-6) l.end = MEDIA(l.type) ? Math.min(res.dur, l.start + mediaRemaining(l)) : res.dur;
+      if (Math.abs(l.end - old) < 1e-6) l.end = TIMED_MEDIA(l.type) ? Math.min(res.dur, l.start + mediaRemaining(l)) : res.dur;
       l.end = clamp(l.end, 0.1, res.dur); l.start = clamp(l.start, 0, l.end - 0.1);
     }
   }

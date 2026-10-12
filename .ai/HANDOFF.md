@@ -1,36 +1,39 @@
 # Handoff
-Atualizado por: Antigravity em 12/10/2026
+Atualizado por: Codex em 12/10/2026
 
 ## Objetivo atual
-Integração de Whisper (Transformers.js) e Google MediaPipe ao editor.
+Suporte a Lottie e dotLottie entregue, integrado às atualizações recentes de Whisper e MediaPipe.
 
 ## Feito nas últimas sessões
-- Transformers.js v3 + Whisper (`onnx-community/whisper-tiny`): transcrição de áudio e legendas locais na timeline sem chave de API, além de exportação .SRT/texto.
-- Modal de legendas (`aiCaptionsPicker`) atualizado com suporte a Whisper (local) e Gemini (nuvem).
-- Google MediaPipe Tasks Vision:
-  - Recorte instantâneo de pessoas (`selfie_segmenter`, ~250 KB) com máscara alfa suave.
-  - Auto-enquadramento facial (`blaze_face_short_range`) ajustando foco X/Y da camada automaticamente.
-- Botões integrados no painel de camadas e menu IA (`#btnAI`).
-- Ícones `.sw-whisper` e `.sw-mediapipe` em `style.css`.
-- Integrações de edição com IA (Gemini), Photopea e FFmpeg preservadas e compatíveis.
-- Testes automatizados em `tests/ai-local.cjs`. Cache do PWA em `motion-v17`.
+- Botão Lottie / dotLottie importa JSON e pacotes v1/v2, incluindo imagens embutidas e múltiplas animações.
+- Controles de velocidade, início, repetição, reverso, enquadramento e escolha de animação no pacote.
+- Timeline sincronizada ao quadro da fonte, com split/trim, keyframes, grupos, máscaras, looks e transições.
+- PNG/GIF/MP4/WEBM incluem a animação; congelar quadro cria imagem com alpha. IndexedDB, undo/redo e .motion.json preservam o original.
+- Player ESM/WASM sob demanda, cache após primeira importação; reabertura offline conferida no Chromium.
+- Mantidos edição Gemini, Whisper/MediaPipe, Photopea, FFmpeg, efeitos, exportação rápida, música e narração.
+- Cache PWA motion-v18; 59 testes passaram, incluindo 8 de Lottie com runtime real, sem simular renderização.
 
 ## Próximo passo
-Testar desempenho de transcrição e detecção facial em celulares reais via PWA.
+Conferir desempenho no celular real e compatibilidade visual com arquivos complexos de designers.
 
 ## Arquivos relevantes
-- `app.js`: seções Whisper, MediaPipe, `createCaptionLayers`, `aiCaptionsPicker` e `window.__motion`.
-- `style.css`: `.sw-whisper`, `.sw-mediapipe`.
-- `sw.js`: `motion-v17`.
-- `tests/ai-local.cjs`, `tests/ai-edit.cjs`, `tests/ffmpeg.cjs`, `tests/photopea.cjs`.
+- lottie.js: MotionLottie.load/render/sourceInfo, dotlottie-web 0.81.0 ESM/WASM (MIT).
+- app.js: tipo lottie em assets/modelo/drawShape/painel/importação; TIMED_MEDIA e freezeFrame.
+- tests/lottie.cjs: 8 testes (JSON/ip, pacotes v1/v2/imagens, clones, timeline, portabilidade, exportação, erros e descarte).
+- .ai/MAPA.md descreve também IA local/nuvem, Photopea e FFmpeg.
 
 ## Decisões tomadas e motivo
-- Carregamento 100% sob demanda via CDN dinâmico (`import()`), mantendo o app leve e sem dependências no build.
-- Whisper roda localmente via WebAssembly/WebGPU, sem depender de nuvem ou chaves pagas.
-- MediaPipe usa máscaras de probabilidade alfa para recorte suave e suporta enquadramento inteligente em vídeos/imagens verticais.
+- MEDIA continua só vídeo/áudio para som; TIMED_MEDIA inclui Lottie para cortes, velocidade e duração.
+- Player pausado por asset: setFrame/resize/loadAnimation síncronos antes de desenhar cada camada, inclusive clones.
+- Validação antes de registrar; cargas tardias e troca de projeto destroem o player, sem anexar mídia ao projeto novo.
 
 ## Pendências e armadilhas
-- No primeiro uso offline, o usuário precisa carregar uma vez com internet para cachear os modelos.
+- Importe até 20 MB; pacote até 60 MB descompactado, animação até 10 min, canvas intermediário limitado.
+- JSON precisa de imagens embutidas; exporte textos como formas para preservar fontes.
+- Formas internas não são editáveis separadamente. Áudio e interatividade do pacote não são reproduzidos.
+- Primeiro carregamento do player precisa de internet; Gemini precisa da chave do usuário e não foi chamado ao vivo.
+- Sempre aumentar VERSION em sw.js e manter lottie.js/ai-edit.js no shell; teste ai-local aceita versões >=17.
 
 ## Como rodar e testar
-`python3 -m http.server 8000`, `node --check app.js`, `node --test tests/*.cjs`.
+`python3 -m http.server 8000`, `node --check app.js`, `node --check lottie.js`.
+`CHROMIUM_PATH=/usr/bin/chromium node --test --test-concurrency=2 tests/*.cjs` (Playwright, FFmpeg, curl e internet).

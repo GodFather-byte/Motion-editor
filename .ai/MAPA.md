@@ -5,12 +5,14 @@
 - `style.css`: visual. Variáveis no topo; bloco `@media (max-width: 860px)` é o layout de celular.
 - `app.js`: o editor inteiro, num único IIFE, dividido em seções (abaixo).
 - `ai-edit.js`: helpers puros `normalizePlan`, `normalizeTranscript`, `findSilences`, `assemble` (navegador/Node).
+- `lottie.js`: `MotionLottie.load/render/sourceInfo`, runtime dotlottie-web 0.81.0 ESM/WASM sob demanda (JSON e dotLottie v1/v2).
 - `pro-config.js`: chave pública ECDSA e textos/preço do plano Pro.
 - `sw.js`: service worker (cache offline). Mude `VERSION` a cada release.
 - `manifest.webmanifest`, `icons/`: instalação como app.
 - `tools/licenca.mjs`, `tools/licenca.py`: geram chaves de licença Pro (precisam do `.pem`, que não fica no git).
 - `tests/video-editor.cjs`: testes funcionais com Playwright/Chromium, mídia gerada pelo FFmpeg e servidor Python temporário.
 - `tests/ai-edit-plan.cjs` e `tests/ai-edit.cjs`: plano, pausas e edição por pedido com Gemini simulado, mídia real, exportação e backup.
+- `tests/lottie.cjs`: runtime real, pacotes v1/v2 com imagens, frames/trim/speed/loop/reverso, clones, portabilidade, MP4/GIF, falhas e troca de projeto.
 - `tests/effects.cjs`: câmera, efeitos WebGL, chroma key, partículas, texto curvo/no traço.
 - `tests/export.cjs`: exportação rápida, GIF e preview leve.
 - `tests/music.cjs`: detecção de batida, pulso e montagem na batida, batidas prontas, narração (microfone falso do Chromium), figurinhas.
@@ -25,6 +27,7 @@
 | utilidades | helpers, FONTS, ASPECTS, EASES, curvas Bézier, PROPS animáveis, COLOR_LOOKS, TRANSITIONS, MEDIA_FITS, TEXT_ANIMS, BLENDS |
 | estado | objeto `S`, mapas `A` (arquivos carregados) e `VIDS` (vídeos por camada) |
 | arquivos (IndexedDB) | `idb`, `loadAsset`, `registerAsset`, `syncMedia` (vídeo), `scheduleAudio` (som) |
+| Lottie / dotLottie | tipo `lottie` no modelo/painel/importação; `MotionLottie` valida arquivos e renderiza o quadro síncrono em `drawShape`; `freezeFrame` também captura Lottie |
 | modelo | `newProject`, `defaultS` (campos de cada tipo), `makeLayer`, `normalize`, `val` (valor no tempo), keyframes, `transitionState` (envelope de entrada/saída), `worldMatrix`, `setParent` |
 | render | `drawText` (animações de texto), `drawPath`, `drawFramedMedia` (contain/cover/stretch e foco), `drawShape`, `drawLayer` (filtros, looks, transições, sombra, brilho), `renderFrame` (máscara de recorte) |
 | efeitos, partículas e câmera | `GL` (WebGL compartilhado, `GL_FRAG` com os shaders), `chromaSource`, `applyFx` (camada fx em `renderFrame`), `PARTICLES`/`drawParticles` (sem estado), `activeCamera`/`cameraMatrix` (entra no `parentMatrix` das camadas raiz), `textPathPoints`/`pointOnPath` |
@@ -60,3 +63,5 @@ Música: camada de áudio guarda `s.beats` (segundos do arquivo, antes de corte 
 Tema do editor: tokens no início de `style.css`; `theme` em app.js lê essas variáveis para alças, caminho de movimento, curvas e ondas de áudio. Cores de conteúdo dos projetos são independentes. No desktop, propriedades ocupam a coluna direita inteira; em <=860 px a página empilha os blocos com rolagem, sem reduzir a prévia em telas curtas.
 
 Edição IA: `sourceStart/End` e transcrição são relativos ao início do trecho enviado, em segundos de fonte. `assemble` soma `sourceFrom` no trim e divide por speed na timeline, fecha pausas e limita a duração a quadros completos. Projeto guarda `aiEdit.original` (um único backup, sem aninhamento), request/summary/sourceAsset/localOnly. Assets originais ficam declarados; aplicar/restaurar preserva undo e não chama cleanupAssets. Modais cancelam `aiEditJob`; snapshots rejeitam resultados de uma versão antiga do projeto.
+
+Lottie: `assets.kind='lottie'` guarda o blob original (JSON ou ZIP). `s` tem `animationId`, `trimIn`, `speed`, `loop`, `reverse`, `w/h` e enquadramento. `TIMED_MEDIA` inclui Lottie para cortes/duração; `MEDIA` continua só vídeo/áudio para som. Um player/canvas por asset, reposicionado/resize síncrono antes de cada draw; metadados separados por animationId. Tempo de fonte `(t-start)*speed+trimIn`, com módulo da duração em loop; frame usa a taxa da fonte. Runtime limita o canvas e não inicia player/state machines. Cargas descartadas destroem o player; arquivos só são registrados após validar. `sw.js` guarda ESM/WASM fixos após primeiro uso, além de lottie.js no shell.

@@ -43,5 +43,6 @@ test('window.__motion exporta funções e Service Worker atualizado', () => {
   assert.ok(appJs.includes('runCaptionsWhisper'), 'runCaptionsWhisper exportado em window.__motion');
   assert.ok(appJs.includes('mediaPipeCutPerson'), 'mediaPipeCutPerson exportado em window.__motion');
   assert.ok(appJs.includes('mediaPipeFaceAutoFrame'), 'mediaPipeFaceAutoFrame exportado em window.__motion');
-  assert.ok(swJs.includes("VERSION = 'motion-v17'"), 'versão do service worker incrementada para motion-v17');
+  const cacheVersion = swJs.match(/const VERSION = 'motion-v(\d+)'/);
+  assert.ok(cacheVersion && Number(cacheVersion[1]) >= 17, 'versão do service worker mantém motion-v17 ou uma versão posterior');
 });

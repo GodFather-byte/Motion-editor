@@ -7,7 +7,7 @@ Editor de motion graphics que roda direto no navegador e pode ser instalado como
 ## Recursos
 
 **Camadas**
-- Texto, retângulo, círculo, estrela, traço livre (caneta), imagem, vídeo, música e grupo.
+- Texto, retângulo, círculo, estrela, traço livre (caneta), imagem, vídeo, música, Lottie / dotLottie e grupo.
 - Grupos e "Seguir camada": uma camada herda posição, giro, escala e opacidade de outra.
 - Máscara de recorte: a camada só aparece onde a camada de baixo existe.
 
@@ -20,6 +20,14 @@ Editor de motion graphics que roda direto no navegador e pode ser instalado como
 
 **Visual**
 - Degradê linear e radial, contorno, sombra, brilho externo e modos de mistura.
+
+**Lottie e dotLottie**
+- Importe animações Lottie `.json` e pacotes `.lottie` v1/v2 pelo botão **Lottie / dotLottie** abaixo da prévia. Arquivos de até 20 MB, com animações de até 10 minutos.
+- Controle velocidade, início, repetição e reprodução reversa. Se o pacote tiver várias animações, escolha uma no painel. Dividir e cortar na timeline mantém o momento correto da animação.
+- Use posição, escala, rotação, opacidade, keyframes, grupos, máscaras, looks e transições do editor. **Congelar quadro** cria uma imagem transparente editável.
+- As animações entram no vídeo MP4/WEBM, GIF e PNG. Transparência é preservada nas saídas que a suportam. Salvar `.motion.json` inclui o arquivo original, e o salvamento automático mantém a animação neste aparelho.
+- Imagens precisam estar embutidas no JSON ou dentro do pacote dotLottie. Exporte textos como formas para preservar a fonte. A animação importada é uma camada; suas formas internas não são editadas separadamente. Áudio e interatividade do pacote não são reproduzidos.
+- O player baixa na primeira importação, com internet, e fica no cache do app para uso offline.
 
 **Som e vídeo**
 - Vídeo e música na linha do tempo, com forma de onda, volume, entrada/saída suave e corte.
@@ -111,16 +119,18 @@ python3 -m http.server 8000
 
 Para usar as novas ferramentas, selecione uma camada e procure **Enquadrar**, **Looks de cor** e **Transições** no painel de propriedades. Os efeitos também são aplicados na exportação.
 
-Testes de navegador, no ambiente de desenvolvimento com Playwright, Chromium, FFmpeg e Python disponíveis:
+Testes de navegador, no ambiente de desenvolvimento com Playwright, Chromium, FFmpeg, Python e curl disponíveis:
 
 ```bash
 node --check app.js
+node --check lottie.js
 node --test tests/video-editor.cjs
 node --test tests/code-animation.cjs   # painel Código (baixa o GSAP, precisa de internet)
 node --test tests/export.cjs           # exportação rápida, GIF e preview leve (precisa de internet)
 node --test tests/effects.cjs          # câmera, efeitos, chroma key, partículas, texto curvo
 node --test tests/music.cjs            # batidas, montagem, batidas prontas, narração, figurinhas
 node --test tests/ai-edit-plan.cjs tests/ai-edit.cjs # edição por pedido, corte de pausas e Gemini simulado
+node --test tests/lottie.cjs           # runtime real, JSON/dotLottie v1/v2, cortes, transparência e exportação
 ```
 
 O teste inicia seu próprio servidor e gera mídia temporária. Confere recorte, cores, transições, divisão, desfazer/refazer, persistência, exportação e áudio em diferentes velocidades; inclui layout de 360 px. Defina `CHROMIUM_PATH` se o Chromium não estiver em `/usr/bin/chromium`. Essas ferramentas são apenas para testes; o app continua sem instalação de dependências ou build.
@@ -133,12 +143,15 @@ O teste inicia seu próprio servidor e gera mídia temporária. Confere recorte,
 | `style.css` | Visual e layout (desktop e celular) |
 | `app.js` | Editor completo: modelo, render, áudio/vídeo, timeline, painel, IA, Pro, modelos, exportação |
 | `ai-edit.js` | Validação do plano, detecção de silêncio e remapeamento de clipes/legendas |
+| `lottie.js` | Player vetorial sob demanda, leitura de JSON/dotLottie e render sincronizado com a timeline |
 | `pro-config.js` | Chave pública e textos do plano Pro |
 | `tools/` | Geradores de licença (Node e Python) |
 | `sw.js` | Cache offline. Mude `VERSION` a cada atualização |
 | `manifest.webmanifest`, `icons/` | Dados de instalação do app |
 
 ## Licenças de terceiros
+
+Lottie e dotLottie usam [@lottiefiles/dotlottie-web](https://github.com/LottieFiles/dotlottie-web), versão 0.81.0, licença **MIT**, carregado sob demanda.
 
 A remoção de fundo usa [@imgly/background-removal](https://github.com/imgly/background-removal-js), licença **AGPL-3.0**. Enquanto o código deste app for público, isso está coberto. Para fechar o código, troque essa função por uma alternativa com licença permissiva.
 
