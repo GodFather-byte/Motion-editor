@@ -59,3 +59,4 @@ test('configuração do Photopea respeita o formato oficial', () => {
   assert.equal(decoded.environment.customIO.save, 'app.activeDocument.saveToOE("png");');
   assert.equal(decoded.script, 'app.documents.add(1080, 1920, 72, "Teste", 2, 3);');
 });
+

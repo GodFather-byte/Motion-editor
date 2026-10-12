@@ -2150,7 +2150,7 @@ function layerPanel(L) {
       <h4 class="subhead">Fundo verde (chroma key)</h4>
       ${checkRow('chromaOn', 'Remover a cor de fundo')}
       <div data-show="chroma">${colorRow('chromaColor', 'Cor a remover')}${numRow('chromaTol', 'Tolerância', 0, 100)}${numRow('chromaSoft', 'Suavidade', 0, 100)}</div>` +
-      `<div class="actions"><button class="btn btn-small" data-act="replace-media">Trocar arquivo</button><button class="btn btn-small" data-act="media-ratio">Proporção original</button><button class="btn btn-small" data-act="media-fill">Preencher a tela</button>${L.type === 'video' ? '<button class="btn btn-small" data-act="freeze-frame" title="Congela o quadro atual como nova camada">Congelar quadro</button>' : ''}${L.type === 'image' ? '<button class="btn btn-small" data-act="photopea-edit" title="Editar no Photopea"><i class="sw sw-photopea"></i> Editar no Photopea</button><button class="btn btn-small btn-ai" data-act="remove-bg">Remover fundo (IA)</button>' : ''}</div>`;
+      `<div class="actions"><button class="btn btn-small" data-act="replace-media">Trocar arquivo</button><button class="btn btn-small" data-act="media-ratio">Proporção original</button><button class="btn btn-small" data-act="media-fill">Preencher a tela</button>${L.type === 'video' ? '<button class="btn btn-small" data-act="freeze-frame" title="Congela o quadro atual como nova camada">Congelar quadro</button><button class="btn btn-small" data-act="ffmpeg-media" title="Converter ou comprimir com FFmpeg"><i class="sw sw-ffmpeg"></i> FFmpeg</button>' : ''}${L.type === 'image' ? '<button class="btn btn-small" data-act="photopea-edit" title="Editar no Photopea"><i class="sw sw-photopea"></i> Editar no Photopea</button><button class="btn btn-small btn-ai" data-act="remove-bg">Remover fundo (IA)</button>' : ''}</div>`;
   } else if (L.type === 'icon') {
     content = `${selectRow('iconName', 'Ícone', Object.fromEntries(Object.keys(ICONS).map(k => [k, k[0].toUpperCase() + k.slice(1)])))}
       ${numRow('size', 'Tamanho', 4, 3000)}${fillRows('fill', 'Cor')}${numRow('stroke', 'Contorno', 0, 40)}${colorRow('strokeColor', 'Cor contorno')}`;
@@ -2192,7 +2192,7 @@ function layerPanel(L) {
         ${s.beats && s.beats.length ? '<button class="btn btn-small" data-act="beats-clear">Limpar batidas</button>' : ''}</div>
         ${s.beats && s.beats.length ? `<div class="row plain"><label for="montEvery">Montagem</label><select class="field" id="montEvery"><option value="1">Trocar a cada batida</option><option value="2" selected>A cada 2 batidas</option><option value="4">A cada 4 batidas</option></select></div>
         <div class="actions"><button class="btn btn-small btn-primary" data-act="montage">Montar fotos e vídeos na batida</button></div>` : ''}` : ''}
-      ${L.type === 'audio' ? '<div class="actions"><button class="btn btn-small" data-act="replace-media">Trocar arquivo</button><button class="btn btn-small" data-act="fit-project">Projeto do tamanho da música</button></div>' : ''}
+      ${L.type === 'audio' ? '<div class="actions"><button class="btn btn-small" data-act="replace-media">Trocar arquivo</button><button class="btn btn-small" data-act="fit-project">Projeto do tamanho da música</button><button class="btn btn-small" data-act="ffmpeg-media" title="Converter ou processar áudio com FFmpeg"><i class="sw sw-ffmpeg"></i> FFmpeg</button></div>' : ''}
     </div>`;
   }
 
@@ -2469,6 +2469,7 @@ panel.addEventListener('click', e => {
     else if (act === 'replace-media' && L) pickMedia(L.type, L.id);
     else if (act === 'remove-bg' && L) removeBackground(L);
     else if (act === 'photopea-edit' && L) openPhotopea({ mode: 'layer', layer: L });
+    else if (act === 'ffmpeg-media' && L) ffmpegModal({ layer: L });
     else if (act === 'captions' && L) aiCaptionsPicker();
     else if (act === 'media-ratio' && L) {
       const rec = A.get(L.s.asset);
@@ -4572,6 +4573,341 @@ $('#photopeaFileInput').addEventListener('change', e => {
 });
 $('#btnPhotopea').onclick = photopeaChoiceModal;
 
+/* ======================= FFmpeg ======================= */
+let ffmpegInstance = null;
+let ffmpegLoading = false;
+
+const FFMPEG_LIB = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/+esm';
+const FFMPEG_UTIL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/+esm';
+const CORE_BASE = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
+
+async function getFFmpeg(onLog, onProgress) {
+  if (ffmpegInstance) {
+    if (onLog) ffmpegInstance.on('log', onLog);
+    if (onProgress) ffmpegInstance.on('progress', onProgress);
+    return ffmpegInstance;
+  }
+  if (!navigator.onLine) {
+    throw new Error('O FFmpeg precisa de internet na primeira vez para baixar os arquivos WebAssembly.');
+  }
+  ffmpegLoading = true;
+  try {
+    const { FFmpeg } = await import(FFMPEG_LIB);
+    const { toBlobURL } = await import(FFMPEG_UTIL);
+
+    const ff = new FFmpeg();
+    if (onLog) ff.on('log', onLog);
+    if (onProgress) ff.on('progress', onProgress);
+
+    const coreURL = await toBlobURL(`${CORE_BASE}/ffmpeg-core.js`, 'text/javascript');
+    const wasmURL = await toBlobURL(`${CORE_BASE}/ffmpeg-core.wasm`, 'application/wasm');
+
+    await ff.load({ coreURL, wasmURL });
+    ffmpegInstance = ff;
+    ffmpegLoading = false;
+    return ff;
+  } catch (err) {
+    ffmpegLoading = false;
+    throw err;
+  }
+}
+
+function ffmpegModal(opts = {}) {
+  const p = P();
+  let targetLayer = opts.layer || null;
+  let fileBlob = null;
+  let fileName = '';
+  let fileKind = 'video';
+  let processedBlob = null;
+  let processedExt = 'mp4';
+  let processedKind = 'video';
+  let isRunning = false;
+
+  if (targetLayer) {
+    const rec = A.get(targetLayer.s.asset);
+    if (rec && rec.blob) {
+      fileBlob = rec.blob;
+      fileName = targetLayer.name || 'mídia';
+      fileKind = targetLayer.type === 'audio' ? 'audio' : 'video';
+    }
+  }
+
+  const operations = [
+    { id: 'mp4', label: 'Converter para MP4 (H.264)', desc: 'Vídeo universal de alta compatibilidade para web e redes sociais.', outExt: 'mp4', mime: 'video/mp4', kind: 'video' },
+    { id: 'audio', label: 'Extrair áudio (WAV / Trilha de som)', desc: 'Extrai o áudio do arquivo para uma nova camada de som na timeline.', outExt: 'wav', mime: 'audio/wav', kind: 'audio' },
+    { id: 'compress', label: 'Comprimir vídeo (reduzir MB)', desc: 'Reduz o tamanho do arquivo ajustando a taxa de compressão.', outExt: 'mp4', mime: 'video/mp4', kind: 'video' },
+    { id: 'gif', label: 'Gerar GIF animado', desc: 'Converte vídeo em GIF de alta qualidade com paleta otimizada.', outExt: 'gif', mime: 'image/gif', kind: 'image' },
+    { id: 'mute', label: 'Remover som (Mudo)', desc: 'Cria uma versão do vídeo sem faixa de áudio.', outExt: 'mp4', mime: 'video/mp4', kind: 'video' },
+    { id: 'custom', label: 'Comando personalizado', desc: 'Digite parâmetros customizados do FFmpeg.', outExt: 'mp4', mime: 'video/mp4', kind: 'video' },
+  ];
+
+  const html = `
+    <p>Processe e converta vídeos e áudios direto no seu navegador com o motor WebAssembly do FFmpeg (100% privado, sem envio para servidores).</p>
+
+    <div class="row plain">
+      <label>Arquivo</label>
+      <div style="display:flex;gap:8px;align-items:center;flex:1;min-width:0;">
+        <span id="ffFileName" style="font-weight:600;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">${esc(fileName || 'Nenhum arquivo escolhido')}</span>
+        <button class="btn btn-small" id="ffPickBtn">Escolher arquivo…</button>
+      </div>
+    </div>
+
+    <div class="row plain">
+      <label for="ffOp">Operação</label>
+      <select class="field" id="ffOp">
+        ${operations.map(o => `<option value="${o.id}">${o.label}</option>`).join('')}
+      </select>
+    </div>
+
+    <div class="row plain" id="ffCompressRow" hidden>
+      <label for="ffCrf">Compressão</label>
+      <select class="field" id="ffCrf">
+        <option value="23">Leve (ótima qualidade, menor redução)</option>
+        <option value="28" selected>Média (ótimo equilíbrio para web)</option>
+        <option value="34">Forte (tamanho mínimo para WhatsApp/Discord)</option>
+      </select>
+    </div>
+
+    <div class="row plain" id="ffGifRow" hidden>
+      <label for="ffGifScale">Largura GIF</label>
+      <select class="field" id="ffGifScale">
+        <option value="360">360 px (leve)</option>
+        <option value="480" selected>480 px (padrão)</option>
+        <option value="720">720 px (grande)</option>
+      </select>
+    </div>
+
+    <div class="row plain" id="ffCustomRow" hidden>
+      <label for="ffArgs">Argumentos</label>
+      <input class="field" id="ffArgs" placeholder="-c:v libx264 -preset ultrafast" style="font-family:var(--font-mono);font-size:11.5px;">
+    </div>
+
+    <p class="hint" id="ffOpDesc">${operations[0].desc}</p>
+
+    <div id="ffProgBox" hidden style="margin-top:10px;">
+      <div class="progress" style="margin-bottom:6px;"><div id="ffProgBar"></div></div>
+      <p class="hint" id="ffStatus" style="font-weight:600;">Processando…</p>
+    </div>
+
+    <details style="margin-top:8px;">
+      <summary style="font-size:11.5px;color:var(--muted);cursor:pointer;user-select:none;">Ver log do FFmpeg</summary>
+      <pre class="ffmpeg-log" id="ffLog" style="margin-top:6px;">Pronto para executar.</pre>
+    </details>
+
+    <div id="ffResultWrap" hidden style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px;">
+      <p style="font-weight:600;font-size:13px;margin:0 0 6px;color:var(--accent);">✓ Concluído com sucesso!</p>
+      <div id="ffResultMedia"></div>
+    </div>
+  `;
+
+  showModal('FFmpeg — Caixa de Ferramentas', html, [
+    { label: 'Fechar', onClick: () => { isRunning = false; } },
+    { label: 'Executar FFmpeg', cls: 'btn-primary', keepOpen: true, onClick: async () => {
+      if (isRunning) return;
+      if (!fileBlob) {
+        toast('Escolha um arquivo antes de executar.');
+        $('#ffPickBtn').click();
+        return;
+      }
+      const opId = $('#ffOp').value;
+      const op = operations.find(o => o.id === opId) || operations[0];
+      const statusEl = $('#ffStatus');
+      const progBar = $('#ffProgBar');
+      const progBox = $('#ffProgBox');
+      const logEl = $('#ffLog');
+      const resWrap = $('#ffResultWrap');
+      const resMedia = $('#ffResultMedia');
+      const runBtn = $('.modal-actions .btn-primary');
+
+      isRunning = true;
+      if (runBtn) { runBtn.disabled = true; runBtn.textContent = 'Processando…'; }
+      progBox.hidden = false;
+      progBar.style.width = '10%';
+      statusEl.textContent = 'Carregando motor do FFmpeg (WebAssembly)…';
+      logEl.textContent = 'Iniciando FFmpeg...\n';
+
+      const appendLog = msg => {
+        logEl.textContent += msg + '\n';
+        logEl.scrollTop = logEl.scrollHeight;
+      };
+
+      try {
+        const ff = await getFFmpeg(
+          ({ message }) => appendLog(message),
+          ({ progress }) => {
+            const pct = Math.min(95, Math.max(10, Math.round(progress * 100)));
+            progBar.style.width = pct + '%';
+            statusEl.textContent = `Processando com FFmpeg: ${pct}%`;
+          }
+        );
+
+        statusEl.textContent = 'Preparando arquivo…';
+        progBar.style.width = '20%';
+
+        const ext = fileName.includes('.') ? fileName.split('.').pop().toLowerCase() : (fileKind === 'audio' ? 'wav' : 'mp4');
+        const inName = `input_${Date.now()}.${ext}`;
+        const outExt = op.outExt;
+        const outName = `output_${Date.now()}.${outExt}`;
+
+        appendLog(`Gravando ${inName} (${Math.round(fileBlob.size / 1024)} KB) na memória virtual...`);
+        const fileBytes = new Uint8Array(await fileBlob.arrayBuffer());
+        await ff.writeFile(inName, fileBytes);
+
+        let cmd = [];
+        if (op.id === 'mp4') {
+          cmd = ['-i', inName, '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '128k', outName];
+        } else if (op.id === 'audio') {
+          cmd = ['-i', inName, '-vn', outName];
+        } else if (op.id === 'compress') {
+          const crf = $('#ffCrf').value || '28';
+          cmd = ['-i', inName, '-c:v', 'libx264', '-crf', crf, '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '96k', outName];
+        } else if (op.id === 'gif') {
+          const scale = $('#ffGifScale').value || '480';
+          cmd = ['-i', inName, '-vf', `fps=15,scale=${scale}:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse`, outName];
+        } else if (op.id === 'mute') {
+          cmd = ['-i', inName, '-an', '-c:v', 'copy', outName];
+        } else if (op.id === 'custom') {
+          const customStr = ($('#ffArgs').value || '').trim();
+          const customArgs = customStr ? customStr.split(/\s+/) : ['-c', 'copy'];
+          cmd = ['-i', inName, ...customArgs, outName];
+        }
+
+        appendLog(`Executando: ffmpeg ${cmd.join(' ')}`);
+        statusEl.textContent = 'Executando comando…';
+        await ff.exec(cmd);
+
+        statusEl.textContent = 'Lendo resultado…';
+        progBar.style.width = '98%';
+
+        const outData = await ff.readFile(outName);
+        processedBlob = new Blob([outData.buffer], { type: op.mime });
+        processedExt = outExt;
+        processedKind = op.kind;
+
+        try { await ff.deleteFile(inName); await ff.deleteFile(outName); } catch {}
+
+        progBar.style.width = '100%';
+        statusEl.textContent = 'Pronto!';
+        appendLog(`Sucesso! Gerado ${outName} (${Math.round(processedBlob.size / 1024)} KB)`);
+
+        const prevUrl = URL.createObjectURL(processedBlob);
+        resMedia.innerHTML = '';
+        if (op.kind === 'video') {
+          const v = document.createElement('video');
+          v.className = 'ffmpeg-preview';
+          v.controls = true; v.src = prevUrl;
+          resMedia.appendChild(v);
+        } else if (op.kind === 'image') {
+          const img = document.createElement('img');
+          img.className = 'ffmpeg-preview';
+          img.src = prevUrl;
+          resMedia.appendChild(img);
+        } else if (op.kind === 'audio') {
+          const a = document.createElement('audio');
+          a.controls = true; a.src = prevUrl; a.style.width = '100%';
+          resMedia.appendChild(a);
+        }
+        resWrap.hidden = false;
+
+        const box = $('#modalActions');
+        box.innerHTML = '';
+
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'btn';
+        closeBtn.textContent = 'Fechar';
+        closeBtn.onclick = () => { hideModal(); URL.revokeObjectURL(prevUrl); };
+        box.appendChild(closeBtn);
+
+        const dlBtn = document.createElement('button');
+        dlBtn.className = 'btn';
+        dlBtn.textContent = 'Baixar arquivo';
+        dlBtn.onclick = () => download(processedBlob, `${(fileName || 'mídia').replace(/\.[^.]+$/, '')}-ffmpeg.${processedExt}`);
+        box.appendChild(dlBtn);
+
+        if (targetLayer && (targetLayer.type === processedKind || (targetLayer.type === 'video' && processedKind === 'video'))) {
+          const replaceBtn = document.createElement('button');
+          replaceBtn.className = 'btn btn-primary';
+          replaceBtn.textContent = 'Substituir camada atual';
+          replaceBtn.onclick = async () => {
+            const outName = `${targetLayer.name} (FFmpeg)`;
+            const rec = await registerAsset(processedBlob, processedKind, outName);
+            targetLayer.s.asset = rec.id;
+            commit(); renderPanel(); renderTimeline(); refreshTime();
+            hideModal();
+            URL.revokeObjectURL(prevUrl);
+            toast('Camada atualizada com o resultado do FFmpeg.');
+          };
+          box.appendChild(replaceBtn);
+        }
+
+        const addBtn = document.createElement('button');
+        addBtn.className = 'btn ' + (targetLayer ? '' : 'btn-primary');
+        addBtn.textContent = 'Adicionar à timeline';
+        addBtn.onclick = async () => {
+          const baseName = `${(fileName || 'Mídia').replace(/\.[^.]+$/, '')} (FFmpeg)`;
+          const rec = await registerAsset(processedBlob, processedKind, baseName);
+          const p = P();
+          if (processedKind === 'video') {
+            const fit = Math.min(p.width / rec.w, p.height / rec.h, 10);
+            const L = makeLayer('video', { name: baseName, s: { asset: rec.id, w: Math.round(rec.w * fit), h: Math.round(rec.h * fit) } });
+            growForMedia(rec.duration, L);
+            addLayer(L, true);
+          } else if (processedKind === 'audio') {
+            const L = makeLayer('audio', { name: baseName, s: { asset: rec.id } });
+            growForMedia(rec.duration, L);
+            addLayer(L, true);
+          } else if (processedKind === 'image') {
+            const fit = Math.min(p.width * 0.7 / rec.w, p.height * 0.7 / rec.h, 1);
+            const L = makeLayer('image', { name: baseName, s: { asset: rec.id, w: Math.round(rec.w * fit), h: Math.round(rec.h * fit) } });
+            addLayer(L);
+          }
+          commit(); renderPanel(); renderTimeline(); refreshTime();
+          hideModal();
+          URL.revokeObjectURL(prevUrl);
+          toast('Adicionado à linha do tempo com sucesso!');
+        };
+        box.appendChild(addBtn);
+
+      } catch (err) {
+        appendLog(`\n[ERRO]: ${err && err.message ? err.message : String(err)}`);
+        statusEl.textContent = 'Erro durante o processamento. Confira o log acima.';
+        progBar.style.backgroundColor = 'var(--danger)';
+        toast('Erro no FFmpeg: ' + (err && err.message ? err.message : 'falha na execução'));
+        if (runBtn) { runBtn.disabled = false; runBtn.textContent = 'Tentar novamente'; }
+      } finally {
+        isRunning = false;
+      }
+    } },
+  ]);
+
+  $('.modal-card').classList.add('wide');
+
+  const syncOp = () => {
+    const op = $('#ffOp').value;
+    $('#ffCompressRow').hidden = op !== 'compress';
+    $('#ffGifRow').hidden = op !== 'gif';
+    $('#ffCustomRow').hidden = op !== 'custom';
+    const found = operations.find(o => o.id === op);
+    if (found) $('#ffOpDesc').textContent = found.desc;
+  };
+  $('#ffOp').onchange = syncOp;
+
+  $('#ffPickBtn').onclick = () => $('#ffmpegFileInput').click();
+
+  $('#ffmpegFileInput').onchange = e => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    fileBlob = f;
+    fileName = f.name;
+    fileKind = f.type.startsWith('audio') ? 'audio' : 'video';
+    targetLayer = null;
+    $('#ffFileName').textContent = `${f.name} (${Math.round(f.size / 1024)} KB)`;
+  };
+}
+
+$('#btnFFmpeg').onclick = () => ffmpegModal();
+
 /* ======================= menu ======================= */
 const menu = $('#menu');
 $('#btnMenu').onclick = e => { e.stopPropagation(); menu.hidden = !menu.hidden; };
@@ -4607,6 +4943,8 @@ menu.addEventListener('click', async e => {
     canvas.toBlob(b => { renderMain(); if (b) download(b, `${fileBase()}-${S.time.toFixed(2)}s.png`); }, 'image/png');
   } else if (act === 'photopea-frame') {
     openPhotopea({ mode: 'frame' });
+  } else if (act === 'ffmpeg') {
+    ffmpegModal();
   } else if (act === 'help') {
     showModal('Atalhos', `<div class="keys">
       <kbd>Espaço</kbd><span>Reproduzir / pausar</span>
@@ -4722,5 +5060,5 @@ if (document.fonts) {
   Promise.all(FONTS.map(f => document.fonts.load(`700 40px "${f}"`).catch(() => {}))).then(() => refreshTime());
   document.fonts.ready.then(() => refreshTime());
 }
-window.__motion = { S, A, P, byId, select, setTime, setParent, makeLayer, addLayer, splitLayer, freezeFrame, registerAsset, commit, openPhotopea, closePhotopea, photopeaChoiceModal };
+window.__motion = { S, A, P, byId, select, setTime, setParent, makeLayer, addLayer, splitLayer, freezeFrame, registerAsset, commit, openPhotopea, closePhotopea, photopeaChoiceModal, ffmpegModal, getFFmpeg };
 })();

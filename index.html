@@ -41,6 +41,7 @@
       <button data-menu="save">Salvar projeto</button>
       <button data-menu="png">Exportar frame atual (PNG)</button>
       <button data-menu="photopea-frame">Editar frame atual no Photopea</button>
+      <button data-menu="ffmpeg">Ferramentas FFmpeg</button>
       <button data-menu="help">Atalhos e ajuda</button>
     </div>
   </header>
@@ -59,6 +60,7 @@
       <button class="chip chip-media" id="btnBeats"><i class="sw sw-beats"></i> Batidas</button>
       <button class="chip chip-media" id="btnVoice"><i class="sw sw-mic"></i> Gravar voz</button>
       <button class="chip chip-media" id="btnPhotopea" title="Criar ou editar no Photopea"><i class="sw sw-photopea"></i> Photopea</button>
+      <button class="chip chip-media" id="btnFFmpeg" title="Converter e processar com FFmpeg"><i class="sw sw-ffmpeg"></i> FFmpeg</button>
       <span class="tool-divider" aria-hidden="true"></span>
       <button class="chip" data-add="text"><b>T</b> Texto</button>
       <button class="chip" data-add="rect"><i class="sw sw-rect"></i> Retângulo</button>
@@ -75,6 +77,7 @@
       <button class="chip chip-accent" id="btnCode"><i class="sw sw-code"></i> Código</button>
       <input type="file" id="mediaInput" hidden>
       <input type="file" id="photopeaFileInput" accept="image/*,.psd" hidden>
+      <input type="file" id="ffmpegFileInput" accept="video/*,audio/*" hidden>
       <input type="file" id="projectInput" accept=".json,application/json" hidden>
     </div>
     <p class="stage-hint">Arraste para mover <span>·</span> <kbd>Espaço</kbd> para reproduzir <span>·</span> <kbd>K</kbd> para animar</p>

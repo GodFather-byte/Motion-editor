@@ -2,36 +2,33 @@
 Atualizado por: Antigravity em 12/10/2026
 
 ## Objetivo atual
-Integração com o Photopea concluída com sucesso.
+Integração completa do FFmpeg e Photopea concluídas com sucesso.
 
 ## Feito nas últimas sessões
-- Integração bidirecional do Photopea via iframe e Live Messaging (`postMessage` + `saveToOE`).
-- Chip "Photopea" na barra de adicionar (`.add-bar`) com modal de escolha (novo gráfico no tamanho do projeto, editar camada, editar frame atual, abrir arquivo/PSD).
-- Botão "Editar no Photopea" no painel de propriedades de camadas de imagem.
-- Opção "Editar frame atual no Photopea" no menu do projeto.
-- Atalho `Ctrl+S` / `Cmd+S` e `Arquivo > Salvar` dentro do Photopea mapeados via `customIO.save` para enviar o PNG direto ao projeto.
-- Opção para substituir a camada existente ou adicionar como nova camada.
-- Modal dedicado responsivo para desktop e celular (360 px), tema escuro e idioma em português.
-- Teclado do editor suspenso durante o uso do Photopea para evitar conflito de atalhos.
-- Testes unitários adicionados em `tests/photopea.cjs` (4/4 passando). PWA atualizado para `motion-v14`.
+- Photopea: edição e criação de imagens via iframe, Live Messaging e salvamento direto com Ctrl+S.
+- FFmpeg WebAssembly: caixa de ferramentas completa (`ffmpegModal`) carregada sob demanda via CDN.
+- Operações do FFmpeg: converter para MP4 (H.264), extrair áudio (WAV), comprimir com CRF, gerar GIF animado com paleta Lanczos, remover som (mudo) e comandos personalizados.
+- Pontos de acesso do FFmpeg: chip na barra de adicionar, botão nos painéis de vídeo e áudio, e menu do projeto.
+- Barra de progresso em tempo real, console de log expansível, prévia imediata e botões para adicionar à timeline, substituir camada ou baixar arquivo.
+- Testes unitários em `tests/photopea.cjs` (4/4) e `tests/ffmpeg.cjs` (4/4). PWA em `motion-v15`.
 
 ## Próximo passo
-Testar no celular e desktop reais a edição de imagens com filtros e recortes PSD via Photopea online.
+Testar transcodificação e compressão com arquivos de vídeo reais de diferentes formatos (MOV, MKV, WebM) em navegadores desktop e móveis.
 
 ## Arquivos relevantes
-- `app.js`: seção `photopea` (`openPhotopea`, `closePhotopea`, `photopeaChoiceModal`, `applyPhotopeaResult`).
-- `index.html`: chip `#btnPhotopea`, menu `photopea-frame`, input `#photopeaFileInput` e `#photopeaModal`.
-- `style.css`: `.sw-photopea`, `.photopea-modal`, `.photopea-card`, `.photopea-bar`, estilos mobile.
-- `tests/photopea.cjs`: testes da integração. `sw.js`: versão `motion-v14`.
+- `app.js`: seções `photopea` e `FFmpeg` (`getFFmpeg`, `ffmpegModal`), botões no painel e menu.
+- `index.html`: chips `#btnPhotopea` e `#btnFFmpeg`, menus e inputs de arquivos.
+- `style.css`: `.sw-photopea`, `.sw-ffmpeg`, `.ffmpeg-log`, `.ffmpeg-preview`.
+- `tests/ffmpeg.cjs`, `tests/photopea.cjs`. `sw.js`: versão `motion-v15`.
 
 ## Decisões tomadas e motivo
-- Imagens <800 KB passam via data URI no hash `files[]` para carregamento instantâneo no boot do Photopea; arquivos maiores usam `ArrayBuffer` via `postMessage`.
-- `customIO.save: 'app.activeDocument.saveToOE("png");'` intercepta o `Ctrl+S` nativo do Photoshop/Photopea e salva no projeto sem cliques extras.
-- PWA suspende teclas do editor enquanto Photopea estiver aberto; fecha suavemente com Escape ou botão Fechar.
+- Carregamento 100% sob demanda do FFmpeg WebAssembly (single-threaded core sem necessidade de COOP/COEP para compatibilidade total com GitHub Pages).
+- Opção para substituir camada existente preservando sincronia ou adicionar como nova faixa.
+- Arquivos processados são registrados no IndexedDB via `registerAsset`.
 
 ## Pendências e armadilhas
-- O Photopea requer conexão ativa com a internet para carregar o iframe (`photopea.com`).
-- Manter `VERSION` em `sw.js` atualizado a cada mudança nos assets do app.
+- FFmpeg e Photopea requerem conexão com a internet na primeira inicialização para baixar os binários.
+- Sempre atualizar `VERSION` em `sw.js` a cada mudança nos assets do app.
 
 ## Como rodar e testar
-`python3 -m http.server 8000`, `node --check app.js`, `node --test tests/photopea.cjs`.
+`python3 -m http.server 8000`, `node --check app.js`, `node --test tests/ffmpeg.cjs tests/photopea.cjs`.

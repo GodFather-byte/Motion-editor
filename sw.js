@@ -1,5 +1,5 @@
 /* Service worker: guarda o app para abrir offline. Troque VERSION a cada release. */
-const VERSION = 'motion-v14';
+const VERSION = 'motion-v15';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'pro-config.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', e => {

@@ -13,6 +13,7 @@
 - `tests/export.cjs`: exportação rápida, GIF e preview leve.
 - `tests/music.cjs`: detecção de batida, pulso e montagem na batida, batidas prontas, narração (microfone falso do Chromium), figurinhas.
 - `tests/photopea.cjs`: integração do Photopea (Live Messaging, API hash, salvar no projeto, responsividade).
+- `tests/ffmpeg.cjs`: integração do FFmpeg WebAssembly (conversão, extração de áudio, compressão, GIF).
 - `tests/code-animation.cjs`: testes do painel Código (GSAP isolado). Precisa de internet. Rode com `CHROMIUM_PATH` apontando para o Chromium do Playwright se não houver `/usr/bin/chromium`.
 
 ## Seções de app.js (busque pelo título `/* ===... nome ===... */`)
@@ -40,6 +41,7 @@
 | plano Pro | `verifyLicense`, `proModal`, `drawWatermark` |
 | modelos prontos | `TEMPLATES` (cada um é uma função que cria camadas), miniaturas |
 | photopea | `openPhotopea`, `closePhotopea`, `photopeaChoiceModal`, `applyPhotopeaResult`, Live Messaging (`saveToOE`), integração de atalhos e arquivo |
+| FFmpeg | `getFFmpeg`, `ffmpegModal` (converter para MP4 H.264, extrair áudio WAV, comprimir CRF, gerar GIF animado, mudo, comandos livres) |
 | menu, modal, teclado, PWA, início | resto da interface e inicialização |
 
 ## Modelo de dados (resumo)
