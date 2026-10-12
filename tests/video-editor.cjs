@@ -183,7 +183,7 @@ test('vídeo real congela e exporta com enquadramento e look', async t => {
   assert.deepEqual(await pixel(page), preview);
   // Projeto curto e pequeno mantém o teste de MediaRecorder rápido.
   await page.evaluate(() => { const m = window.__motion; m.P().duration = 1.5; m.P().layers.forEach(l => { l.start = 0; l.end = 1.5; }); m.setTime(0); m.commit(); });
-  await page.locator('#btnExport').click(); await page.getByRole('button', { name: 'Gravar vídeo' }).click();
+  await page.locator('#btnExport').click(); await page.locator('#modalActions').getByRole('button', { name: 'Exportar' }).click();
   await page.waitForFunction(() => document.querySelector('#modalTitle').textContent === 'Vídeo pronto', null, { timeout: 15000 });
   const result = await page.evaluate(async () => {
     const v = document.querySelector('#modal video');

@@ -296,7 +296,7 @@ function syncMedia() {
 const pauseAllVideos = () => VIDS.forEach(v => v.pause());
 
 /* agenda o som de todas as camadas a partir de "from" */
-function scheduleAudio(ac, dest, from) {
+function scheduleAudio(ac, dest, from, lead = 0.03) {
   const out = [];
   for (const L of P().layers) {
     if (!MEDIA(L.type) || !L.visible || L.s.muted || L.end <= from) continue;
@@ -309,7 +309,7 @@ function scheduleAudio(ac, dest, from) {
     const into = Math.max(0, from - L.start);
     const offset = (L.s.trimIn || 0) + into * sp;
     if (offset >= rec.buffer.duration) continue;
-    const when = ac.currentTime + Math.max(0, L.start - from) + 0.03;
+    const when = ac.currentTime + Math.max(0, L.start - from) + lead;
     const src = ac.createBufferSource();
     src.buffer = rec.buffer;
     if (src.playbackRate) { try { src.playbackRate.setValueAtTime(sp, when); } catch {} }
@@ -716,6 +716,8 @@ function drawShape(c, L, local) {
   return { w: 0, h: 0 };
 }
 
+/* RK: escala do render. 1 = resolução do projeto. O preview usa menos enquanto toca; a exportação pode usar mais. */
+let RK = 1, RKM = new DOMMatrix();
 function drawLayer(c, L, t, comp) {
   if (!VISUAL(L.type) || !L.visible || t < L.start || t > L.end || t === L.end && t < P().duration) { S.bounds.delete(L.id); return; }
   const m = worldMatrix(L, t);
@@ -725,7 +727,7 @@ function drawLayer(c, L, t, comp) {
   const s = L.s;
   const f = [];
   const blur = Math.max(0, val(L, 'blur', t));
-  if (blur > 0) f.push(`blur(${blur}px)`);
+  if (blur > 0) f.push(`blur(${blur * RK}px)`);
   const br = val(L, 'brightness', t), co = val(L, 'contrast', t), sa = val(L, 'saturate', t), hu = val(L, 'hue', t);
   if (br !== 100) f.push(`brightness(${br}%)`);
   if (co !== 100) f.push(`contrast(${co}%)`);
@@ -749,7 +751,7 @@ function drawLayer(c, L, t, comp) {
   let b = { w: 0, h: 0 };
   for (const pass of passes) {
     c.save();
-    c.setTransform(m);
+    c.setTransform(RK === 1 ? m : RKM.multiply(m));
     c.globalAlpha = op;
     c.globalCompositeOperation = comp || s.blend || 'source-over';
     c.filter = filter;
@@ -761,9 +763,9 @@ function drawLayer(c, L, t, comp) {
     }
     if (pass === 'shadow') {
       c.shadowColor = hexA(s.shadowColor, s.shadowOpacity / 100);
-      c.shadowBlur = s.shadowBlur; c.shadowOffsetX = s.shadowX; c.shadowOffsetY = s.shadowY;
+      c.shadowBlur = s.shadowBlur * RK; c.shadowOffsetX = s.shadowX * RK; c.shadowOffsetY = s.shadowY * RK;
     } else if (pass === 'glow') {
-      c.shadowColor = s.glowColor || '#ffffff'; c.shadowBlur = glow * mScale(m);
+      c.shadowColor = s.glowColor || '#ffffff'; c.shadowBlur = glow * mScale(m) * RK;
     }
     b = drawShape(c, L, t - L.start);
     c.restore();
@@ -771,12 +773,15 @@ function drawLayer(c, L, t, comp) {
   S.bounds.set(L.id, b);
 }
 
-function renderFrame(c, t) {
+function renderFrame(c, t, opt = {}) {
   const p = P();
+  RK = opt.k || 1;
+  RKM = new DOMMatrix([RK, 0, 0, RK, 0, 0]);
+  const cw = c.canvas.width, chh = c.canvas.height;
   c.setTransform(1, 0, 0, 1, 0, 0);
   c.globalAlpha = 1; c.filter = 'none'; c.shadowBlur = 0; c.globalCompositeOperation = 'source-over';
-  c.fillStyle = p.background;
-  c.fillRect(0, 0, p.width, p.height);
+  if (opt.transparent) c.clearRect(0, 0, cw, chh);
+  else { c.fillStyle = p.background; c.fillRect(0, 0, cw, chh); }
   const ls = p.layers;
   let i = ls.length - 1;
   while (i >= 0) {
@@ -787,7 +792,7 @@ function renderFrame(c, t) {
     if (!clipped.length) drawLayer(c, base, t);
     else {
       // máscara de recorte: as camadas acima só aparecem onde a camada de baixo existe
-      if (off.width !== p.width || off.height !== p.height) { off.width = p.width; off.height = p.height; }
+      if (off.width !== cw || off.height !== chh) { off.width = cw; off.height = chh; }
       offCtx.setTransform(1, 0, 0, 1, 0, 0);
       offCtx.clearRect(0, 0, off.width, off.height);
       drawLayer(offCtx, base, t, 'source-over');
@@ -800,8 +805,16 @@ function renderFrame(c, t) {
     }
     i = j;
   }
+  RK = 1; RKM = new DOMMatrix();
 }
-const renderMain = (t = S.time) => renderFrame(ctx, t);
+/* enquanto toca, o preview desenha só na resolução da tela (bem mais leve no celular) */
+function renderMain(t = S.time) {
+  const p = P();
+  const k = S.playing && !S.exporting ? S.playK || 1 : 1;
+  const w = Math.max(2, Math.round(p.width * k)), h = Math.max(2, Math.round(p.height * k));
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  renderFrame(ctx, t, { k });
+}
 
 /* ======================= seleção no preview ======================= */
 function handlesOf(L) {
@@ -893,7 +906,9 @@ function fitStage() {
   const r = Math.max(0.01, Math.min(aw / p.width, ah / p.height));
   const cw = Math.floor(p.width * r), ch = Math.floor(p.height * r);
   const dpr = window.devicePixelRatio || 1;
-  if (canvas.width !== p.width || canvas.height !== p.height) { canvas.width = p.width; canvas.height = p.height; }
+  // resolução do preview durante a reprodução: a da tela, nunca mais que o projeto
+  const pk = Math.min(1, (cw * dpr) / p.width);
+  S.playK = pk > 0.85 ? 1 : Math.max(0.25, pk);
   canvas.style.width = overlay.style.width = cw + 'px';
   canvas.style.height = overlay.style.height = ch + 'px';
   overlay.width = Math.round(cw * dpr); overlay.height = Math.round(ch * dpr);
@@ -2156,33 +2171,323 @@ async function exportVideo(forceMime) {
   if (gp) gp.onclick = ev => { ev.preventDefault(); hideModal(); setTimeout(() => proModal(), 30); };
 }
 function exportModal() {
-  if (!window.MediaRecorder) { exportVideo(); return; }
   const p = P();
-  const sound = hasSound();
-  const canMp4 = MediaRecorder.isTypeSupported('video/mp4;codecs=avc1') || MediaRecorder.isTypeSupported('video/mp4');
-  const fmt = canMp4 ? 'MP4' : 'WEBM';
-  showModal('Exportar vídeo', `
-    <p>Gere um arquivo de vídeo da sua animação.</p>
-    <div class="row plain"><label>Resolução</label><input class="field" value="${p.width} × ${p.height} px (${p.aspect})" disabled></div>
-    <div class="row plain"><label>Duração</label><input class="field" value="${p.duration} segundos" disabled></div>
-    <div class="row plain"><label>Áudio</label><input class="field" value="${sound ? 'Com som' : 'Sem som (mudo)'}" disabled></div>
-    <div class="row plain"><label for="expFps">Quadros/s</label><select class="field" id="expFps"><option value="24"${p.fps === 24 ? ' selected' : ''}>24 fps (Cinema)</option><option value="30"${p.fps === 30 ? ' selected' : ''}>30 fps (Padrão)</option><option value="60"${p.fps === 60 ? ' selected' : ''}>60 fps (Fluido)</option></select></div>
-    <p class="hint">Gravação em formato ${fmt}. Mantenha a aba aberta durante a gravação.</p>
-  `, [
+  const fast = canFastExport();
+  const short = Math.min(p.width, p.height);
+  const dims = side => { const k = side / short; return `${even(p.width * k)}×${even(p.height * k)}`; };
+  // padrão: a resolução do próprio projeto; as outras escalam para mais ou para menos
+  const sides = [[720, '720p'], [1080, '1080p'], [2160, '4K']];
+  if (!sides.some(([v]) => v === short)) sides.unshift([short, 'Projeto']);
+  const resOpts = sides.map(([side, label]) =>
+    `<option value="${side}"${side === short ? ' selected' : ''}>${label} (${dims(side)})${side === 2160 && !S.pro ? ' · Pro' : ''}</option>`).join('');
+  const fpsOpts = [[24, '24 (cinema)'], [30, '30 (padrão)'], [60, '60 (fluido)']].map(([v, l]) => `<option value="${v}"${p.fps === v ? ' selected' : ''}>${l}</option>`).join('');
+  const hints = {
+    mp4: fast ? 'Monta o vídeo quadro a quadro, com som: não pula quadros, mesmo com efeitos pesados, e continua mesmo se você trocar de aba.' : 'Este navegador não tem o codificador rápido: o vídeo será gravado em tempo real, com a aba aberta.',
+    live: 'Grava em tempo real, como uma tela. Mantenha a aba aberta e visível até terminar.',
+    gif: 'Sem som. Bom para figurinhas, prévias e mensagens.',
+    png: 'Salva o quadro atual na resolução do projeto.',
+  };
+  showModal('Exportar', `
+    <div class="row plain"><label for="expFmt">Formato</label><select class="field" id="expFmt">
+      <option value="mp4">Vídeo MP4${fast ? ' (rápido)' : ''}</option>
+      ${fast ? '<option value="live">Vídeo (gravação em tempo real)</option>' : ''}
+      <option value="gif">GIF animado</option>
+      <option value="png">Imagem PNG do quadro atual</option>
+    </select></div>
+    <div class="row plain" data-for="mp4"><label for="expRes">Resolução</label><select class="field" id="expRes">${resOpts}</select></div>
+    <div class="row plain" data-for="mp4 live"><label for="expFps">Quadros/s</label><select class="field" id="expFps">${fpsOpts}</select></div>
+    <div class="row plain" data-for="gif"><label for="expGif">Tamanho</label><select class="field" id="expGif"><option value="320">Pequeno (320 px)</option><option value="480" selected>Médio (480 px)</option><option value="720">Grande (720 px)</option></select></div>
+    <label class="check" data-for="gif png"><input type="checkbox" id="expAlpha"> Fundo transparente</label>
+    <p class="hint" id="expHint"></p>
+    <p class="hint">Duração: ${p.duration} s · ${hasSound() ? 'com som' : 'sem som'}</p>`, [
     { label: 'Cancelar' },
-    { label: 'Exportar frame (PNG)', onClick: () => {
-      pause();
-      drawWatermark(ctx);
-      canvas.toBlob(b => { renderMain(); if (b) download(b, `${fileBase()}-${S.time.toFixed(2)}s.png`); }, 'image/png');
-    } },
-    { label: 'Gravar vídeo', cls: 'btn-primary', onClick: () => {
-      const chosen = parseInt($('#expFps')?.value, 10);
-      if (chosen && chosen !== p.fps) { p.fps = chosen; commit(); }
-      exportVideo();
+    { label: 'Exportar', cls: 'btn-primary', keepOpen: true, onClick: () => {
+      // lê tudo antes de fechar: hideModal() limpa o conteúdo do modal
+      const fmt = $('#expFmt').value;
+      const fps = parseInt($('#expFps').value, 10) || p.fps;
+      const alpha = $('#expAlpha').checked, gifSide = +$('#expGif').value, side = +$('#expRes').value;
+      if ((fmt === 'mp4' || fmt === 'live') && fps !== p.fps) { p.fps = fps; commit(); }
+      if (fmt === 'png') { hideModal(); exportPng(alpha); return; }
+      if (fmt === 'gif') { hideModal(); exportGif({ shortSide: gifSide, transparent: alpha }); return; }
+      if (fmt === 'live' || !fast) { hideModal(); exportVideo(); return; }
+      if (side > 1080 && !S.pro) { hideModal(); setTimeout(() => proModal('Exportar em 4K é do Motion Pro.'), 30); return; }
+      hideModal();
+      fastExport({ k: side / short, fps });
     } },
   ]);
+  const sync = () => {
+    const fmt = $('#expFmt').value;
+    $$('[data-for]', $('#modalBody')).forEach(el => (el.hidden = !el.dataset.for.split(' ').includes(fmt)));
+    $('#expHint').textContent = hints[fmt];
+  };
+  $('#expFmt').onchange = sync;
+  sync();
 }
 $('#btnExport').onclick = exportModal;
+
+/* ======================= exportação rápida (WebCodecs) e GIF ======================= */
+/* Quadro a quadro, sem tempo real: não pula quadros, não precisa da aba visível e é mais rápido que gravar.
+   Vídeo em H.264 (ou VP9 quando o aparelho não tem H.264), som em AAC (ou Opus), tudo num MP4. */
+const MUXER_URL = 'https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.2/build/mp4-muxer.min.js';
+const GIFENC_URL = 'https://cdn.jsdelivr.net/npm/gifenc@1.0.3/dist/gifenc.esm.js';
+const even = v => Math.max(2, Math.round(v / 2) * 2);
+/* cede a vez ao navegador sem depender de setTimeout, que fica lento com a aba em segundo plano */
+const yieldNow = () => new Promise(r => { const ch = new MessageChannel(); ch.port1.onmessage = () => r(); ch.port2.postMessage(0); });
+const canFastExport = () => 'VideoEncoder' in window && 'VideoFrame' in window && 'AudioEncoder' in window;
+const scriptCache = new Map();
+function loadScript(src) {
+  if (!scriptCache.has(src)) scriptCache.set(src, new Promise((res, rej) => {
+    const el = document.createElement('script');
+    el.src = src; el.async = true;
+    el.onload = res;
+    el.onerror = () => { scriptCache.delete(src); el.remove(); rej(new Error('Não consegui baixar o componente de exportação. Confira a internet.')); };
+    document.head.appendChild(el);
+  }));
+  return scriptCache.get(src);
+}
+
+async function pickVideoCodec(w, h, fps) {
+  const bitrate = Math.round(clamp(w * h * fps * 0.14, 2e6, 60e6));
+  const tries = [
+    ['avc1.640033', 'avc'], ['avc1.640028', 'avc'], ['avc1.4d0033', 'avc'], ['avc1.4d0028', 'avc'], ['avc1.42003e', 'avc'], ['avc1.42001f', 'avc'],
+    ['vp09.00.40.08', 'vp9'], ['vp09.00.10.08', 'vp9'],
+  ];
+  for (const [codec, mux] of tries) {
+    const cfg = { codec, width: w, height: h, bitrate, framerate: fps, latencyMode: 'quality' };
+    if (mux === 'avc') cfg.avc = { format: 'avc' };
+    try { if ((await VideoEncoder.isConfigSupported(cfg)).supported) return { cfg, mux }; } catch { /* tenta o próximo */ }
+  }
+  return null;
+}
+async function pickAudioCodec() {
+  for (const [codec, mux] of [['mp4a.40.2', 'aac'], ['opus', 'opus']]) {
+    const cfg = { codec, sampleRate: 48000, numberOfChannels: 2, bitrate: 192000 };
+    try { if ((await AudioEncoder.isConfigSupported(cfg)).supported) return { cfg, mux }; } catch { /* tenta o próximo */ }
+  }
+  return null;
+}
+
+/* mixa todas as faixas de som do projeto offline, sem tocar nada */
+async function renderAudioMix(dur) {
+  if (!hasSound()) return null;
+  const rate = 48000;
+  const oac = new OfflineAudioContext(2, Math.max(1, Math.ceil(dur * rate)), rate);
+  scheduleAudio(oac, oac.destination, 0, 0);
+  return oac.startRendering();
+}
+
+async function encodeAudio(buf, acfg, muxer) {
+  let err = null;
+  const enc = new AudioEncoder({ output: (c, m) => muxer.addAudioChunk(c, m), error: e => { err = e; } });
+  enc.configure(acfg.cfg);
+  const rate = buf.sampleRate, total = buf.length, step = 9600;
+  const ch0 = buf.getChannelData(0), ch1 = buf.numberOfChannels > 1 ? buf.getChannelData(1) : ch0;
+  for (let i = 0; i < total; i += step) {
+    if (err) throw err;
+    const n = Math.min(step, total - i);
+    const data = new Float32Array(n * 2);
+    data.set(ch0.subarray(i, i + n), 0);
+    data.set(ch1.subarray(i, i + n), n);
+    const ad = new AudioData({ format: 'f32-planar', sampleRate: rate, numberOfFrames: n, numberOfChannels: 2, timestamp: Math.round(i / rate * 1e6), data });
+    enc.encode(ad);
+    ad.close();
+  }
+  await enc.flush();
+  enc.close();
+  if (err) throw err;
+}
+
+/* posiciona cada vídeo exatamente no quadro pedido e espera ele aparecer */
+async function seekVideosExact(t) {
+  const waits = [];
+  for (const L of P().layers) {
+    if (L.type !== 'video' || !L.visible || t < L.start || t > L.end) continue;
+    const v = videoFor(L);
+    if (!v) continue;
+    if (!v.paused) v.pause();
+    const rec = A.get(L.s.asset);
+    const local = clamp((t - L.start) * (L.s.speed || 1) + (L.s.trimIn || 0), 0, Math.max(0, ((rec && rec.duration) || 1e9) - 0.001));
+    if (Math.abs(v.currentTime - local) < 0.25 / P().fps && v.readyState >= 2) continue;
+    waits.push(new Promise(res => {
+      const done = () => { clearTimeout(to); v.removeEventListener('seeked', done); res(); };
+      const to = setTimeout(done, 3000);
+      v.addEventListener('seeked', done);
+      try { v.currentTime = local; } catch { done(); }
+    }));
+  }
+  await Promise.all(waits);
+}
+
+function exportProgress(title) {
+  showModal(title, `<p id="expText">Preparando…</p><div class="progress"><div id="expBar"></div></div>`, [
+    { label: 'Cancelar', keepOpen: true, onClick: () => { exportProgress.cancelled = true; } },
+  ]);
+  exportProgress.cancelled = false;
+  const started = performance.now();
+  return (text, frac) => {
+    const bar = $('#expBar'), el = $('#expText');
+    if (bar && frac != null) bar.style.width = (clamp(frac, 0, 1) * 100).toFixed(1) + '%';
+    if (!el) return;
+    if (frac > 0.04 && frac < 1) {
+      const left = (performance.now() - started) / 1000 * (1 - frac) / frac;
+      el.textContent = `${text} · faltam ${left < 60 ? Math.ceil(left) + ' s' : Math.ceil(left / 60) + ' min'}`;
+    } else el.textContent = text;
+  };
+}
+
+function fileReady(blob, name, info) {
+  const url = URL.createObjectURL(blob);
+  const isVideo = blob.type.startsWith('video/');
+  const file = new File([blob], name, { type: blob.type });
+  const canShare = navigator.canShare && navigator.canShare({ files: [file] });
+  const size = blob.size > 1048576 ? (blob.size / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(blob.size / 1024)) + ' KB';
+  showModal(isVideo ? 'Vídeo pronto' : 'Arquivo pronto', `${isVideo ? `<video src="${url}" controls playsinline loop></video>` : `<img class="export-preview" src="${url}" alt="Prévia do arquivo exportado">`}
+    <p>${esc(info)} · ${size}</p>
+    ${S.pro ? '' : '<p>Versão grátis: sai com a marca "feito com Motion". <a href="#" id="goPro">Tirar a marca d\'água</a></p>'}`, [
+    ...(canShare ? [{ label: 'Compartilhar', keepOpen: true, onClick: () => navigator.share({ files: [file], title: P().name }).catch(() => {}) }] : []),
+    { label: 'Baixar', cls: 'btn-primary', keepOpen: true, onClick: () => download(blob, name) },
+    { label: 'Fechar', onClick: () => URL.revokeObjectURL(url) },
+  ]);
+  const gp = $('#goPro');
+  if (gp) gp.onclick = ev => { ev.preventDefault(); hideModal(); setTimeout(() => proModal(), 30); };
+}
+
+async function fastExport({ k = 1, fps = P().fps } = {}) {
+  if (S.exporting) return;
+  pause();
+  const p = P();
+  const W = even(p.width * k), H = even(p.height * k);
+  const say = exportProgress('Gerando vídeo…');
+  const keepTime = S.time;
+  S.exporting = true; drawOverlay();
+  let venc = null;
+  try {
+    say('Preparando…', 0);
+    await loadScript(MUXER_URL);
+    const video = await pickVideoCodec(W, H, fps);
+    if (!video) throw Object.assign(new Error('sem codificador'), { fallback: true });
+    const audioBuf = await renderAudioMix(p.duration);
+    const audio = audioBuf ? await pickAudioCodec() : null;
+    const { Muxer, ArrayBufferTarget } = window.Mp4Muxer;
+    const muxer = new Muxer({
+      target: new ArrayBufferTarget(),
+      video: { codec: video.mux, width: W, height: H, frameRate: fps },
+      audio: audio ? { codec: audio.mux, numberOfChannels: 2, sampleRate: 48000 } : undefined,
+      fastStart: 'in-memory',
+      firstTimestampBehavior: 'offset',
+    });
+    let encErr = null;
+    venc = new VideoEncoder({ output: (chunk, meta) => muxer.addVideoChunk(chunk, meta), error: e => { encErr = e; } });
+    venc.configure(video.cfg);
+    if (audio) { say('Mixando o som…', 0); await encodeAudio(audioBuf, audio, muxer); }
+
+    const ec = document.createElement('canvas');
+    ec.width = W; ec.height = H;
+    const ectx = ec.getContext('2d');
+    const n = Math.max(1, Math.round(p.duration * fps));
+    const kRender = W / p.width;
+    for (let i = 0; i < n; i++) {
+      if (exportProgress.cancelled) break;
+      if (encErr) throw encErr;
+      const t = Math.min(p.duration - 1e-4, i / fps);
+      S.time = t;
+      await seekVideosExact(t);
+      renderFrame(ectx, t, { k: kRender });
+      drawWatermark(ectx);
+      const vf = new VideoFrame(ec, { timestamp: Math.round(i * 1e6 / fps), duration: Math.round(1e6 / fps) });
+      venc.encode(vf, { keyFrame: i % Math.round(fps * 2) === 0 });
+      vf.close();
+      while (venc.encodeQueueSize > 4) await yieldNow();
+      if (i % 2 === 0) { say(`Quadro ${i + 1} de ${n}`, (i + 1) / n); await yieldNow(); }
+    }
+    if (exportProgress.cancelled) { try { venc.close(); } catch {} hideModal(); toast('Exportação cancelada.'); return; }
+    say('Finalizando o arquivo…', 1);
+    await venc.flush();
+    if (encErr) throw encErr;
+    venc.close();
+    muxer.finalize();
+    const blob = new Blob([muxer.target.buffer], { type: 'video/mp4' });
+    const vname = video.mux === 'avc' ? 'H.264' : 'VP9';
+    fileReady(blob, `${fileBase()}.mp4`, `MP4 ${vname}${audio ? ' com som' : ''} · ${W}×${H} · ${fps} fps`);
+  } catch (err) {
+    try { venc && venc.state !== 'closed' && venc.close(); } catch {}
+    if (err && err.fallback) {
+      hideModal();
+      toast('Este aparelho não tem o codificador rápido. Gravando em tempo real.');
+      S.exporting = false;
+      setTimeout(() => exportVideo(), 50);
+      return;
+    }
+    showModal('Não deu para exportar', `<p>${esc(err && err.message ? err.message : 'Erro desconhecido.')}</p><p>Você pode tentar a gravação em tempo real.</p>`, [
+      { label: 'Fechar' }, { label: 'Gravar em tempo real', cls: 'btn-primary', onClick: () => setTimeout(() => exportVideo(), 50) },
+    ]);
+  } finally {
+    S.exporting = false;
+    pauseAllVideos();
+    S.time = keepTime;
+    refreshTime();
+  }
+}
+
+async function exportGif({ shortSide = 480, fps = 15, transparent = false } = {}) {
+  if (S.exporting) return;
+  pause();
+  const p = P();
+  const k = Math.min(1, shortSide / Math.min(p.width, p.height));
+  const W = Math.max(2, Math.round(p.width * k)), H = Math.max(2, Math.round(p.height * k));
+  const say = exportProgress('Gerando GIF…');
+  const keepTime = S.time;
+  S.exporting = true; drawOverlay();
+  try {
+    say('Preparando…', 0);
+    const { GIFEncoder, quantize, applyPalette } = await import(GIFENC_URL);
+    const ec = document.createElement('canvas');
+    ec.width = W; ec.height = H;
+    const ectx = ec.getContext('2d', { willReadFrequently: true });
+    const gif = GIFEncoder();
+    const n = Math.max(1, Math.round(p.duration * fps));
+    const format = transparent ? 'rgba4444' : 'rgb565';
+    for (let i = 0; i < n; i++) {
+      if (exportProgress.cancelled) { hideModal(); toast('Exportação cancelada.'); return; }
+      const t = Math.min(p.duration - 1e-4, i / fps);
+      S.time = t;
+      await seekVideosExact(t);
+      renderFrame(ectx, t, { k, transparent });
+      drawWatermark(ectx);
+      const { data } = ectx.getImageData(0, 0, W, H);
+      const palette = quantize(data, 256, { format, oneBitAlpha: transparent });
+      const index = applyPalette(data, palette, format);
+      const opts = { palette, delay: Math.round(1000 / fps) };
+      if (transparent) {
+        const ti = palette.findIndex(c => c[3] === 0);
+        if (ti >= 0) { opts.transparent = true; opts.transparentIndex = ti; }
+      }
+      gif.writeFrame(index, W, H, opts);
+      say(`Quadro ${i + 1} de ${n}`, (i + 1) / n);
+      await yieldNow();
+    }
+    gif.finish();
+    fileReady(new Blob([gif.bytes()], { type: 'image/gif' }), `${fileBase()}.gif`, `GIF ${W}×${H} · ${fps} fps${transparent ? ' · fundo transparente' : ''}`);
+  } catch (err) {
+    showModal('Não deu para gerar o GIF', `<p>${esc(err && err.message ? err.message : 'Erro desconhecido.')}</p>`, [{ label: 'Fechar', cls: 'btn-primary' }]);
+  } finally {
+    S.exporting = false;
+    pauseAllVideos();
+    S.time = keepTime;
+    refreshTime();
+  }
+}
+
+function exportPng(transparent) {
+  pause();
+  const p = P();
+  const c = document.createElement('canvas');
+  c.width = p.width; c.height = p.height;
+  const cc = c.getContext('2d');
+  renderFrame(cc, S.time, { transparent });
+  drawWatermark(cc);
+  c.toBlob(b => { if (b) download(b, `${fileBase()}-${S.time.toFixed(2)}s.png`); }, 'image/png');
+}
 
 /* ======================= IA (Gemini + remoção de fundo) ======================= */
 const AI_KEY = 'motion-editor:ai';
@@ -2558,7 +2863,7 @@ $('#btnPro').onclick = () => proModal();
 
 function drawWatermark(c) {
   if (S.pro) return;
-  const p = P(), m = Math.min(p.width, p.height);
+  const p = { width: c.canvas.width, height: c.canvas.height }, m = Math.min(p.width, p.height);
   const size = Math.round(m * 0.028), pad = Math.round(m * 0.03);
   c.save();
   c.setTransform(1, 0, 0, 1, 0, 0);

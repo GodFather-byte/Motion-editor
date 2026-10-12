@@ -9,6 +9,7 @@
 - `manifest.webmanifest`, `icons/`: instalação como app.
 - `tools/licenca.mjs`, `tools/licenca.py`: geram chaves de licença Pro (precisam do `.pem`, que não fica no git).
 - `tests/video-editor.cjs`: testes funcionais com Playwright/Chromium, mídia gerada pelo FFmpeg e servidor Python temporário.
+- `tests/export.cjs`: exportação rápida, GIF e preview leve.
 - `tests/code-animation.cjs`: testes do painel Código (GSAP isolado). Precisa de internet. Rode com `CHROMIUM_PATH` apontando para o Chromium do Playwright se não houver `/usr/bin/chromium`.
 
 ## Seções de app.js (busque pelo título `/* ===... nome ===... */`)
@@ -28,6 +29,7 @@
 | desfazer / salvar | `commit` (sempre chame após uma mudança), localStorage, `setProject` |
 | exemplo inicial | `demoProject` |
 | exportação | `exportModal`, `exportVideo` (MediaRecorder + Web Audio, fallback MP4 → WEBM) |
+| exportação rápida | `fastExport` (WebCodecs + mp4-muxer), `renderAudioMix` (OfflineAudioContext), `seekVideosExact`, `exportGif` (gifenc), `exportPng`, `fileReady`. `renderFrame(c, t, {k, transparent})` desenha em qualquer escala (`RK`) |
 | IA | `gemini()` (generateContent com a chave do usuário), gerar animação, legendas, remover fundo |
 | animação por código (GSAP) | `codeWorkerMain` (roda no worker isolado), `runCodeSandbox`, `simplifySeries`, `bakeCode`, `applyCode`, `codeModal`, `CODE_EXAMPLES`, `aiWriteCode` |
 | plano Pro | `verifyLicense`, `proModal`, `drawWatermark` |

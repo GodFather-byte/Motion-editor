@@ -29,6 +29,12 @@ Editor de motion graphics que roda direto no navegador e pode ser instalado como
 - Seis looks de cor com intensidade: Cinema, Vibrante, Quente, Frio, Vintage e Preto e branco. Combinam com os ajustes manuais de cor.
 - Exportação em MP4 (Chrome recente e Safari) ou WEBM, com som. Frame atual em PNG.
 
+**Exportação**
+- MP4 rápido quadro a quadro (WebCodecs): H.264 + AAC quando o aparelho tem, senão VP9 + Opus. Não pula quadros e continua com a aba em segundo plano. 720p, 1080p ou 4K (Pro), 24/30/60 fps.
+- GIF animado (com fundo transparente opcional) e PNG do quadro atual (também transparente).
+- Gravação em tempo real (MediaRecorder) continua como alternativa em navegadores sem WebCodecs.
+- O preview desenha na resolução da tela enquanto toca, bem mais leve no celular.
+
 **Animação por código (GSAP)** (botão Código)
 - Escreva a animação em JavaScript com GSAP 3 (`tl.from(layers, { y: '+=80', opacity: 0, stagger: 0.1 })`), ou peça para a IA escrever.
 - O código vira keyframes normais, editáveis. `add()` cria camadas, `every(t => …)` calcula movimento quadro a quadro.
@@ -86,6 +92,7 @@ Testes de navegador, no ambiente de desenvolvimento com Playwright, Chromium, FF
 node --check app.js
 node --test tests/video-editor.cjs
 node --test tests/code-animation.cjs   # painel Código (baixa o GSAP, precisa de internet)
+node --test tests/export.cjs           # exportação rápida, GIF e preview leve (precisa de internet)
 ```
 
 O teste inicia seu próprio servidor e gera mídia temporária. Confere recorte, cores, transições, divisão, desfazer/refazer, persistência, exportação e áudio em diferentes velocidades; inclui layout de 360 px. Defina `CHROMIUM_PATH` se o Chromium não estiver em `/usr/bin/chromium`. Essas ferramentas são apenas para testes; o app continua sem instalação de dependências ou build.
