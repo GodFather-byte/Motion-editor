@@ -130,6 +130,9 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .sw-ellipse { border-radius: 50%; }
 .sw-star { clip-path: polygon(50% 0, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%); }
 .sw-image { border-radius: 2px; background: linear-gradient(135deg, var(--select) 0 50%, var(--accent) 50%); }
+.sw-video { border-radius: 2px; background: var(--select); clip-path: polygon(0 10%, 70% 10%, 70% 35%, 100% 15%, 100% 85%, 70% 65%, 70% 90%, 0 90%); }
+.sw-audio { background: var(--select); clip-path: polygon(0 40%, 15% 40%, 15% 20%, 30% 20%, 30% 0, 45% 0, 45% 100%, 30% 100%, 30% 80%, 15% 80%, 15% 60%, 0 60%, 0 40%, 55% 30%, 70% 30%, 70% 10%, 85% 10%, 85% 90%, 70% 90%, 70% 70%, 55% 70%); }
+.sw-group { background: none; border: 2px dashed var(--accent); border-radius: 3px; }
 
 /* ---------- timeline ---------- */
 .timeline {
@@ -176,7 +179,16 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .type-dot.text { background: var(--accent); }
 .type-dot.rect, .type-dot.star { background: #ff8f6b; }
 .type-dot.ellipse { background: #b89cff; }
-.type-dot.image { background: var(--select); }
+.type-dot.image, .type-dot.video { background: var(--select); }
+.type-dot.audio { background: #7ee0a8; border-radius: 50%; }
+.type-dot.group { background: none; border: 1.5px dashed var(--accent); }
+.tl-row .tag { color: var(--select); font-weight: 700; flex-shrink: 0; }
+.clip.audio { background: #1f4a3a; }
+.tl-row.sel .clip.audio { background: #2b6a52; }
+.clip.group { background: transparent; border-style: dashed; border-color: rgb(255 181 71 / .5); }
+.clip .wave { position: absolute; inset: 2px 0; width: 100%; height: calc(100% - 4px); pointer-events: none; border-radius: 5px; }
+.check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--fg); cursor: pointer; }
+.check input { width: 16px; height: 16px; accent-color: var(--accent); }
 
 .clip {
   position: absolute; top: 5px; bottom: 5px; border-radius: 6px;
