@@ -267,9 +267,11 @@ function syncMedia() {
     const v = videoFor(L);
     if (!v) continue;
     const rec = A.get(L.s.asset);
-    const local = S.time - L.start + (L.s.trimIn || 0);
+    const sp = L.s.speed || 1;
+    const local = (S.time - L.start) * sp + (L.s.trimIn || 0);
     const active = L.visible && S.time >= L.start && S.time <= L.end && local <= (rec.duration || Infinity);
     if (!active) { if (!v.paused) v.pause(); continue; }
+    if (Math.abs(v.playbackRate - sp) > 1e-4) { try { v.playbackRate = sp; } catch {} }
     if (running) {
       if (v.paused) { try { v.currentTime = local; } catch {} v.play().catch(() => {}); }
       else if (Math.abs(v.currentTime - local) > 0.25) v.currentTime = local;
@@ -286,18 +288,20 @@ const pauseAllVideos = () => VIDS.forEach(v => v.pause());
 function scheduleAudio(ac, dest, from) {
   const out = [];
   for (const L of P().layers) {
-    if (!MEDIA(L.type) || !L.visible || L.end <= from) continue;
+    if (!MEDIA(L.type) || !L.visible || L.s.muted || L.end <= from) continue;
     const rec = A.get(L.s.asset);
     if (!rec || !rec.buffer) continue;
     const vol = (L.s.volume ?? 100) / 100;
     if (vol <= 0) continue;
+    const sp = L.s.speed || 1;
     const len = L.end - L.start;
     const into = Math.max(0, from - L.start);
-    const offset = (L.s.trimIn || 0) + into;
+    const offset = (L.s.trimIn || 0) + into * sp;
     if (offset >= rec.buffer.duration) continue;
     const when = ac.currentTime + Math.max(0, L.start - from) + 0.03;
     const src = ac.createBufferSource();
     src.buffer = rec.buffer;
+    if (src.playbackRate) { try { src.playbackRate.setValueAtTime(sp, when); } catch {} }
     const g = ac.createGain();
     src.connect(g); g.connect(dest);
     const fi = L.s.fadeIn || 0, fo = L.s.fadeOut || 0;
@@ -309,7 +313,8 @@ function scheduleAudio(ac, dest, from) {
       g.gain.setValueAtTime(env(foStart), when + (foStart - into));
       g.gain.linearRampToValueAtTime(0, when + (len - into));
     }
-    src.start(when, offset, Math.max(0.01, len - into));
+    const rem = Math.max(0.01, (rec.buffer.duration - offset) / sp);
+    src.start(when, offset, Math.min(len - into, rem));
     out.push(src);
   }
   return out;
@@ -325,8 +330,8 @@ function newProject(aspect = '9:16') {
 
 function defaultS(type) {
   const p = P(), m = Math.min(p.width, p.height);
-  const look = { blend: 'source-over', clip: false, shadowX: 0, shadowY: 0, shadowBlur: 0, shadowColor: '#000000', shadowOpacity: 60, fillType: 'solid', gradAngle: 90 };
-  const media = { asset: null, trimIn: 0, volume: 100, fadeIn: 0, fadeOut: 0 };
+  const look = { blend: 'source-over', clip: false, shadowX: 0, shadowY: 0, shadowBlur: 0, shadowColor: '#000000', shadowOpacity: 60, fillType: 'solid', gradAngle: 90, flipH: false, flipV: false };
+  const media = { asset: null, trimIn: 0, volume: 100, fadeIn: 0, fadeOut: 0, speed: 1, muted: false };
   switch (type) {
     case 'text': return { ...look, text: 'Seu texto', font: 'Montserrat', size: Math.round(m * 0.11), weight: 900, color: '#ffffff', fill2: '#ffb547', align: 'center', stroke: 0, strokeColor: '#000000', glowColor: '#ffb547', anim: 'none' };
     case 'rect': return { ...look, w: Math.round(m * 0.4), h: Math.round(m * 0.4), radius: 28, fill: '#ff8f6b', fill2: '#b89cff', glowColor: '#ff8f6b' };
@@ -364,6 +369,12 @@ function normalize(p) {
   for (const L of p.layers) {
     L.p = { ...defaultP(), ...L.p };
     L.s = { ...defaultS(L.type), ...L.s };
+    if (MEDIA(L.type)) {
+      if (L.s.speed == null) L.s.speed = 1;
+      if (L.s.muted == null) L.s.muted = false;
+    }
+    if (L.s.flipH == null) L.s.flipH = false;
+    if (L.s.flipV == null) L.s.flipV = false;
     L.kf = L.kf || {};
     if (L.parent === undefined) L.parent = null;
   }
@@ -612,6 +623,7 @@ function drawMissing(c, w, h, label) {
 
 function drawShape(c, L, local) {
   const s = L.s;
+  if (s.flipH || s.flipV) c.scale(s.flipH ? -1 : 1, s.flipV ? -1 : 1);
   switch (L.type) {
     case 'text': return drawText(c, L, local);
     case 'rect': {
@@ -976,11 +988,14 @@ function pause() {
 }
 $('#btnPlay').onclick = () => (S.playing ? pause() : play());
 $('#btnStart').onclick = () => { pause(); setTime(0); $('#tlScroll').scrollLeft = 0; };
+$('#btnSplit').onclick = () => splitLayer();
 
 /* ======================= linha do tempo ======================= */
 const labelW = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--label-w')) || 112;
 const tx = t => TL_PAD + t * S.pps;
-const mediaDur = L => { const r = A.get(L.s.asset); return r && r.duration ? r.duration : Infinity; };
+const mediaSourceDur = L => { const r = A.get(L.s.asset); return r && r.duration ? r.duration : Infinity; };
+const mediaDur = L => mediaSourceDur(L) / (L.s && L.s.speed ? L.s.speed : 1);
+const mediaRemaining = L => Math.max(0, (mediaSourceDur(L) - (L.s.trimIn || 0)) / (L.s && L.s.speed ? L.s.speed : 1));
 
 function renderTimeline() {
   const p = P();
@@ -1002,13 +1017,16 @@ function renderTimeline() {
 
   const eyeOn = '<svg viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
   const eyeOff = '<svg viewBox="0 0 24 24"><path d="M3 3l18 18"/><path d="M10.6 5.1A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3 3.8M6.6 6.6C3.6 8.5 2 12 2 12s3.6 7 10 7a9.6 9.6 0 0 0 4.4-1"/></svg>';
+  const muteOn = '<svg viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>';
+  const muteOff = '<svg viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>';
   const depth = L => { let d = 0, c = L; while (c.parent && d < 6) { c = byId(c.parent); if (!c) break; d++; } return d; };
   $('#tlRows').innerHTML = p.layers.map(L => {
     const kfs = kfTimes(L).map(t => `<button class="kf${S.selKf && S.selKf.id === L.id && Math.abs(S.selKf.t - t) < 1e-4 ? ' sel' : ''}" data-kf-t="${t}" style="left:${tx(t)}px" aria-label="Keyframe em ${t.toFixed(2)}s"></button>`).join('');
     const d = depth(L);
     const tag = L.s.clip ? '<span class="tag" title="Recortada na camada de baixo">↳</span>' : '';
+    const muteBtn = MEDIA(L.type) ? `<button class="mute${L.s.muted ? ' is-muted' : ''}" data-mute aria-label="${L.s.muted ? 'Ativar som' : 'Desativar som'}">${L.s.muted ? muteOn : muteOff}</button>` : '';
     return `<div class="tl-row${L.id === S.sel ? ' sel' : ''}${L.visible ? '' : ' off'}" data-id="${L.id}">
-      <div class="tl-label" style="padding-left:${8 + d * 10}px"><button class="eye" data-eye aria-label="${L.visible ? 'Ocultar' : 'Mostrar'} camada">${L.visible ? eyeOn : eyeOff}</button><i class="type-dot ${L.type}"></i>${tag}<span class="name">${esc(L.name)}</span></div>
+      <div class="tl-label" style="padding-left:${8 + d * 10}px"><button class="eye" data-eye aria-label="${L.visible ? 'Ocultar' : 'Mostrar'} camada">${L.visible ? eyeOn : eyeOff}</button>${muteBtn}<i class="type-dot ${L.type}"></i>${tag}<span class="name">${esc(L.name)}</span></div>
       <div class="tl-track" style="width:${trackW}px">
         <div class="clip ${L.type}" style="left:${tx(L.start)}px;width:${(L.end - L.start) * S.pps}px">${MEDIA(L.type) ? `<canvas class="wave" data-wave="${L.id}"></canvas>` : ''}<span class="h l"></span><span class="h r"></span></div>
         ${kfs}
@@ -1031,8 +1049,9 @@ function drawWaves() {
     c.scale(dpr, dpr);
     c.fillStyle = L.type === 'audio' ? 'rgba(111,216,255,.75)' : 'rgba(255,255,255,.35)';
     const mid = h / 2;
+    const sp = L.s && L.s.speed ? L.s.speed : 1;
     for (let x = 0; x < w; x += 2) {
-      const src = (L.s.trimIn || 0) + x / S.pps;
+      const src = (L.s.trimIn || 0) + (x / S.pps) * sp;
       const amp = rec.peaks[Math.floor(src * PEAKS_PER_SEC)] || 0;
       const bh = Math.max(1, amp * (h - 6));
       c.fillRect(x, mid - bh / 2, 1.2, bh);
@@ -1064,6 +1083,7 @@ rows.addEventListener('click', e => {
   if (!row) return;
   const L = byId(row.dataset.id);
   if (e.target.closest('[data-eye]')) { L.visible = !L.visible; commit(); renderTimeline(); refreshTime(); return; }
+  if (e.target.closest('[data-mute]')) { L.s.muted = !L.s.muted; commit(); renderTimeline(); renderPanel(); refreshTime(); return; }
   if (e.target.closest('.tl-label')) { select(L.id); return; }
   if (e.target.classList.contains('tl-track')) {
     if (S.playing) pause();
@@ -1104,20 +1124,31 @@ rows.addEventListener('pointerdown', e => {
 
   const mode = e.target.classList.contains('l') ? 'l' : e.target.classList.contains('r') ? 'r' : 'move';
   const s0 = L.start, e0 = L.end, dur = P().duration, trim0 = L.s.trimIn || 0, isMedia = MEDIA(L.type);
+  const sp = L.s.speed || 1;
   if (L.id !== S.sel) select(L.id);
   const clip = row.querySelector('.clip');
   const kfEls = $$('.kf', row).map(el => ({ el, t: +el.dataset.kfT }));
   let dt = 0;
   target.onpointermove = ev => {
     dt = (ev.clientX - x0) / S.pps;
-    if (mode === 'move') { dt = clamp(snap(dt), -s0, dur - e0); L.start = s0 + dt; L.end = e0 + dt; kfEls.forEach(k => (k.el.style.left = tx(k.t + dt) + 'px')); }
-    else if (mode === 'l') {
-      const minStart = isMedia ? Math.max(0, s0 - trim0) : 0;
-      L.start = clamp(snap(s0 + dt), minStart, L.end - 0.1);
-      if (isMedia) L.s.trimIn = round(trim0 + (L.start - s0), 4);
+    if (mode === 'move') {
+      dt = clamp(snap(dt), -s0, dur - e0);
+      let ns = s0 + dt, ne = e0 + dt;
+      if (Math.abs(ns - S.time) < 8 / S.pps) { dt = S.time - s0; ns = s0 + dt; ne = e0 + dt; }
+      else if (Math.abs(ne - S.time) < 8 / S.pps) { dt = S.time - e0; ns = s0 + dt; ne = e0 + dt; }
+      L.start = ns; L.end = ne;
+      kfEls.forEach(k => (k.el.style.left = tx(k.t + dt) + 'px'));
+    } else if (mode === 'l') {
+      const minStart = isMedia ? Math.max(0, s0 - trim0 / sp) : 0;
+      let ns = clamp(snap(s0 + dt), minStart, L.end - 0.1);
+      if (Math.abs(ns - S.time) < 8 / S.pps && S.time >= minStart && S.time <= L.end - 0.1) ns = snap(S.time);
+      L.start = ns;
+      if (isMedia) L.s.trimIn = round(trim0 + (L.start - s0) * sp, 4);
     } else {
-      const maxEnd = isMedia ? Math.min(dur, L.start + mediaDur(L) - (L.s.trimIn || 0)) : dur;
-      L.end = clamp(snap(e0 + dt), L.start + 0.1, maxEnd);
+      const maxEnd = isMedia ? Math.min(dur, L.start + mediaRemaining(L)) : dur;
+      let ne = clamp(snap(e0 + dt), L.start + 0.1, maxEnd);
+      if (Math.abs(ne - S.time) < 8 / S.pps && S.time >= L.start + 0.1 && S.time <= maxEnd) ne = snap(S.time);
+      L.end = ne;
     }
     clip.style.left = tx(L.start) + 'px';
     clip.style.width = (L.end - L.start) * S.pps + 'px';
@@ -1271,7 +1302,7 @@ function layerPanel(L) {
       <div data-show="fillOn">${fillRows('fill', 'Cor do preenchimento')}</div>`;
   } else if (L.type === 'image' || L.type === 'video') {
     content = numRow('w', 'Largura', 1, 6000) + numRow('h', 'Altura', 1, 6000) +
-      `<div class="actions"><button class="btn btn-small" data-act="replace-media">Trocar arquivo</button><button class="btn btn-small" data-act="media-ratio">Proporção original</button><button class="btn btn-small" data-act="media-fill">Preencher a tela</button>${L.type === 'image' ? '<button class="btn btn-small btn-ai" data-act="remove-bg">Remover fundo (IA)</button>' : ''}</div>`;
+      `<div class="actions"><button class="btn btn-small" data-act="replace-media">Trocar arquivo</button><button class="btn btn-small" data-act="media-ratio">Proporção original</button><button class="btn btn-small" data-act="media-fill">Preencher a tela</button>${L.type === 'video' ? '<button class="btn btn-small" data-act="freeze-frame" title="Congela o quadro atual como nova camada">Congelar quadro</button>' : ''}${L.type === 'image' ? '<button class="btn btn-small btn-ai" data-act="remove-bg">Remover fundo (IA)</button>' : ''}</div>`;
   } else if (L.type === 'group') {
     content = '<p class="hint">Um grupo não aparece no vídeo. Ele move, gira, escala e esmaece todas as camadas que o seguem. Escolha este grupo em "Seguir camada" nas outras camadas.</p>';
   }
@@ -1279,11 +1310,14 @@ function layerPanel(L) {
   if (MEDIA(L.type)) {
     const rec = A.get(s.asset);
     const info = rec ? (rec.buffer ? `Duração do arquivo: ${fmtTime(rec.duration || 0)}` : (L.type === 'video' ? 'Este vídeo não tem som (ou o navegador não conseguiu ler o áudio).' : 'Não consegui ler este áudio.')) : 'Arquivo não encontrado neste aparelho. Use "Trocar arquivo".';
-    media = `<div class="sec"><h3>Som</h3>
+    const speeds = { '0.25': '0.25x (lento 4x)', '0.5': '0.5x (lento 2x)', '0.75': '0.75x', '1': '1x (normal)', '1.25': '1.25x', '1.5': '1.5x (rápido)', '2': '2x (acelerado)', '3': '3x', '4': '4x' };
+    media = `<div class="sec"><h3>${L.type === 'video' ? 'Áudio e Velocidade' : 'Som'}</h3>
+      ${checkRow('muted', 'Mudo (sem som)')}
+      ${selectRow('speed', 'Velocidade', speeds)}
       ${numRow('volume', 'Volume %', 0, 200)}
       ${numRow('fadeIn', 'Entrada (s)', 0, 10, 0.1)}
       ${numRow('fadeOut', 'Saída (s)', 0, 10, 0.1)}
-      ${numRow('trimIn', 'Começa em (s)', 0, Math.max(1, Math.floor(mediaDur(L) === Infinity ? 60 : mediaDur(L))), 0.1)}
+      ${numRow('trimIn', 'Começa em (s)', 0, Math.max(1, Math.floor(mediaSourceDur(L) === Infinity ? 60 : mediaSourceDur(L))), 0.1)}
       <p class="hint">${info}</p>
       ${rec && rec.buffer ? '<div class="actions"><button class="btn btn-small btn-ai" data-act="captions">Gerar legendas (IA)</button></div>' : ''}
       ${L.type === 'audio' ? '<div class="actions"><button class="btn btn-small" data-act="replace-media">Trocar arquivo</button><button class="btn btn-small" data-act="fit-project">Projeto do tamanho da música</button></div>' : ''}
@@ -1313,6 +1347,7 @@ function layerPanel(L) {
   ${content ? `<div class="sec"><h3>${TYPE_NAMES[L.type]}</h3>${content}</div>` : ''}
   ${media}
   ${visual ? `<div class="sec"><h3>Transformação <button class="btn btn-small" data-act="kf-all" title="Keyframe em todas (tecla K)">◆ Todas</button></h3>${TRANSFORM.map(propRow).join('')}
+    <div class="row plain"><label>Espelhar</label><div class="actions"><button class="btn btn-small${s.flipH ? ' btn-primary' : ''}" data-act="flip-h" title="Inverter horizontalmente">⇄ Horizontal</button><button class="btn btn-small${s.flipV ? ' btn-primary' : ''}" data-act="flip-v" title="Inverter verticalmente">⇅ Vertical</button></div></div>
     <div class="row plain"><label for="s-parent">Seguir camada</label><select id="s-parent" data-parent><option value="">Nenhuma</option>${parents.map(o => `<option value="${o.id}"${L.parent === o.id ? ' selected' : ''}>${esc(o.name)}</option>`).join('')}</select></div></div>` : ''}
   ${look ? `<div class="sec"><h3>Efeitos</h3>${propRow('blur')}${propRow('glow')}${colorRow('glowColor', 'Cor do brilho')}
     ${selectRow('blend', 'Mistura', BLENDS)}
@@ -1321,13 +1356,19 @@ function layerPanel(L) {
   <div class="sec"><h3>Sombra</h3>${numRow('shadowX', 'Deslocar X', -200, 200)}${numRow('shadowY', 'Deslocar Y', -200, 200)}${numRow('shadowBlur', 'Suavidade', 0, 200)}${numRow('shadowOpacity', 'Opacidade %', 0, 100)}${colorRow('shadowColor', 'Cor')}</div>` : ''}
   ${visual ? `<div class="sec"><h3>Animações prontas</h3>
     <div class="presets">
+      <button data-preset="fadeIn">Aparecer suave</button>
       <button data-preset="zoomIn">Entrar com zoom</button>
       <button data-preset="slideLeft">Deslizar da esquerda</button>
+      <button data-preset="slideRight">Deslizar da direita</button>
+      <button data-preset="slideUp">Deslizar de baixo</button>
       <button data-preset="riseIn">Subir e aparecer</button>
       <button data-preset="drop">Cair quicando</button>
       <button data-preset="blurIn">Surgir do desfoque</button>
+      <button data-preset="flash">Clarão de entrada</button>
       <button data-preset="pulse">Pulsar</button>
+      <button data-preset="shake">Tremor de impacto</button>
       <button data-preset="spin">Girar 360°</button>
+      <button data-preset="zoomOut">Sumir com zoom</button>
       <button data-preset="fadeOut">Sumir no final</button>
       ${L.type === 'path' ? '<button data-preset="drawOn">Desenhar traço</button>' : ''}
     </div>
@@ -1339,6 +1380,7 @@ function layerPanel(L) {
   </div>
   <div class="sec"><h3>Camada</h3>
     <div class="actions">
+      <button class="btn btn-small" data-act="split" title="Dividir na agulha (S)">Dividir na agulha</button>
       <button class="btn btn-small" data-act="dup">Duplicar</button>
       <button class="btn btn-small" data-act="up">Trazer pra frente</button>
       <button class="btn btn-small" data-act="down">Mandar pra trás</button>
@@ -1452,7 +1494,7 @@ panel.addEventListener('click', e => {
     applyPreset(L, b.dataset.preset);
     commit(); renderTimeline(); renderPanel();
     if (b.dataset.preset !== 'clear') {
-      const showAt = { fadeOut: L.end - 0.6, spin: L.start + 0.5, pulse: L.start + 0.25, drawOn: L.start + 0.75 }[b.dataset.preset] ?? L.start + 1;
+      const showAt = { fadeOut: L.end - 0.6, zoomOut: L.end - 0.6, spin: L.start + 0.5, pulse: L.start + 0.25, drawOn: L.start + 0.75, flash: L.start + 0.15, shake: L.start + 0.1 }[b.dataset.preset] ?? L.start + 0.7;
       setTime(clamp(showAt, L.start, L.end));
       toast('Animação aplicada. Dê play para ver.');
     } else refreshTime();
@@ -1467,9 +1509,13 @@ panel.addEventListener('click', e => {
       commit(); renderTimeline(); renderPanel(); refreshTime();
     } else if (act === 'kf-deselect') {
       S.selKf = null; renderTimeline(); renderPanel();
-    } else if (act === 'dup' && L) duplicateLayer(L);
+    } else if (act === 'split' && L) splitLayer(L);
+    else if (act === 'dup' && L) duplicateLayer(L);
     else if (act === 'del' && L) deleteLayer(L);
     else if ((act === 'up' || act === 'down') && L) moveLayer(L, act === 'up' ? -1 : 1);
+    else if (act === 'flip-h' && L) { L.s.flipH = !L.s.flipH; commit(); renderPanel(); refreshTime(); }
+    else if (act === 'flip-v' && L) { L.s.flipV = !L.s.flipV; commit(); renderPanel(); refreshTime(); }
+    else if (act === 'freeze-frame' && L) freezeFrame(L);
     else if (act === 'replace-media' && L) pickMedia(L.type, L.id);
     else if (act === 'remove-bg' && L) removeBackground(L);
     else if (act === 'captions' && L) aiCaptionsPicker();
@@ -1497,7 +1543,7 @@ function setDuration(d) {
   const old = p.duration;
   p.duration = d;
   for (const l of p.layers) {
-    if (Math.abs(l.end - old) < 1e-6) l.end = MEDIA(l.type) ? Math.min(d, l.start + mediaDur(l) - (l.s.trimIn || 0)) : d;
+    if (Math.abs(l.end - old) < 1e-6) l.end = MEDIA(l.type) ? Math.min(d, l.start + mediaRemaining(l)) : d;
     l.end = clamp(l.end, 0.1, d); l.start = clamp(l.start, 0, l.end - 0.1);
   }
   S.time = clamp(S.time, 0, d);
@@ -1511,13 +1557,22 @@ function applyPreset(L, name) {
   const reset = prop => { const v = base(prop); delete L.kf[prop]; L.p[prop] = v; return v; };
   const add = (prop, t, v, ease) => upsertKf(L, prop, clamp(t, s, e), v, ease);
   if (name === 'clear') { for (const prop of Object.keys(L.kf)) L.p[prop] = val(L, prop); L.kf = {}; return; }
-  if (name === 'zoomIn') {
+  if (name === 'fadeIn') {
+    const op = reset('opacity');
+    add('opacity', s, 0, 'easeOut'); add('opacity', s + 0.6, op || 100);
+  } else if (name === 'zoomIn') {
     const sc = reset('scale'), op = reset('opacity');
     add('scale', s, 0, 'back'); add('scale', s + 0.6, sc || 100);
     add('opacity', s, 0, 'easeOut'); add('opacity', s + 0.3, op || 100);
   } else if (name === 'slideLeft') {
     const x = reset('x');
     add('x', s, x - p.width * 0.75, 'back'); add('x', s + 0.7, x);
+  } else if (name === 'slideRight') {
+    const x = reset('x');
+    add('x', s, x + p.width * 0.75, 'back'); add('x', s + 0.7, x);
+  } else if (name === 'slideUp') {
+    const y = reset('y');
+    add('y', s, y + p.height * 0.7, 'back'); add('y', s + 0.7, y);
   } else if (name === 'riseIn') {
     const y = reset('y'), op = reset('opacity');
     add('y', s, y + p.height * 0.08, 'easeOut'); add('y', s + 0.6, y);
@@ -1529,16 +1584,33 @@ function applyPreset(L, name) {
     reset('blur'); const op = reset('opacity');
     add('blur', s, 40, 'easeOut'); add('blur', s + 0.7, 0);
     add('opacity', s, 0, 'easeOut'); add('opacity', s + 0.4, op || 100);
+  } else if (name === 'flash') {
+    reset('brightness'); const op = reset('opacity');
+    add('opacity', s, 0, 'easeOut'); add('opacity', s + 0.1, op || 100);
+    add('brightness', s, 260, 'easeOut'); add('brightness', s + 0.45, 100);
   } else if (name === 'pulse') {
     const sc = reset('scale') || 100;
     let i = 0;
     for (let t = s; t <= e + 1e-6; t = round(t + 0.5, 4)) add('scale', t, i++ % 2 ? sc * 1.12 : sc, 'easeInOut');
+  } else if (name === 'shake') {
+    const x0 = reset('x'), y0 = reset('y');
+    const d = Math.max(12, Math.round(p.width * 0.02));
+    add('x', s, x0); add('y', s, y0);
+    add('x', s + 0.05, x0 - d); add('y', s + 0.05, y0 + d);
+    add('x', s + 0.1, x0 + d); add('y', s + 0.1, y0 - d);
+    add('x', s + 0.16, x0 - Math.round(d / 2)); add('y', s + 0.16, y0 + Math.round(d / 2));
+    add('x', s + 0.24, x0); add('y', s + 0.24, y0);
   } else if (name === 'spin') {
     const r = reset('rotation');
     add('rotation', s, r, 'linear'); add('rotation', e, r + 360, 'linear');
   } else if (name === 'drawOn') {
     delete L.kf.trim; L.p.trim = 100;
     add('trim', s, 0, 'easeInOut'); add('trim', Math.min(e, s + 1.5), 100);
+  } else if (name === 'zoomOut') {
+    const sc = isAnimated(L, 'scale') ? val(L, 'scale', Math.max(s, e - 0.5)) : L.p.scale;
+    const op = isAnimated(L, 'opacity') ? val(L, 'opacity', Math.max(s, e - 0.5)) : L.p.opacity;
+    add('scale', Math.max(s, e - 0.5), sc, 'easeIn'); add('scale', e, 0);
+    add('opacity', Math.max(s, e - 0.5), op, 'easeIn'); add('opacity', e, 0);
   } else if (name === 'fadeOut') {
     const op = isAnimated(L, 'opacity') ? val(L, 'opacity', Math.max(s, e - 0.5)) : L.p.opacity;
     add('opacity', Math.max(s, e - 0.5), op, 'easeIn'); add('opacity', e, 0);
@@ -1564,6 +1636,95 @@ function addLayer(L, keepTiming) {
   commit();
   select(L.id);
   refreshTime();
+}
+
+function splitLayer(L, t = S.time) {
+  L = L || selLayer();
+  if (!L) { toast('Selecione uma camada para dividir.'); return; }
+  const cut = clamp(snap(t), 0, P().duration);
+  if (cut <= L.start + 0.05 || cut >= L.end - 0.05) {
+    toast('Posicione o cursor dentro da camada para dividir.');
+    return;
+  }
+  const L2 = JSON.parse(JSON.stringify(L));
+  L2.id = uid();
+  L2.name = L.name + ' (parte 2)';
+  const origEnd = L.end;
+  L.end = cut;
+  L2.start = cut;
+  L2.end = origEnd;
+
+  if (MEDIA(L.type)) {
+    const sp = L.s.speed || 1;
+    L2.s.trimIn = round((L.s.trimIn || 0) + (cut - L.start) * sp, 4);
+  }
+
+  for (const prop of Object.keys(L.kf || {})) {
+    const kfs = L.kf[prop] || [];
+    if (!kfs.length) continue;
+    const vAtCut = val(L, prop, cut);
+
+    const k1 = kfs.filter(k => k.t < cut - 1e-4);
+    if (kfs.some(k => Math.abs(k.t - cut) <= 1e-4)) {
+      const match = kfs.find(k => Math.abs(k.t - cut) <= 1e-4);
+      k1.push({ t: cut, v: match.v, e: match.e, bz: match.bz ? match.bz.slice() : undefined });
+    } else if (k1.length > 0 && kfs.some(k => k.t > cut)) {
+      k1.push({ t: cut, v: vAtCut, e: 'easeInOut' });
+    }
+    L.kf[prop] = k1;
+    if (k1.length <= 1) { L.p[prop] = k1.length ? k1[0].v : vAtCut; delete L.kf[prop]; }
+
+    const k2 = kfs.filter(k => k.t > cut + 1e-4);
+    if (kfs.some(k => Math.abs(k.t - cut) <= 1e-4)) {
+      const match = kfs.find(k => Math.abs(k.t - cut) <= 1e-4);
+      k2.unshift({ t: cut, v: match.v, e: match.e, bz: match.bz ? match.bz.slice() : undefined });
+    } else if (k2.length > 0 && kfs.some(k => k.t < cut)) {
+      k2.unshift({ t: cut, v: vAtCut, e: 'easeInOut' });
+    }
+    L2.kf[prop] = k2;
+    if (k2.length <= 1) { L2.p[prop] = k2.length ? k2[0].v : vAtCut; delete L2.kf[prop]; }
+  }
+
+  const p = P();
+  const idx = p.layers.indexOf(L);
+  p.layers.splice(idx, 0, L2);
+  commit();
+  select(L2.id);
+  renderTimeline();
+  renderPanel();
+  refreshTime();
+  toast('Camada dividida.');
+}
+
+function freezeFrame(L) {
+  L = L || selLayer();
+  if (!L || L.type !== 'video') { toast('Selecione um vídeo para congelar o quadro.'); return; }
+  const v = VIDS.get(L.id) || videoFor(L);
+  if (!v || v.readyState < 2) { toast('Aguarde o vídeo carregar.'); return; }
+  const vw = v.videoWidth || L.s.w, vh = v.videoHeight || L.s.h;
+  const fc = document.createElement('canvas');
+  fc.width = vw; fc.height = vh;
+  const fctx = fc.getContext('2d');
+  fctx.drawImage(v, 0, 0, vw, vh);
+  fc.toBlob(async blob => {
+    if (!blob) { toast('Não foi possível capturar o quadro.'); return; }
+    try {
+      const rec = await registerAsset(blob, 'image', `${L.name} (quadro)`);
+      const p = P();
+      const cut = snap(S.time);
+      const imgL = makeLayer('image', {
+        name: `${L.name} (quadro)`,
+        start: cut,
+        end: clamp(snap(cut + 2), cut + 0.5, p.duration),
+        p: { ...L.p, x: val(L, 'x'), y: val(L, 'y'), scale: val(L, 'scale'), rotation: val(L, 'rotation'), opacity: val(L, 'opacity') },
+        s: { asset: rec.id, w: L.s.w, h: L.s.h, flipH: !!L.s.flipH, flipV: !!L.s.flipV },
+      });
+      addLayer(imgL, true);
+      toast('Quadro congelado criado como camada.');
+    } catch {
+      toast('Erro ao congelar quadro.');
+    }
+  }, 'image/png');
 }
 
 function duplicateLayer(L) {
@@ -1794,7 +1955,7 @@ function download(blob, name) {
   setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 const fileBase = () => (P().name || 'motion').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w-]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'motion';
-const hasSound = () => P().layers.some(L => MEDIA(L.type) && L.visible && (L.s.volume ?? 100) > 0 && A.get(L.s.asset)?.buffer);
+const hasSound = () => P().layers.some(L => MEDIA(L.type) && L.visible && !L.s.muted && (L.s.volume ?? 100) > 0 && A.get(L.s.asset)?.buffer);
 
 async function exportVideo(forceMime) {
   if (S.exporting) return;
@@ -1880,7 +2041,33 @@ async function exportVideo(forceMime) {
   const gp = $('#goPro');
   if (gp) gp.onclick = ev => { ev.preventDefault(); hideModal(); setTimeout(() => proModal(), 30); };
 }
-$('#btnExport').onclick = () => exportVideo();
+function exportModal() {
+  const p = P();
+  const sound = hasSound();
+  const canMp4 = MediaRecorder.isTypeSupported('video/mp4;codecs=avc1') || MediaRecorder.isTypeSupported('video/mp4');
+  const fmt = canMp4 ? 'MP4' : 'WEBM';
+  showModal('Exportar vídeo', `
+    <p>Gere um arquivo de vídeo da sua animação.</p>
+    <div class="row plain"><label>Resolução</label><input class="field" value="${p.width} × ${p.height} px (${p.aspect})" disabled></div>
+    <div class="row plain"><label>Duração</label><input class="field" value="${p.duration} segundos" disabled></div>
+    <div class="row plain"><label>Áudio</label><input class="field" value="${sound ? 'Com som' : 'Sem som (mudo)'}" disabled></div>
+    <div class="row plain"><label for="expFps">Quadros/s</label><select class="field" id="expFps"><option value="24"${p.fps === 24 ? ' selected' : ''}>24 fps (Cinema)</option><option value="30"${p.fps === 30 ? ' selected' : ''}>30 fps (Padrão)</option><option value="60"${p.fps === 60 ? ' selected' : ''}>60 fps (Fluido)</option></select></div>
+    <p class="hint">Gravação em formato ${fmt}. Mantenha a aba aberta durante a gravação.</p>
+  `, [
+    { label: 'Cancelar' },
+    { label: 'Exportar frame (PNG)', onClick: () => {
+      pause();
+      drawWatermark(ctx);
+      canvas.toBlob(b => { renderMain(); if (b) download(b, `${fileBase()}-${S.time.toFixed(2)}s.png`); }, 'image/png');
+    } },
+    { label: 'Gravar vídeo', cls: 'btn-primary', onClick: () => {
+      const chosen = parseInt($('#expFps')?.value, 10);
+      if (chosen && chosen !== p.fps) { p.fps = chosen; commit(); }
+      exportVideo();
+    } },
+  ]);
+}
+$('#btnExport').onclick = exportModal;
 
 /* ======================= IA (Gemini + remoção de fundo) ======================= */
 const AI_KEY = 'motion-editor:ai';
@@ -2434,6 +2621,8 @@ menu.addEventListener('click', async e => {
   } else if (act === 'help') {
     showModal('Atalhos', `<div class="keys">
       <kbd>Espaço</kbd><span>Reproduzir / pausar</span>
+      <kbd>S / Ctrl+K</kbd><span>Dividir camada no cursor</span>
+      <kbd>M</kbd><span>Mutar / ativar som da camada</span>
       <kbd>K</kbd><span>Keyframe em todas as propriedades de transformação</span>
       <kbd>← → ↑ ↓</kbd><span>Mover a camada (Shift: 10 px)</span>
       <kbd>, .</kbd><span>Quadro anterior / próximo</span>
@@ -2497,6 +2686,8 @@ document.addEventListener('keydown', e => {
   else if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
   else if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); }
   else if (mod && e.key.toLowerCase() === 'd' && L) { e.preventDefault(); duplicateLayer(L); }
+  else if ((e.key.toLowerCase() === 's' || (mod && e.key.toLowerCase() === 'k')) && L) { e.preventDefault(); splitLayer(L); }
+  else if (e.key.toLowerCase() === 'm' && L && MEDIA(L.type)) { e.preventDefault(); L.s.muted = !L.s.muted; commit(); renderTimeline(); renderPanel(); refreshTime(); }
   else if ((e.key === 'Delete' || e.key === 'Backspace') && L) { e.preventDefault(); deleteLayer(L); }
   else if (e.key === 'Home') setTime(0);
   else if (e.key === ',') setTime(S.time - 1 / P().fps);
@@ -2539,5 +2730,5 @@ if (document.fonts) {
   Promise.all(FONTS.map(f => document.fonts.load(`700 40px "${f}"`).catch(() => {}))).then(() => refreshTime());
   document.fonts.ready.then(() => refreshTime());
 }
-window.__motion = { S, A, P, byId, select, setTime, setParent, makeLayer, addLayer, registerAsset, commit };
+window.__motion = { S, A, P, byId, select, setTime, setParent, makeLayer, addLayer, splitLayer, freezeFrame, registerAsset, commit };
 })();

@@ -20,7 +20,7 @@
   --font-ui: "Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
 
-  --label-w: 112px;
+  --label-w: 122px;
   --row-h: 34px;
   --radius: 8px;
   color-scheme: dark;
@@ -205,6 +205,10 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .tl-row .tl-label .name { overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
 .tl-row .eye { width: 22px; height: 22px; display: grid; place-items: center; border: 0; background: none; color: var(--muted); padding: 0; flex-shrink: 0; }
 .tl-row .eye svg { width: 15px; height: 15px; }
+.tl-row .mute { width: 18px; height: 18px; display: grid; place-items: center; border: 0; background: none; color: var(--muted); padding: 0; flex-shrink: 0; }
+.tl-row .mute:hover { color: var(--fg); }
+.tl-row .mute.is-muted { color: var(--danger); }
+.tl-row .mute svg { width: 13px; height: 13px; }
 .tl-row.off .name { text-decoration: line-through; opacity: .5; }
 .type-dot { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; background: var(--muted); }
 .type-dot.text { background: var(--accent); }
