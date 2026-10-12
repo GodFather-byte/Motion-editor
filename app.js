@@ -313,8 +313,8 @@ function scheduleAudio(ac, dest, from) {
       g.gain.setValueAtTime(env(foStart), when + (foStart - into));
       g.gain.linearRampToValueAtTime(0, when + (len - into));
     }
-    const rem = Math.max(0.01, (rec.buffer.duration - offset) / sp);
-    src.start(when, offset, Math.min(len - into, rem));
+    // start() conta a duração em segundos do arquivo; com velocidade, a timeline anda sp vezes mais rápido
+    src.start(when, offset, Math.max(0.01, Math.min((len - into) * sp, rec.buffer.duration - offset)));
     out.push(src);
   }
   return out;
@@ -370,7 +370,7 @@ function normalize(p) {
     L.p = { ...defaultP(), ...L.p };
     L.s = { ...defaultS(L.type), ...L.s };
     if (MEDIA(L.type)) {
-      if (L.s.speed == null) L.s.speed = 1;
+      L.s.speed = Number(L.s.speed) || 1;
       if (L.s.muted == null) L.s.muted = false;
     }
     if (L.s.flipH == null) L.s.flipH = false;
@@ -1435,7 +1435,16 @@ panel.addEventListener('input', e => {
     if (el.type === 'checkbox') v = el.checked;
     else if (el.type === 'number' || el.type === 'range') { v = parseFloat(el.value); if (Number.isNaN(v)) return; }
     else v = el.value;
-    if (key === 'trimIn') v = clamp(v, 0, Math.max(0, mediaDur(L) - 0.1));
+    if (key === 'trimIn') v = clamp(v, 0, Math.max(0, mediaSourceDur(L) - 0.1));
+    if (key === 'speed') {
+      v = clamp(parseFloat(v) || 1, 0.25, 4);
+      const old = Number(L.s.speed) || 1;
+      L.s.speed = v;
+      // mantém o mesmo trecho do arquivo: mais rápido encurta o bloco, mais lento alonga
+      L.end = clamp(snap(L.start + (L.end - L.start) * old / v), L.start + 0.1, Math.min(P().duration, L.start + mediaRemaining(L)));
+      renderTimeline(); refreshTime();
+      return;
+    }
     L.s[key] = v;
     $$(`[data-s="${key}"]`, panel).forEach(o => { if (o !== el && o.type !== 'checkbox') o.value = v; });
     if (key === 'fillType') $$('[data-show="grad"]', panel).forEach(x => (x.hidden = v === 'solid'));
@@ -1659,32 +1668,8 @@ function splitLayer(L, t = S.time) {
     L2.s.trimIn = round((L.s.trimIn || 0) + (cut - L.start) * sp, 4);
   }
 
-  for (const prop of Object.keys(L.kf || {})) {
-    const kfs = L.kf[prop] || [];
-    if (!kfs.length) continue;
-    const vAtCut = val(L, prop, cut);
-
-    const k1 = kfs.filter(k => k.t < cut - 1e-4);
-    if (kfs.some(k => Math.abs(k.t - cut) <= 1e-4)) {
-      const match = kfs.find(k => Math.abs(k.t - cut) <= 1e-4);
-      k1.push({ t: cut, v: match.v, e: match.e, bz: match.bz ? match.bz.slice() : undefined });
-    } else if (k1.length > 0 && kfs.some(k => k.t > cut)) {
-      k1.push({ t: cut, v: vAtCut, e: 'easeInOut' });
-    }
-    L.kf[prop] = k1;
-    if (k1.length <= 1) { L.p[prop] = k1.length ? k1[0].v : vAtCut; delete L.kf[prop]; }
-
-    const k2 = kfs.filter(k => k.t > cut + 1e-4);
-    if (kfs.some(k => Math.abs(k.t - cut) <= 1e-4)) {
-      const match = kfs.find(k => Math.abs(k.t - cut) <= 1e-4);
-      k2.unshift({ t: cut, v: match.v, e: match.e, bz: match.bz ? match.bz.slice() : undefined });
-    } else if (k2.length > 0 && kfs.some(k => k.t < cut)) {
-      k2.unshift({ t: cut, v: vAtCut, e: 'easeInOut' });
-    }
-    L2.kf[prop] = k2;
-    if (k2.length <= 1) { L2.p[prop] = k2.length ? k2[0].v : vAtCut; delete L2.kf[prop]; }
-  }
-
+  // os keyframes usam tempo absoluto: as duas partes mantêm todos eles,
+  // então a animação continua idêntica dos dois lados do corte
   const p = P();
   const idx = p.layers.indexOf(L);
   p.layers.splice(idx, 0, L2);
@@ -1714,6 +1699,7 @@ function freezeFrame(L) {
       const cut = snap(S.time);
       const imgL = makeLayer('image', {
         name: `${L.name} (quadro)`,
+        parent: L.parent,
         start: cut,
         end: clamp(snap(cut + 2), cut + 0.5, p.duration),
         p: { ...L.p, x: val(L, 'x'), y: val(L, 'y'), scale: val(L, 'scale'), rotation: val(L, 'rotation'), opacity: val(L, 'opacity') },
@@ -2042,6 +2028,7 @@ async function exportVideo(forceMime) {
   if (gp) gp.onclick = ev => { ev.preventDefault(); hideModal(); setTimeout(() => proModal(), 30); };
 }
 function exportModal() {
+  if (!window.MediaRecorder) { exportVideo(); return; }
   const p = P();
   const sound = hasSound();
   const canMp4 = MediaRecorder.isTypeSupported('video/mp4;codecs=avc1') || MediaRecorder.isTypeSupported('video/mp4');
