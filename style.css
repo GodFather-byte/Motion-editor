@@ -472,3 +472,18 @@ input[type=color] { width: 100%; height: 34px; padding: 3px; background: var(--p
 .clip.camera { background: transparent; border-style: dashed; border-color: var(--select-line); }
 .subhead { margin: 6px 0 0; font-size: 12px; font-weight: 700; color: var(--muted); }
 .hint.bad { color: var(--danger); }
+
+/* batidas, narração e figurinhas */
+.sw-beats { background: none; border-radius: 0; box-shadow: inset 2px 0 0 var(--audio), inset -2px 0 0 var(--audio); width: 10px; height: 12px;
+  background-image: linear-gradient(var(--audio), var(--audio)); background-size: 2px 60%; background-position: center; background-repeat: no-repeat; }
+.sw-mic { background: var(--audio); border-radius: 6px 6px 6px 6px / 8px 8px 4px 4px; width: 8px; }
+.sw-sticker { background: var(--accent); border-radius: 50% 50% 50% 2px; }
+.type-dot.icon { background: var(--shape); border-radius: 50% 50% 50% 2px; }
+.beat-mark { position: absolute; bottom: 0; width: 2px; height: 8px; margin-left: -1px; border-radius: 1px; background: var(--audio); opacity: .8; pointer-events: none; }
+.sticker-tabs { margin-bottom: 4px; }
+.sticker-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); gap: 6px; }
+.sticker { height: 44px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel-2); font-size: 24px; line-height: 1; display: grid; place-items: center; padding: 0; }
+.sticker:hover { border-color: var(--accent); }
+.sticker svg { width: 24px; height: 24px; fill: var(--fg); stroke: none; }
+.vu { width: 100%; height: 36px; display: block; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; }
+.rec-time { font: 600 22px/1 var(--font-mono); color: var(--fg) !important; text-align: center; font-variant-numeric: tabular-nums; }

@@ -11,6 +11,7 @@
 - `tests/video-editor.cjs`: testes funcionais com Playwright/Chromium, mídia gerada pelo FFmpeg e servidor Python temporário.
 - `tests/effects.cjs`: câmera, efeitos WebGL, chroma key, partículas, texto curvo/no traço.
 - `tests/export.cjs`: exportação rápida, GIF e preview leve.
+- `tests/music.cjs`: detecção de batida, pulso e montagem na batida, batidas prontas, narração (microfone falso do Chromium), figurinhas.
 - `tests/code-animation.cjs`: testes do painel Código (GSAP isolado). Precisa de internet. Rode com `CHROMIUM_PATH` apontando para o Chromium do Playwright se não houver `/usr/bin/chromium`.
 
 ## Seções de app.js (busque pelo título `/* ===... nome ===... */`)
@@ -22,6 +23,7 @@
 | modelo | `newProject`, `defaultS` (campos de cada tipo), `makeLayer`, `normalize`, `val` (valor no tempo), keyframes, `transitionState` (envelope de entrada/saída), `worldMatrix`, `setParent` |
 | render | `drawText` (animações de texto), `drawPath`, `drawFramedMedia` (contain/cover/stretch e foco), `drawShape`, `drawLayer` (filtros, looks, transições, sombra, brilho), `renderFrame` (máscara de recorte) |
 | efeitos, partículas e câmera | `GL` (WebGL compartilhado, `GL_FRAG` com os shaders), `chromaSource`, `applyFx` (camada fx em `renderFrame`), `PARTICLES`/`drawParticles` (sem estado), `activeCamera`/`cameraMatrix` (entra no `parentMatrix` das camadas raiz), `textPathPoints`/`pointOnPath` |
+| batida, narração, batidas prontas e figurinhas | `detectBeats` (BPM por autocorrelação), `beatsOf`/`projectBeats` (batidas no tempo da timeline), `magnet` (gruda nas batidas), `analyzeBeats`, `applyBeatPreset` (beatPulse/beatFlash/beatShake), `beatMontage`, `BEAT_STYLES`/`synthBeat`/`beatMakerModal`, `recordVoiceModal` (MediaRecorder), `EMOJIS`, `ICONS` (path SVG 24x24), `iconPath`, `drawIcon`, `stickersModal` |
 | seleção no preview | caminho de movimento, caneta, alças, `fitStage`, arrastar no canvas |
 | tempo e reprodução | `refreshTime`, `play`, `pause` |
 | linha do tempo | `renderTimeline`, forma de onda, arrastar keyframes e blocos, botão de mudo, snap magnético |
@@ -44,5 +46,7 @@ Camada: `{ id, type, name, start, end, visible, parent, p{valores fixos}, kf{pro
 `layers[0]` fica na frente. Arquivos (imagem, vídeo, áudio) ficam no IndexedDB; `assets` guarda só nome e tipo.
 
 Novos campos em `s`: `colorLook`, `lookIntensity`, `transitionIn/Out`, `transitionInDuration/OutDuration`, `mediaFit`, `focalX/Y`. `transitionStart/End` são âncoras opcionais preservadas pelo split, deslocadas ao mover o clipe e removidas ao editar a borda ou a transição correspondente. Projetos antigos usam look Original, sem transição e enquadramento livre.
+
+Música: camada de áudio guarda `s.beats` (segundos do arquivo, antes de corte e velocidade) e `s.bpm`. A régua e o painel Código usam `projectBeats()`. Tipo `icon`: `s.iconName`, `s.d` (path SVG), `s.size`, mais preenchimento/degradê/contorno/brilho das formas.
 
 Tema do editor: tokens no início de `style.css`; `theme` em app.js lê essas variáveis para alças, caminho de movimento, curvas e ondas de áudio. Cores de conteúdo dos projetos são independentes. No desktop, propriedades ocupam a coluna direita inteira; em <=860 px a página empilha os blocos com rolagem, sem reduzir a prévia em telas curtas.

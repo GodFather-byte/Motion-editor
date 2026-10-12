@@ -36,6 +36,15 @@ Editor de motion graphics que roda direto no navegador e pode ser instalado como
 - Câmera virtual: posição, zoom e rotação da cena inteira, com profundidade por camada ("Acompanha a câmera %") e movimentos prontos.
 - Texto curvo e texto seguindo um traço; um traço pode virar máscara da camada de cima.
 
+**Música e redes sociais**
+- Detectar batidas: o editor ouve a música, acha o BPM e marca cada batida na régua. Ao mover ou cortar clipes, as bordas grudam nas batidas.
+- Animações "Na batida" para qualquer camada: pulsar, piscar e tremer em cada batida.
+- Montagem na batida: fotos e vídeos se encaixam um por batida (ou a cada 2 ou 4), repetindo se faltar mídia.
+- Batidas prontas sem direitos autorais, geradas no aparelho: Eletrônica, Funk, Trap e Lo-fi, com BPM e duração ajustáveis.
+- Gravar narração pelo microfone, com medidor de volume; entra na linha do tempo na posição da agulha.
+- Figurinhas: emojis e 16 ícones vetoriais (coração, curtir, sino, fogo, play…) que aceitam cor, degradê, contorno e brilho.
+- No painel Código, `beats` traz os tempos das batidas: `beats.forEach(b => tl.to(layer('Título'), { scale: 1.2, duration: 0.1, yoyo: true, repeat: 1 }, b))`.
+
 **Exportação**
 - MP4 rápido quadro a quadro (WebCodecs): H.264 + AAC quando o aparelho tem, senão VP9 + Opus. Não pula quadros e continua com a aba em segundo plano. 720p, 1080p ou 4K (Pro), 24/30/60 fps.
 - GIF animado (com fundo transparente opcional) e PNG do quadro atual (também transparente).
@@ -101,6 +110,7 @@ node --test tests/video-editor.cjs
 node --test tests/code-animation.cjs   # painel Código (baixa o GSAP, precisa de internet)
 node --test tests/export.cjs           # exportação rápida, GIF e preview leve (precisa de internet)
 node --test tests/effects.cjs          # câmera, efeitos, chroma key, partículas, texto curvo
+node --test tests/music.cjs            # batidas, montagem, batidas prontas, narração, figurinhas
 ```
 
 O teste inicia seu próprio servidor e gera mídia temporária. Confere recorte, cores, transições, divisão, desfazer/refazer, persistência, exportação e áudio em diferentes velocidades; inclui layout de 360 px. Defina `CHROMIUM_PATH` se o Chromium não estiver em `/usr/bin/chromium`. Essas ferramentas são apenas para testes; o app continua sem instalação de dependências ou build.

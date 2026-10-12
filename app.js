@@ -105,7 +105,7 @@ const BLENDS = {
   'source-over': 'Normal', screen: 'Tela (clarear)', multiply: 'Multiplicar', overlay: 'Sobrepor',
   lighter: 'Somar luz', 'soft-light': 'Luz suave', difference: 'Diferença', 'color-dodge': 'Subexposição de cor',
 };
-const TYPE_NAMES = { text: 'Texto', rect: 'Retângulo', ellipse: 'Círculo', star: 'Estrela', path: 'Traço', image: 'Imagem', video: 'Vídeo', audio: 'Áudio', group: 'Grupo', particles: 'Partículas', fx: 'Efeito', camera: 'Câmera' };
+const TYPE_NAMES = { text: 'Texto', rect: 'Retângulo', ellipse: 'Círculo', star: 'Estrela', path: 'Traço', image: 'Imagem', video: 'Vídeo', audio: 'Áudio', group: 'Grupo', particles: 'Partículas', fx: 'Efeito', camera: 'Câmera', icon: 'Ícone' };
 const VISUAL = t => t !== 'audio';
 const MEDIA = t => t === 'video' || t === 'audio';
 const STORE_KEY = 'motion-editor:v1';
@@ -370,6 +370,7 @@ function defaultS(type) {
     case 'video': return { ...look, ...framing, ...media, ...chroma, w: 800, h: 450, glowColor: '#ffffff' };
     case 'particles': { const pr = PARTICLES.confetti; return { ...look, preset: 'confetti', ...Object.fromEntries(PARTICLE_KEYS.map(k => [k, pr[k]])), areaW: Math.round(p.width * 0.6), colorMode: 'preset', color1: '#ffb547', color2: '#6fd8ff', glowColor: '#ffb547' }; }
     case 'fx': return { effect: 'vignette', amount: 60, blend: 'source-over', clip: false };
+    case 'icon': return { ...look, d: ICONS.coração, iconName: 'coração', size: Math.round(m * 0.25), fill: '#ff5a6e', fill2: '#ffb547', stroke: 0, strokeColor: '#000000', glowColor: '#ff5a6e' };
     case 'camera': return { blend: 'source-over', clip: false };
     case 'audio': return { ...media };
     case 'group': return { blend: 'source-over', clip: false };
@@ -736,6 +737,7 @@ function drawShape(c, L, local) {
       return { w: s.w, h: s.w };
     case 'path': return drawPath(c, L, local + L.start);
     case 'particles': return drawParticles(c, L, local);
+    case 'icon': return drawIcon(c, L);
     case 'image': {
       const rec = A.get(s.asset);
       if (rec && rec.el && rec.el.naturalWidth) drawFramedMedia(c, rec.el, rec.el.naturalWidth, rec.el.naturalHeight, s);
@@ -1114,6 +1116,426 @@ function pointOnPath(pp, d) {
   return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, a: Math.atan2(b.y - a.y, b.x - a.x) };
 }
 
+/* ======================= batida, narração, batidas prontas e figurinhas ======================= */
+
+/* ---------- detecção de batidas (offline, no próprio aparelho) ---------- */
+async function detectBeats(buffer) {
+  const rate = 11025, hop = 128, win = 256;
+  const len = Math.max(1, Math.ceil(buffer.duration * rate));
+  const oac = new OfflineAudioContext(2, len, rate);
+  const src = oac.createBufferSource();
+  src.buffer = buffer;
+  const lp = oac.createBiquadFilter();
+  lp.type = 'lowpass'; lp.frequency.value = 180;
+  const merge = oac.createChannelMerger(2);
+  src.connect(lp); lp.connect(merge, 0, 0);   // canal 0: graves (bumbo)
+  src.connect(merge, 0, 1);                    // canal 1: tudo
+  merge.connect(oac.destination);
+  src.start();
+  const out = await oac.startRendering();
+  const low = out.getChannelData(0), full = out.getChannelData(1);
+  const n = Math.floor((len - win) / hop);
+  if (n < 32) return { bpm: 0, beats: [] };
+  const fps = rate / hop;
+  const onset = new Float32Array(n);
+  let pl = 0, pf = 0;
+  for (let i = 0; i < n; i++) {
+    let el = 0, ef = 0;
+    for (let j = i * hop, e = j + win; j < e; j++) { el += low[j] * low[j]; ef += full[j] * full[j]; }
+    const ll = Math.log1p(el * 1000), lf = Math.log1p(ef * 1000);
+    onset[i] = Math.max(0, ll - pl) + 0.5 * Math.max(0, lf - pf);
+    pl = ll; pf = lf;
+  }
+  // tira a média móvel para ficar só com os picos
+  const o = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    let m = 0, c = 0;
+    for (let j = Math.max(0, i - 8); j <= Math.min(n - 1, i + 8); j++) { m += onset[j]; c++; }
+    o[i] = Math.max(0, onset[i] - m / c);
+  }
+  // andamento: autocorrelação entre 60 e 180 BPM, preferindo perto de 120
+  let bestLag = 0, bestScore = -1;
+  const minLag = Math.floor(fps * 60 / 180), maxLag = Math.ceil(fps * 60 / 60);
+  const ac = new Float32Array(maxLag + 2);
+  for (let lag = minLag; lag <= maxLag + 1; lag++) {
+    let sum = 0;
+    for (let i = 0; i + lag < n; i++) sum += o[i] * o[i + lag];
+    ac[lag] = sum;
+  }
+  for (let lag = minLag; lag <= maxLag; lag++) {
+    const bpm = 60 * fps / lag;
+    const w = Math.exp(-0.5 * Math.pow(Math.log2(bpm / 120) / 0.9, 2));
+    if (ac[lag] * w > bestScore) { bestScore = ac[lag] * w; bestLag = lag; }
+  }
+  if (!bestLag || bestScore <= 0) return { bpm: 0, beats: [] };
+  // refina o período com uma parábola entre os vizinhos
+  const a0 = ac[bestLag - 1] || 0, a1 = ac[bestLag], a2 = ac[bestLag + 1] || 0;
+  const den = a0 - 2 * a1 + a2;
+  const lag = bestLag + (den ? clamp(0.5 * (a0 - a2) / den, -0.5, 0.5) : 0);
+  // fase: onde a grade de batidas acerta mais picos
+  let bestPh = 0, bestPs = -1;
+  for (let ph = 0; ph < lag; ph++) {
+    let sum = 0;
+    for (let x = ph; x < n; x += lag) sum += o[Math.round(x)] || 0;
+    if (sum > bestPs) { bestPs = sum; bestPh = ph; }
+  }
+  const beats = [];
+  for (let x = bestPh; x < n; x += lag) {
+    let k = Math.round(x), best = k;
+    for (let j = Math.max(0, k - 2); j <= Math.min(n - 1, k + 2); j++) if (o[j] > o[best]) best = j;
+    beats.push(round((best * hop + win / 2) / rate, 3));
+  }
+  return { bpm: Math.round(60 * fps / lag), beats };
+}
+
+/* batidas na linha do tempo, vindas da primeira música (ou vídeo) analisada */
+function beatsOf(L) {
+  if (!L.s.beats || !L.s.beats.length) return [];
+  const sp = L.s.speed || 1, ti = L.s.trimIn || 0;
+  return L.s.beats.map(b => round(L.start + (b - ti) / sp, 4)).filter(t => t >= L.start - 1e-6 && t <= L.end + 1e-6);
+}
+function beatSource() {
+  const ls = P().layers.filter(L => MEDIA(L.type) && L.visible && L.s.beats && L.s.beats.length);
+  return ls.find(L => L.type === 'audio') || ls[0] || null;
+}
+const projectBeats = () => { const L = beatSource(); return L ? beatsOf(L) : []; };
+/* ímã da linha do tempo: cursor e batidas */
+function magnet(t) {
+  let best = null, bd = 8 / S.pps;
+  for (const c of [S.time, ...projectBeats()]) { const d = Math.abs(t - c); if (d < bd) { bd = d; best = c; } }
+  return best;
+}
+
+async function analyzeBeats(L) {
+  const rec = A.get(L.s.asset);
+  if (!rec || !rec.buffer) { toast('Esse arquivo não tem som que eu consiga ler.'); return; }
+  toast('Ouvindo a música…');
+  try {
+    const { bpm, beats } = await detectBeats(rec.buffer);
+    if (!beats.length) { toast('Não encontrei um ritmo claro nesse som.'); return; }
+    L.s.beats = beats; L.s.bpm = bpm;
+    commit(); renderTimeline(); renderPanel();
+    toast(`${bpm} BPM · ${beatsOf(L).length} batidas marcadas na linha do tempo.`);
+  } catch {
+    toast('Não consegui analisar esse som.');
+  }
+}
+
+/* animações na batida para qualquer camada visual */
+function applyBeatPreset(L, name) {
+  const beats = projectBeats().filter(t => t >= L.start && t <= L.end);
+  if (!beats.length) { toast('Detecte as batidas de uma música primeiro.'); return false; }
+  const add = (prop, t, v, e) => upsertKf(L, prop, clamp(t, L.start, L.end), v, e);
+  const gap = beats.length > 1 ? beats[1] - beats[0] : 0.5;
+  const back = Math.min(0.25, gap * 0.6);
+  if (name === 'beatPulse') {
+    const b = isAnimated(L, 'scale') ? L.p.scale : val(L, 'scale'); delete L.kf.scale; L.p.scale = b;
+    add('scale', L.start, b);
+    for (const t of beats) { add('scale', t - 1 / P().fps, b, 'easeOut'); add('scale', t, b * 1.15, 'easeOut'); add('scale', t + back, b, 'easeInOut'); }
+  } else if (name === 'beatFlash') {
+    delete L.kf.brightness; L.p.brightness = 100;
+    add('brightness', L.start, 100);
+    for (const t of beats) { add('brightness', t, 190, 'easeOut'); add('brightness', t + back * 0.7, 100, 'easeInOut'); }
+  } else if (name === 'beatShake') {
+    const x = isAnimated(L, 'x') ? L.p.x : val(L, 'x'); delete L.kf.x; L.p.x = x;
+    const d = Math.max(6, Math.round(P().width * 0.012));
+    add('x', L.start, x);
+    for (const t of beats) { add('x', t, x + d, 'easeOut'); add('x', t + 0.05, x - d * 0.6, 'easeInOut'); add('x', t + 0.12, x, 'easeInOut'); }
+  }
+  return true;
+}
+
+/* montagem na batida: fotos e vídeos se revezam a cada N batidas */
+function beatMontage(every) {
+  const p = P();
+  const beats = projectBeats();
+  const media = p.layers.filter(L => (L.type === 'image' || L.type === 'video') && L.visible).sort((a, b) => a.start - b.start);
+  if (beats.length < 2) { toast('Detecte as batidas de uma música primeiro.'); return; }
+  if (!media.length) { toast('Adicione fotos ou vídeos para montar na batida.'); return; }
+  const slots = [];
+  for (let i = 0; i + every < beats.length; i += every) slots.push([beats[i], beats[i + every]]);
+  if (!slots.length) slots.push([beats[0], beats[beats.length - 1]]);
+  // usa cada mídia uma vez; se sobrar batida, repete a lista
+  const used = [];
+  slots.forEach(([a, b], i) => {
+    let L = media[i % media.length];
+    if (i >= media.length) {
+      L = JSON.parse(JSON.stringify(L)); L.id = uid(); L.name = L.name.replace(/( · \d+)?$/, '') + ` · ${Math.floor(i / media.length) + 1}`;
+      p.layers.splice(p.layers.indexOf(media[i % media.length]), 0, L);
+    }
+    const shift = a - L.start;
+    for (const prop of Object.keys(L.kf)) L.kf[prop].forEach(k => (k.t = round(k.t + shift, 4)));
+    L.start = snap(a); L.end = Math.max(L.start + 0.1, snap(b));
+    if (L.type === 'video') L.end = Math.min(L.end, L.start + mediaRemaining(L));
+    used.push(L);
+  });
+  commit(); renderTimeline(); renderPanel(); setTime(slots[0][0]);
+  toast(`${used.length} cortes na batida, a cada ${every} batida${every > 1 ? 's' : ''}.`);
+}
+
+/* ---------- batidas prontas: música sintetizada no aparelho, sem direitos autorais ---------- */
+const BEAT_STYLES = {
+  electro: { label: 'Eletrônica', bpm: 124 },
+  funk: { label: 'Funk', bpm: 130 },
+  trap: { label: 'Trap', bpm: 140 },
+  lofi: { label: 'Lo-fi', bpm: 84 },
+};
+const NOTE = n => 440 * Math.pow(2, (n - 69) / 12);
+async function synthBeat(style, bpm, dur) {
+  const rate = 44100;
+  const oac = new OfflineAudioContext(2, Math.ceil(dur * rate), rate);
+  const comp = oac.createDynamicsCompressor();
+  comp.threshold.value = -14; comp.ratio.value = 4;
+  const master = oac.createGain(); master.gain.value = 0.8;
+  master.connect(comp); comp.connect(oac.destination);
+  master.gain.setValueAtTime(0.8, Math.max(0, dur - 1.2));
+  master.gain.linearRampToValueAtTime(0, dur);
+  const noise = oac.createBuffer(1, rate, rate);
+  { const d = noise.getChannelData(0); let s = 7; for (let i = 0; i < d.length; i++) { s = (s * 16807) % 2147483647; d[i] = s / 1073741823.5 - 1; } }
+  const env = (node, t, a, peak, dcy, end = 0.0001) => { node.gain.setValueAtTime(0.0001, t); node.gain.exponentialRampToValueAtTime(peak, t + a); node.gain.exponentialRampToValueAtTime(end, t + a + dcy); };
+  const kick = (t, v = 1, long = 0.35) => {
+    const o = oac.createOscillator(), g = oac.createGain();
+    o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(42, t + 0.12);
+    env(g, t, 0.003, v, long); o.connect(g); g.connect(master); o.start(t); o.stop(t + long + 0.05);
+  };
+  const noiseHit = (t, type, freq, v, dcy, q = 0.8) => {
+    const s = oac.createBufferSource(), f = oac.createBiquadFilter(), g = oac.createGain();
+    s.buffer = noise; f.type = type; f.frequency.value = freq; f.Q.value = q;
+    env(g, t, 0.002, v, dcy); s.connect(f); f.connect(g); g.connect(master); s.start(t, Math.random() * 0.5); s.stop(t + dcy + 0.05);
+  };
+  const snare = (t, v = 0.6) => {
+    noiseHit(t, 'highpass', 1800, v, 0.18);
+    const o = oac.createOscillator(), g = oac.createGain(); o.frequency.value = 190; env(g, t, 0.002, v * 0.5, 0.08); o.connect(g); g.connect(master); o.start(t); o.stop(t + 0.12);
+  };
+  const clap = (t, v = 0.55) => { for (const d of [0, 0.012, 0.024]) noiseHit(t + d, 'bandpass', 1200, v, 0.12, 1.2); };
+  const hat = (t, v = 0.18, open = false) => noiseHit(t, 'highpass', 7500, v, open ? 0.22 : 0.045);
+  const tone = (t, freq, len, v, type = 'sawtooth', cutoff = 600) => {
+    const o = oac.createOscillator(), f = oac.createBiquadFilter(), g = oac.createGain();
+    o.type = type; o.frequency.value = freq; f.type = 'lowpass'; f.frequency.value = cutoff;
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(v, t + 0.01); g.gain.setValueAtTime(v, t + len * 0.7); g.gain.exponentialRampToValueAtTime(0.0001, t + len);
+    o.connect(f); f.connect(g); g.connect(master); o.start(t); o.stop(t + len + 0.05);
+  };
+  const pad = (t, notes, len, v = 0.06) => { for (const n of notes) for (const det of [-6, 6]) { const o = oac.createOscillator(), f = oac.createBiquadFilter(), g = oac.createGain(); o.type = 'triangle'; o.frequency.value = NOTE(n); o.detune.value = det; f.type = 'lowpass'; f.frequency.value = 1400; g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(v, t + 0.25); g.gain.setValueAtTime(v, t + len - 0.3); g.gain.linearRampToValueAtTime(0.0001, t + len); o.connect(f); f.connect(g); g.connect(master); o.start(t); o.stop(t + len + 0.05); } };
+  const step = 60 / bpm / 4, bar = step * 16;
+  const chords = { electro: [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]], lofi: [[50, 53, 57, 60], [55, 59, 62, 65], [48, 52, 55, 59], [45, 48, 52, 55]] };
+  const roots = [45, 41, 36, 43];
+  for (let b = 0; b * bar < dur; b++) {
+    const t0 = b * bar, ci = b % 4;
+    for (let i = 0; i < 16; i++) {
+      const t = t0 + i * step;
+      if (t >= dur) break;
+      if (style === 'electro') {
+        if (i % 4 === 0) kick(t);
+        if (i === 4 || i === 12) clap(t);
+        if (i % 4 === 2) hat(t, 0.16, true); else if (i % 2 === 1) hat(t, 0.08);
+        if (i % 4 === 2) tone(t, NOTE(roots[ci]), step * 1.6, 0.22, 'sawtooth', 500);
+      } else if (style === 'funk') {
+        if ([0, 3, 6, 10, 13].includes(i)) kick(t, i === 0 ? 1 : 0.8, 0.25);
+        if (i === 4 || i === 12) clap(t, 0.6);
+        if ([2, 7, 9, 14].includes(i)) noiseHit(t, 'bandpass', 3200, 0.22, 0.05, 2);
+        if (i % 2 === 0) hat(t, 0.07);
+      } else if (style === 'trap') {
+        if (i === 0 || i === 10 || (i === 7 && b % 2)) { kick(t, 1, 0.2); tone(t, NOTE(roots[ci] - 12 + 12), step * 5, 0.3, 'sine', 300); }
+        if (i === 8) { snare(t, 0.65); clap(t, 0.35); }
+        hat(t, 0.08);
+        if (i >= 12 && b % 2 === 1) hat(t + step / 2, 0.06);
+      } else if (style === 'lofi') {
+        const sw = i % 2 === 1 ? step * 0.18 : 0;
+        if (i === 0 || i === 7 || i === 10) kick(t + sw, 0.75, 0.3);
+        if (i === 4 || i === 12) snare(t + sw, 0.4);
+        if (i % 2 === 0) hat(t + sw, 0.06);
+      }
+    }
+    if (style === 'electro') pad(t0, chords.electro[ci], Math.min(bar, dur - t0), 0.035);
+    if (style === 'lofi') pad(t0, chords.lofi[ci], Math.min(bar, dur - t0), 0.05);
+  }
+  if (style === 'lofi') noiseHit(0, 'lowpass', 2500, 0.02, Math.max(0.1, dur - 0.1), 0.3);
+  const buf = await oac.startRendering();
+  const beats = [];
+  for (let t = 0; t < dur - 1e-6; t += 60 / bpm) beats.push(round(t, 4));
+  return { buf, beats };
+}
+function encodeWavStereo(buf) {
+  const ch = Math.min(2, buf.numberOfChannels), n = buf.length, rate = buf.sampleRate;
+  const out = new DataView(new ArrayBuffer(44 + n * ch * 2));
+  const w = (o, s) => [...s].forEach((c, i) => out.setUint8(o + i, c.charCodeAt(0)));
+  w(0, 'RIFF'); out.setUint32(4, 36 + n * ch * 2, true); w(8, 'WAVE'); w(12, 'fmt ');
+  out.setUint32(16, 16, true); out.setUint16(20, 1, true); out.setUint16(22, ch, true);
+  out.setUint32(24, rate, true); out.setUint32(28, rate * ch * 2, true); out.setUint16(32, ch * 2, true); out.setUint16(34, 16, true);
+  w(36, 'data'); out.setUint32(40, n * ch * 2, true);
+  const data = [...Array(ch)].map((_, c) => buf.getChannelData(c));
+  for (let i = 0, o = 44; i < n; i++) for (let c = 0; c < ch; c++, o += 2) out.setInt16(o, clamp(data[c][i], -1, 1) * 0x7fff, true);
+  return new Blob([out], { type: 'audio/wav' });
+}
+
+function beatMakerModal() {
+  const p = P();
+  showModal('Batidas prontas', `
+    <p>Gere uma batida original no próprio aparelho. É sua: pode usar em qualquer vídeo, sem direitos autorais.</p>
+    <div class="row plain"><label for="bmStyle">Estilo</label><select class="field" id="bmStyle">${Object.entries(BEAT_STYLES).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('')}</select></div>
+    <div class="row plain"><label for="bmBpm">BPM</label><input class="field" type="number" id="bmBpm" min="60" max="180" value="${BEAT_STYLES.electro.bpm}"></div>
+    <div class="row plain"><label for="bmDur">Duração (s)</label><input class="field" type="number" id="bmDur" min="2" max="120" step="1" value="${Math.round(p.duration)}"></div>
+    <p class="hint">As batidas já entram marcadas na linha do tempo, prontas para sincronizar.</p>`, [
+    { label: 'Cancelar' },
+    { label: 'Gerar e adicionar', cls: 'btn-primary', keepOpen: true, onClick: async () => {
+      const style = $('#bmStyle').value, bpm = clamp(+$('#bmBpm').value || 120, 60, 180), dur = clamp(+$('#bmDur').value || p.duration, 2, 120);
+      busy('Gerando a batida…', 'Montando bateria, baixo e acordes.');
+      try {
+        const { buf, beats } = await synthBeat(style, bpm, dur);
+        const rec = await registerAsset(encodeWavStereo(buf), 'audio', `Batida ${BEAT_STYLES[style].label} ${bpm}.wav`);
+        const L = makeLayer('audio', { name: `Batida ${BEAT_STYLES[style].label}`, s: { asset: rec.id, beats, bpm } });
+        S.time = 0;
+        growForMedia(rec.duration, L);
+        hideModal();
+        addLayer(L, true);
+        renderTimeline();
+        toast(`Batida de ${bpm} BPM adicionada. Use as animações "na batida" nas camadas.`);
+      } catch (err) {
+        hideModal();
+        toast('Não consegui gerar a batida neste aparelho.');
+      }
+    } },
+  ]);
+  $('#bmStyle').onchange = e => { $('#bmBpm').value = BEAT_STYLES[e.target.value].bpm; };
+}
+
+/* ---------- gravar narração ---------- */
+function recordVoiceModal() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+    showModal('Gravação indisponível', '<p>Este navegador não permite gravar o microfone. Tente no Chrome ou no Safari atualizados.</p>', [{ label: 'Entendi', cls: 'btn-primary' }]);
+    return;
+  }
+  let stream = null, rec = null, chunks = [], startAt = 0, t0 = 0, raf = 0, an = null, ac = null;
+  const stopAll = () => {
+    cancelAnimationFrame(raf);
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stream = null;
+    if (ac) { ac.close().catch(() => {}); ac = null; }
+    if (S.playing) pause();
+  };
+  showModal('Gravar narração', `
+    <p>A voz entra como uma camada de som a partir do cursor (${fmtTime(S.time)}).</p>
+    <canvas id="vuMeter" class="vu" width="400" height="36" aria-hidden="true"></canvas>
+    <p class="rec-time" id="recTime">00:00.0</p>
+    <label class="check"><input type="checkbox" id="recPlay" checked> Tocar o vídeo enquanto gravo (use fone de ouvido)</label>`, [
+    { label: 'Cancelar', onClick: () => { if (rec && rec.state !== 'inactive') { rec.onstop = null; rec.stop(); } stopAll(); } },
+    { label: 'Gravar', cls: 'btn-primary', keepOpen: true, onClick: async () => {
+      const btn = $('#modalActions .btn-primary');
+      if (rec && rec.state === 'recording') { rec.stop(); btn.disabled = true; return; }
+      try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
+      catch { toast('Sem permissão para usar o microfone.'); return; }
+      ac = new (window.AudioContext || window.webkitAudioContext)();
+      an = ac.createAnalyser(); an.fftSize = 512;
+      ac.createMediaStreamSource(stream).connect(an);
+      const data = new Uint8Array(an.fftSize);
+      const cv = $('#vuMeter'), g = cv.getContext('2d');
+      const draw = () => {
+        an.getByteTimeDomainData(data);
+        let peak = 0; for (const v of data) peak = Math.max(peak, Math.abs(v - 128) / 128);
+        g.clearRect(0, 0, cv.width, cv.height);
+        g.fillStyle = theme.accent || '#d3f88a';
+        g.fillRect(0, 8, cv.width * Math.min(1, peak * 1.6), cv.height - 16);
+        const el = $('#recTime'); if (el) el.textContent = fmtTime((performance.now() - t0) / 1000).slice(0, -1);
+        raf = requestAnimationFrame(draw);
+      };
+      const types = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm', 'audio/ogg'];
+      const mime = types.find(t => MediaRecorder.isTypeSupported(t)) || '';
+      rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+      chunks = [];
+      rec.ondataavailable = e => e.data && e.data.size && chunks.push(e.data);
+      rec.onstop = async () => {
+        stopAll();
+        const blob = new Blob(chunks, { type: (rec.mimeType || mime || 'audio/webm').split(';')[0] });
+        if (blob.size < 200) { hideModal(); toast('A gravação saiu vazia.'); return; }
+        try {
+          const r = await registerAsset(blob, 'audio', 'Narração');
+          const L = makeLayer('audio', { name: 'Narração', s: { asset: r.id } });
+          const keep = S.time;
+          S.time = startAt;
+          growForMedia(r.duration || (performance.now() - t0) / 1000, L);
+          S.time = keep;
+          hideModal();
+          addLayer(L, true);
+          toast('Narração adicionada.');
+        } catch { hideModal(); toast('Não consegui salvar a gravação.'); }
+      };
+      startAt = S.time;
+      if ($('#recPlay').checked) play();
+      rec.start(250);
+      t0 = performance.now();
+      draw();
+      btn.textContent = 'Parar';
+    } },
+  ]);
+}
+
+/* ---------- figurinhas: emojis e ícones vetoriais ---------- */
+const EMOJIS = {
+  Rostos: '😀 😂 🥹 😍 😎 🤩 🥳 😱 🤯 😭 😡 🤔 😴 🤫 😇 🫠',
+  Gestos: '👍 👏 🙌 🙏 💪 ✌️ 🤙 👉 👀 🫶 👋 🤝',
+  Festa: '🎉 🎊 🎁 🎂 🥂 🍾 🎈 🎶 🪩 🎤 🎧 🕺',
+  Símbolos: '❤️ 🔥 ⭐ ✨ 💯 ✅ ❌ ⚡ 💥 💫 🌈 ☀️',
+  Objetos: '📸 🎬 🎵 💰 🛒 📍 ⏰ 🚀 🏆 💎 📢 🎯',
+  Comida: '🍕 🍔 🍟 🍺 🍹 ☕ 🍓 🍩 🍦 🌮 🥤 🍿',
+};
+/* ícones desenhados para este app, em uma caixa de 24×24 */
+const ICONS = {
+  coração: 'M12 21s-7.5-4.6-9.6-9.2C.9 8.4 3 4.5 6.7 4.5c2.1 0 3.5 1.1 5.3 3.1 1.8-2 3.2-3.1 5.3-3.1 3.7 0 5.8 3.9 4.3 7.3C19.5 16.4 12 21 12 21z',
+  estrela: 'M12 2.5l2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 17.3l-5.9 3.3 1.3-6.6-4.9-4.6 6.6-.8z',
+  curtir: 'M2 10h4v11H2z M8 21h9.2a2 2 0 0 0 2-1.6l1.6-7A2 2 0 0 0 18.8 10H14l.8-4.2A2.2 2.2 0 0 0 12.6 3L8 10z',
+  confirmado: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z M10.6 16.2l-4.3-4.3 1.6-1.6 2.7 2.7 6-6 1.6 1.6z',
+  play: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z M9.5 7.5v9l7-4.5z',
+  sino: 'M12 22a2.5 2.5 0 0 0 2.4-2h-4.8a2.5 2.5 0 0 0 2.4 2z M19 16v-5a7 7 0 0 0-5.5-6.8V3.5a1.5 1.5 0 0 0-3 0v.7A7 7 0 0 0 5 11v5l-2 2v1h18v-1z',
+  fogo: 'M12 2c1.5 3.5 6 6 6 11a6 6 0 0 1-12 0c0-2.5 1.2-4.2 2.6-5.6.1 1.9.9 3.1 2.2 3.6C10.4 8.7 10.8 5.3 12 2z',
+  raio: 'M13 2 4 14h7l-1 8 9-12h-7z',
+  local: 'M12 2a7 7 0 0 0-7 7c0 5.2 7 13 7 13s7-7.8 7-13a7 7 0 0 0-7-7z M12 11.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z',
+  balão: 'M4 4h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-5 4v-4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z',
+  coroa: 'M3 17h18l-1.5-10-4.5 4-3-6-3 6-4.5-4z M3 19h18v2.5H3z',
+  música: 'M9 17.5a2.5 2.5 0 1 1-2.5-2.5c.9 0 1.7.3 2.5.8V5l11-2v12.5a2.5 2.5 0 1 1-2.5-2.5c.9 0 1.7.3 2.5.8V6.8l-9 1.6z',
+  brilho: 'M12 2l2.2 7.8L22 12l-7.8 2.2L12 22l-2.2-7.8L2 12l7.8-2.2z',
+  seta: 'M3 10h11V5l7 7-7 7v-5H3z',
+  mais: 'M10 3h4v7h7v4h-7v7h-4v-7H3v-4h7z',
+  cursor: 'M5 2l14 8.5-6.5 1.5 4 7-2.6 1.5-4-7L5 18z',
+};
+const iconCache = new Map();
+/* caminho já centralizado na origem, para o degradê e o contorno usarem o mesmo sistema das outras formas */
+function iconPath(d) {
+  if (!iconCache.has(d)) { const p2 = new Path2D(); p2.addPath(new Path2D(d), new DOMMatrix().translate(-12, -12)); iconCache.set(d, p2); }
+  return iconCache.get(d);
+}
+function drawIcon(c, L) {
+  const s = L.s, k = s.size / 24;
+  c.save();
+  c.scale(k, k);
+  const path = iconPath(s.d || ICONS[s.iconName] || ICONS.estrela);
+  if (s.stroke > 0) { c.lineWidth = s.stroke * 2 / k; c.lineJoin = 'round'; c.strokeStyle = s.strokeColor; c.stroke(path); }
+  c.fillStyle = paint(c, s, 24, 24, s.fill);
+  c.fill(path, 'evenodd');
+  c.restore();
+  return { w: s.size, h: s.size };
+}
+
+function stickersModal() {
+  const m = Math.min(P().width, P().height);
+  showModal('Figurinhas', `
+    <div class="seg sticker-tabs"><button class="on" data-tab="emoji">Emojis</button><button data-tab="icon">Ícones</button></div>
+    <div data-pane="emoji">${Object.entries(EMOJIS).map(([cat, list]) => `<h4 class="subhead">${cat}</h4><div class="sticker-grid">${list.split(' ').map(e => `<button class="sticker" data-emoji="${e}" aria-label="${e}">${e}</button>`).join('')}</div>`).join('')}</div>
+    <div data-pane="icon" hidden><div class="sticker-grid icons">${Object.entries(ICONS).map(([name, d]) => `<button class="sticker" data-icon="${name}" title="${name}" aria-label="${name}"><svg viewBox="0 0 24 24"><path d="${d}" fill-rule="evenodd"/></svg></button>`).join('')}</div>
+      <p class="hint">Os ícones são vetoriais: aceitam cor, degradê, contorno e brilho.</p></div>`, [{ label: 'Fechar' }]);
+  $$('[data-tab]').forEach(b => (b.onclick = () => {
+    $$('[data-tab]').forEach(x => x.classList.toggle('on', x === b));
+    $$('[data-pane]').forEach(x => (x.hidden = x.dataset.pane !== b.dataset.tab));
+  }));
+  $$('[data-emoji]').forEach(b => (b.onclick = () => {
+    hideModal();
+    addLayer(makeLayer('text', { name: `Figurinha ${b.dataset.emoji}`, s: { text: b.dataset.emoji, size: Math.round(m * 0.2), weight: 400, anim: 'none' } }));
+  }));
+  $$('[data-icon]').forEach(b => (b.onclick = () => {
+    hideModal();
+    addLayer(makeLayer('icon', { name: b.dataset.icon[0].toUpperCase() + b.dataset.icon.slice(1), s: { d: ICONS[b.dataset.icon], iconName: b.dataset.icon } }));
+  }));
+}
+
 /* ======================= seleção no preview ======================= */
 function handlesOf(L) {
   const b = S.bounds.get(L.id);
@@ -1414,6 +1836,7 @@ function renderTimeline() {
     const isMajor = Math.abs(t / major - Math.round(t / major)) < 1e-6;
     html += `<div class="tick${isMajor ? ' major' : ''}" style="left:${tx(t)}px">${isMajor ? `<span>${t}s</span>` : ''}</div>`;
   }
+  html += projectBeats().map(t => `<div class="beat-mark" style="left:${tx(t)}px"></div>`).join('');
   ticks.innerHTML = html;
 
   const eyeOn = '<svg viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
@@ -1541,8 +1964,9 @@ rows.addEventListener('pointerdown', e => {
     if (mode === 'move') {
       dt = clamp(snap(dt), -s0, dur - e0);
       let ns = s0 + dt, ne = e0 + dt;
-      if (Math.abs(ns - S.time) < 8 / S.pps) { dt = S.time - s0; ns = s0 + dt; ne = e0 + dt; }
-      else if (Math.abs(ne - S.time) < 8 / S.pps) { dt = S.time - e0; ns = s0 + dt; ne = e0 + dt; }
+      const ms = magnet(ns), me = ms == null ? magnet(ne) : null;
+      if (ms != null) { dt = ms - s0; ns = s0 + dt; ne = e0 + dt; }
+      else if (me != null) { dt = me - e0; ns = s0 + dt; ne = e0 + dt; }
       L.start = ns; L.end = ne;
       if (trStart0 != null) L.s.transitionStart = trStart0 + dt;
       if (trEnd0 != null) L.s.transitionEnd = trEnd0 + dt;
@@ -1550,7 +1974,7 @@ rows.addEventListener('pointerdown', e => {
     } else if (mode === 'l') {
       const minStart = isMedia ? Math.max(0, s0 - trim0 / sp) : 0;
       let ns = clamp(snap(s0 + dt), minStart, L.end - 0.1);
-      if (Math.abs(ns - S.time) < 8 / S.pps && S.time >= minStart && S.time <= L.end - 0.1) ns = snap(S.time);
+      { const mg = magnet(ns); if (mg != null && mg >= minStart && mg <= L.end - 0.1) ns = snap(mg); }
       L.start = ns;
       if (ns !== s0) delete L.s.transitionStart;
       else if (trStart0 != null) L.s.transitionStart = trStart0;
@@ -1558,7 +1982,7 @@ rows.addEventListener('pointerdown', e => {
     } else {
       const maxEnd = isMedia ? Math.min(dur, L.start + mediaRemaining(L)) : dur;
       let ne = clamp(snap(e0 + dt), L.start + 0.1, maxEnd);
-      if (Math.abs(ne - S.time) < 8 / S.pps && S.time >= L.start + 0.1 && S.time <= maxEnd) ne = snap(S.time);
+      { const mg = magnet(ne); if (mg != null && mg >= L.start + 0.1 && mg <= maxEnd) ne = snap(mg); }
       L.end = ne;
       if (ne !== e0) delete L.s.transitionEnd;
       else if (trEnd0 != null) L.s.transitionEnd = trEnd0;
@@ -1727,6 +2151,9 @@ function layerPanel(L) {
       ${checkRow('chromaOn', 'Remover a cor de fundo')}
       <div data-show="chroma">${colorRow('chromaColor', 'Cor a remover')}${numRow('chromaTol', 'Tolerância', 0, 100)}${numRow('chromaSoft', 'Suavidade', 0, 100)}</div>` +
       `<div class="actions"><button class="btn btn-small" data-act="replace-media">Trocar arquivo</button><button class="btn btn-small" data-act="media-ratio">Proporção original</button><button class="btn btn-small" data-act="media-fill">Preencher a tela</button>${L.type === 'video' ? '<button class="btn btn-small" data-act="freeze-frame" title="Congela o quadro atual como nova camada">Congelar quadro</button>' : ''}${L.type === 'image' ? '<button class="btn btn-small btn-ai" data-act="remove-bg">Remover fundo (IA)</button>' : ''}</div>`;
+  } else if (L.type === 'icon') {
+    content = `${selectRow('iconName', 'Ícone', Object.fromEntries(Object.keys(ICONS).map(k => [k, k[0].toUpperCase() + k.slice(1)])))}
+      ${numRow('size', 'Tamanho', 4, 3000)}${fillRows('fill', 'Cor')}${numRow('stroke', 'Contorno', 0, 40)}${colorRow('strokeColor', 'Cor contorno')}`;
   } else if (L.type === 'particles') {
     content = `${selectRow('preset', 'Tipo', Object.fromEntries(Object.entries(PARTICLES).map(([k, v]) => [k, v.label])))}
       ${numRow('rate', 'Quantidade/s', 1, 300)}${numRow('life', 'Duração (s)', 0.2, 15, 0.1)}${numRow('speed', 'Velocidade', 0, 3000)}
@@ -1759,6 +2186,12 @@ function layerPanel(L) {
       ${numRow('trimIn', 'Começa em (s)', 0, Math.max(1, Math.floor(mediaSourceDur(L) === Infinity ? 60 : mediaSourceDur(L))), 0.1)}
       <p class="hint">${info}</p>
       ${rec && rec.buffer ? '<div class="actions"><button class="btn btn-small btn-ai" data-act="captions">Gerar legendas (IA)</button></div>' : ''}
+      ${rec && rec.buffer ? `<h4 class="subhead">Ritmo</h4>
+        ${s.beats && s.beats.length ? `<p class="hint">${s.bpm ? s.bpm + ' BPM · ' : ''}${beatsOf(L).length} batidas marcadas na linha do tempo. Os blocos grudam nelas ao arrastar.</p>` : '<p class="hint">Marque as batidas para cortar e animar no ritmo.</p>'}
+        <div class="actions"><button class="btn btn-small" data-act="beats">${s.beats && s.beats.length ? 'Detectar de novo' : 'Detectar batidas'}</button>
+        ${s.beats && s.beats.length ? '<button class="btn btn-small" data-act="beats-clear">Limpar batidas</button>' : ''}</div>
+        ${s.beats && s.beats.length ? `<div class="row plain"><label for="montEvery">Montagem</label><select class="field" id="montEvery"><option value="1">Trocar a cada batida</option><option value="2" selected>A cada 2 batidas</option><option value="4">A cada 4 batidas</option></select></div>
+        <div class="actions"><button class="btn btn-small btn-primary" data-act="montage">Montar fotos e vídeos na batida</button></div>` : ''}` : ''}
       ${L.type === 'audio' ? '<div class="actions"><button class="btn btn-small" data-act="replace-media">Trocar arquivo</button><button class="btn btn-small" data-act="fit-project">Projeto do tamanho da música</button></div>' : ''}
     </div>`;
   }
@@ -1819,6 +2252,9 @@ function layerPanel(L) {
       <button data-preset="camShake">Tremor de câmera</button>
     </div>
     <button class="btn btn-small" data-preset="clear">Remover movimento</button>
+  </div>` : ''}
+  ${visual && L.type !== 'camera' && projectBeats().length ? `<div class="sec"><h3>Na batida</h3>
+    <div class="presets"><button data-beat="beatPulse">Pulsar</button><button data-beat="beatFlash">Piscar luz</button><button data-beat="beatShake">Tremer</button></div>
   </div>` : ''}
   ${L.type === 'fx' ? `<div class="sec"><h3>Animações prontas</h3><div class="presets"><button data-preset="fadeIn">Aparecer suave</button><button data-preset="fadeOut">Sumir no final</button></div></div>` : ''}
   ${visual && !special ? `<div class="sec"><h3>Animações prontas</h3>
@@ -1907,6 +2343,7 @@ panel.addEventListener('input', e => {
     else if (el.type === 'number' || el.type === 'range') { v = parseFloat(el.value); if (Number.isNaN(v)) return; }
     else v = el.value;
     if (key === 'trimIn') v = clamp(v, 0, Math.max(0, mediaSourceDur(L) - 0.1));
+    if (key === 'iconName' && ICONS[v]) L.s.d = ICONS[v];
     if (key === 'speed') {
       v = clamp(parseFloat(v) || 1, 0.25, 4);
       const old = Number(L.s.speed) || 1;
@@ -1979,6 +2416,10 @@ panel.addEventListener('click', e => {
   const b = e.target.closest('button');
   if (!b) return;
   const L = selLayer();
+  if (b.dataset.beat && L) {
+    if (applyBeatPreset(L, b.dataset.beat)) { commit(); renderTimeline(); refreshTime(); toast('Animação na batida aplicada.'); }
+    return;
+  }
   if (b.dataset.kf && L) {
     toggleKf(L, b.dataset.kf);
     commit(); renderTimeline(); refreshTime();
@@ -2007,6 +2448,9 @@ panel.addEventListener('click', e => {
       S.selKf = null; renderTimeline(); renderPanel();
     } else if (act === 'split' && L) splitLayer(L);
     else if (act === 'open-code') codeModal();
+    else if (act === 'beats' && L) analyzeBeats(L);
+    else if (act === 'beats-clear' && L) { delete L.s.beats; delete L.s.bpm; commit(); renderTimeline(); renderPanel(); }
+    else if (act === 'montage') beatMontage(+(($('#montEvery', panel) || {}).value || 2));
     else if (act === 'path-mask' && L) {
       const ls = P().layers, above = ls[ls.indexOf(L) - 1];
       if (!above || !VISUAL(above.type)) toast('Não há camada visível logo acima deste traço.');
@@ -3474,14 +3918,14 @@ function codeWorkerMain() {
       var gsap = self.gsap || (self.window && self.window.gsap);
       if (!gsap) throw new Error('Não consegui carregar o GSAP. Confira a internet.');
       var tl = gsap.timeline({ defaults: { duration: 0.8, ease: 'power3.out' } });
-      var run = new Function('gsap', 'tl', 'layer', 'layers', 'add', 'every', 'duration', 'background', 'W', 'H', 'D', 'FPS', 'random', 'console', '"use strict";\n' + d.code);
+      var run = new Function('gsap', 'tl', 'layer', 'layers', 'add', 'every', 'duration', 'background', 'W', 'H', 'D', 'FPS', 'random', 'console', 'beats', '"use strict";\n' + d.code);
       run(gsap, tl, layer, layers, add,
         function (f) { if (typeof f !== 'function') throw new Error('every() precisa de uma função, ex.: every(t => { ... })'); fns.push(f); },
         function (sec) { req.duration = Number(sec); },
         function (c) { req.background = String(c); },
         d.W, d.H, d.D, d.FPS,
         function (a, b) { if (b === undefined) { b = a; a = 0; } return a + Math.random() * (b - a); },
-        { log: say, info: say, warn: say, error: say });
+        { log: say, info: say, warn: say, error: say }, (d.beats || []).slice());
       var dur = req.duration > 0 ? Math.min(600, Math.max(0.5, req.duration)) : d.D;
       var root = gsap.exportRoot();
       root.pause();
@@ -3654,7 +4098,7 @@ async function applyCode(code) {
   const p = P();
   const exposed = p.layers.filter(L => VISUAL(L.type) && !L.fromCode);
   const res = await runCodeSandbox({
-    code, W: p.width, H: p.height, D: p.duration, FPS: p.fps,
+    code, W: p.width, H: p.height, D: p.duration, FPS: p.fps, beats: projectBeats(),
     layers: exposed.map(L => ({ name: L.name, type: L.type, start: L.start, end: L.end, init: codeInit(L) })),
   });
   const stats = bakeCode(res, exposed, code);
@@ -3740,6 +4184,7 @@ function codeHelpHTML() {
     <p><code>tl</code> é uma linha do tempo do GSAP (padrão 0,8 s e <code>power3.out</code>). <code>gsap</code> também está disponível.</p>
     <p>Propriedades: <code>x</code>, <code>y</code> (centro, em px), <code>scale</code> (1 = normal), <code>rotation</code> (graus), <code>opacity</code> (0 a 1), <code>blur</code>, <code>glow</code>, <code>brightness</code>/<code>contrast</code>/<code>saturate</code> (1 = normal), <code>hue</code>, <code>draw</code> (0 a 1, traços).</p>
     <p><code>add(tipo, opções)</code> cria camada: <code>'text'</code>, <code>'rect'</code>, <code>'ellipse'</code>, <code>'star'</code>, <code>'path'</code>. As opções aceitam os campos do painel (text, font, size, color, fill, w, h, points, stroke…).</p>
+    <p><code>beats</code> é a lista de tempos (em segundos) das batidas marcadas na música, ex.: <code>beats.forEach(b =&gt; tl.fromTo(alvo, { scale: 1.2 }, { scale: 1, duration: 0.25 }, b))</code>.</p>
     <p><code>every(t =&gt; { … })</code> roda a cada quadro. Também: <code>W</code>, <code>H</code>, <code>D</code> (duração), <code>FPS</code>, <code>duration(s)</code>, <code>background('#hex')</code>, <code>random(min, max)</code>, e <code>.start</code>/<code>.end</code> de cada camada.</p>
     <p>O código roda isolado: não acessa seus arquivos nem sua chave. Camadas criadas pelo código são recriadas a cada vez que você aplica.</p>
   </div>`;
@@ -3828,6 +4273,7 @@ AMBIENTE (já existe, não importe nada, não use DOM, seletores CSS, ScrollTrig
 - Propriedades animáveis: x, y (centro em px), scale (1 = normal), rotation (graus), opacity (0 a 1, autoAlpha também funciona), blur (px), glow (0 a 150), brightness/contrast/saturate (1 = normal), hue (graus), draw (0 a 1, só path).
 - add(tipo, opções) cria camada e devolve o alvo. Tipos: 'text' (text, font: ${FONTS.join('|')}, size, weight, color, glowColor, stroke, strokeColor), 'rect' (w, h, radius, fill), 'ellipse' (w, h, fill), 'star' (w, points, inner, fill), 'path' (points: [[x,y],...] relativos ao centro, stroke, width). As opções também aceitam x, y, scale, opacity etc. como valor inicial e name, start, end.
 - every(t => {...}) roda a cada quadro para movimento com matemática.
+- beats: array com os tempos (s) das batidas da música do projeto (${projectBeats().length} batidas${projectBeats().length ? ', a primeira em ' + projectBeats()[0] + 's' : ''}). Use para sincronizar com o ritmo.
 - W=${p.width}, H=${p.height}, D=${p.duration} (duração em s), FPS=${p.fps}. duration(s) muda a duração. background('#rrggbb'). random(min, max) é determinístico. Cada alvo tem .start e .end (tempo em que a camada aparece).
 
 CAMADAS DO PROJETO:
@@ -3868,6 +4314,9 @@ async function aiWriteCode(ask) {
   }
 }
 $('#btnCode').onclick = codeModal;
+$('#btnBeats').onclick = beatMakerModal;
+$('#btnVoice').onclick = recordVoiceModal;
+$('#btnStickers').onclick = stickersModal;
 
 /* ======================= menu ======================= */
 const menu = $('#menu');
@@ -3948,7 +4397,8 @@ function showModal(title, body, actions = []) {
   });
   $('#modal').hidden = false;
   const first = box.querySelector('.btn-primary') || box.querySelector('button');
-  first && first.focus();
+  first && first.focus({ preventScroll: true });
+  $('.modal-card').scrollTop = 0;
 }
 function hideModal() { $('#modal').hidden = true; $('#modalBody').innerHTML = ''; }
 
