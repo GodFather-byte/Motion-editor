@@ -105,7 +105,7 @@ const BLENDS = {
   'source-over': 'Normal', screen: 'Tela (clarear)', multiply: 'Multiplicar', overlay: 'Sobrepor',
   lighter: 'Somar luz', 'soft-light': 'Luz suave', difference: 'Diferença', 'color-dodge': 'Subexposição de cor',
 };
-const TYPE_NAMES = { text: 'Texto', rect: 'Retângulo', ellipse: 'Círculo', star: 'Estrela', path: 'Traço', image: 'Imagem', video: 'Vídeo', audio: 'Áudio', group: 'Grupo' };
+const TYPE_NAMES = { text: 'Texto', rect: 'Retângulo', ellipse: 'Círculo', star: 'Estrela', path: 'Traço', image: 'Imagem', video: 'Vídeo', audio: 'Áudio', group: 'Grupo', particles: 'Partículas', fx: 'Efeito', camera: 'Câmera' };
 const VISUAL = t => t !== 'audio';
 const MEDIA = t => t === 'video' || t === 'audio';
 const STORE_KEY = 'motion-editor:v1';
@@ -356,17 +356,21 @@ function newProject(aspect = '9:16') {
 
 function defaultS(type) {
   const p = P(), m = Math.min(p.width, p.height);
-  const look = { blend: 'source-over', clip: false, shadowX: 0, shadowY: 0, shadowBlur: 0, shadowColor: '#000000', shadowOpacity: 60, fillType: 'solid', gradAngle: 90, flipH: false, flipV: false, colorLook: 'none', lookIntensity: 100, transitionIn: 'none', transitionOut: 'none', transitionInDuration: 0.5, transitionOutDuration: 0.5 };
+  const chroma = { chromaOn: false, chromaColor: '#00ff00', chromaTol: 30, chromaSoft: 10 };
+  const look = { blend: 'source-over', clip: false, shadowX: 0, shadowY: 0, shadowBlur: 0, shadowColor: '#000000', shadowOpacity: 60, fillType: 'solid', gradAngle: 90, flipH: false, flipV: false, colorLook: 'none', lookIntensity: 100, transitionIn: 'none', transitionOut: 'none', transitionInDuration: 0.5, transitionOutDuration: 0.5, parallax: 100 };
   const framing = { mediaFit: 'stretch', focalX: 50, focalY: 50 };
   const media = { asset: null, trimIn: 0, volume: 100, fadeIn: 0, fadeOut: 0, speed: 1, muted: false };
   switch (type) {
-    case 'text': return { ...look, text: 'Seu texto', font: 'Montserrat', size: Math.round(m * 0.11), weight: 900, color: '#ffffff', fill2: '#ffb547', align: 'center', stroke: 0, strokeColor: '#000000', glowColor: '#ffb547', anim: 'none' };
+    case 'text': return { ...look, text: 'Seu texto', font: 'Montserrat', size: Math.round(m * 0.11), weight: 900, color: '#ffffff', fill2: '#ffb547', align: 'center', stroke: 0, strokeColor: '#000000', glowColor: '#ffb547', anim: 'none', curve: 0, onPath: '', pathStart: 0 };
     case 'rect': return { ...look, w: Math.round(m * 0.4), h: Math.round(m * 0.4), radius: 28, fill: '#ff8f6b', fill2: '#b89cff', glowColor: '#ff8f6b' };
     case 'ellipse': return { ...look, w: Math.round(m * 0.36), h: Math.round(m * 0.36), fill: '#b89cff', fill2: '#6fd8ff', glowColor: '#b89cff' };
     case 'star': return { ...look, w: Math.round(m * 0.4), points: 5, inner: 0.45, fill: '#ffb547', fill2: '#ff6b4a', glowColor: '#ffb547' };
     case 'path': return { ...look, points: [], stroke: '#ffb547', width: Math.max(4, Math.round(m * 0.012)), fillOn: false, fill: '#ffb547', fill2: '#ff6b4a', glowColor: '#ffb547' };
-    case 'image': return { ...look, ...framing, asset: null, w: 400, h: 400, glowColor: '#ffffff' };
-    case 'video': return { ...look, ...framing, ...media, w: 800, h: 450, glowColor: '#ffffff' };
+    case 'image': return { ...look, ...framing, ...chroma, asset: null, w: 400, h: 400, glowColor: '#ffffff' };
+    case 'video': return { ...look, ...framing, ...media, ...chroma, w: 800, h: 450, glowColor: '#ffffff' };
+    case 'particles': { const pr = PARTICLES.confetti; return { ...look, preset: 'confetti', ...Object.fromEntries(PARTICLE_KEYS.map(k => [k, pr[k]])), areaW: Math.round(p.width * 0.6), colorMode: 'preset', color1: '#ffb547', color2: '#6fd8ff', glowColor: '#ffb547' }; }
+    case 'fx': return { effect: 'vignette', amount: 60, blend: 'source-over', clip: false };
+    case 'camera': return { blend: 'source-over', clip: false };
     case 'audio': return { ...media };
     case 'group': return { blend: 'source-over', clip: false };
   }
@@ -492,7 +496,7 @@ function transitionState(L, t) {
 const localMatrix = (L, t) => { const sc = val(L, 'scale', t) / 100 * transitionState(L, t).zoom; return new DOMMatrix().translate(val(L, 'x', t), val(L, 'y', t)).rotate(val(L, 'rotation', t)).scale(sc, sc); };
 function parentMatrix(L, t, depth = 0) {
   const par = L.parent && byId(L.parent);
-  return par && depth < 16 ? worldMatrix(par, t, depth + 1) : new DOMMatrix();
+  return par && depth < 16 ? worldMatrix(par, t, depth + 1) : cameraMatrix(L, t);
 }
 function worldMatrix(L, t, depth = 0) { return parentMatrix(L, t, depth).multiply(localMatrix(L, t)); }
 function worldOpacity(L, t) {
@@ -554,7 +558,11 @@ function drawText(c, L, local) {
   c.font = `${s.weight} ${s.size}px "${s.font}", sans-serif`;
   c.textBaseline = 'middle';
   c.textAlign = 'left';
-  const lines = String(s.text || ' ').split('\n');
+  const pathL = s.onPath ? byId(s.onPath) : null;
+  const pathPts = pathL && pathL.type === 'path' ? textPathPoints(L, pathL, local + L.start) : null;
+  const arc = !pathPts && Math.abs(s.curve || 0) >= 1;
+  // no traço o texto vira uma linha só
+  const lines = pathPts ? [String(s.text || ' ').replace(/\n/g, ' ')] : String(s.text || ' ').split('\n');
   const lh = s.size * 1.15;
   const widths = lines.map(l => c.measureText(l).width);
   const bw = Math.max(s.size * 0.5, ...widths), bh = lh * lines.length;
@@ -572,7 +580,7 @@ function drawText(c, L, local) {
     const lw = widths[li];
     const x0 = s.align === 'left' ? -bw / 2 : s.align === 'right' ? bw / 2 - lw : -lw / 2;
     const chars = [...line];
-    if (s.anim === 'none' || !s.anim) { str(line, x0, ly); ci += chars.length; return; }
+    if ((s.anim === 'none' || !s.anim) && !arc && !pathPts) { str(line, x0, ly); ci += chars.length; return; }
     let acc = '';
     for (const ch of chars) {
       const cx = x0 + c.measureText(acc).width;
@@ -603,9 +611,22 @@ function drawText(c, L, local) {
         a = off ? 0.18 : 1;
       }
       if (a <= 0 || sc <= 0) continue;
+      let px = cx + cw / 2, py = ly, ang = 0;
+      if (pathPts) {
+        const q = pointOnPath(pathPts, pathPts.total * clamp(s.pathStart || 0, 0, 100) / 100 + (cx - x0) + cw / 2);
+        if (!q) continue;
+        px = q.x; py = q.y; ang = q.a;
+      } else if (arc) {
+        // curva: o centro da linha fica no topo (ou no fundo) de um arco
+        const sg = Math.sign(s.curve), R = Math.max(lw, 1) / (Math.abs(s.curve) / 100 * Math.PI);
+        const th = ((cx - x0) + cw / 2 - lw / 2) / R;
+        px = x0 + lw / 2 + R * Math.sin(th); py = ly + sg * (R - R * Math.cos(th)); ang = sg * th;
+      }
       c.save();
       c.globalAlpha *= a;
-      c.translate(cx + cw / 2 + dx, ly + dy);
+      c.translate(px, py);
+      if (ang) c.rotate(ang);
+      c.translate(dx, dy);
       if (sc !== 1) c.scale(sc, sc);
       if (chroma) {
         const keep = c.fillStyle, k = s.size * 0.035;
@@ -619,6 +640,16 @@ function drawText(c, L, local) {
       c.restore();
     }
   });
+  if (pathPts) {
+    let mx = s.size, my = s.size;
+    for (const q of pathPts.pts) { mx = Math.max(mx, Math.abs(q.x)); my = Math.max(my, Math.abs(q.y)); }
+    return { w: mx * 2 + s.size, h: my * 2 + s.size };
+  }
+  if (arc) {
+    const R = Math.max(bw, 1) / (Math.abs(s.curve) / 100 * Math.PI);
+    const sag = R - R * Math.cos(Math.min(Math.PI, bw / 2 / R));
+    return { w: bw + s.size, h: bh + sag * 2 + s.size };
+  }
   return { w: bw, h: bh };
 }
 
@@ -668,6 +699,8 @@ function drawMissing(c, w, h, label) {
 }
 
 function drawFramedMedia(c, source, sw, sh, s) {
+  const keyed = chromaSource(source, sw, sh, s);
+  if (keyed) ({ source, sw, sh } = keyed);
   const { w, h } = s;
   if (s.mediaFit === 'cover') {
     const k = Math.max(w / sw, h / sh), cw = w / k, ch = h / k;
@@ -702,6 +735,7 @@ function drawShape(c, L, local) {
       starPath(c, s.w / 2, Math.round(s.points), s.inner); c.fill();
       return { w: s.w, h: s.w };
     case 'path': return drawPath(c, L, local + L.start);
+    case 'particles': return drawParticles(c, L, local);
     case 'image': {
       const rec = A.get(s.asset);
       if (rec && rec.el && rec.el.naturalWidth) drawFramedMedia(c, rec.el, rec.el.naturalWidth, rec.el.naturalHeight, s);
@@ -726,6 +760,13 @@ function drawLayer(c, L, t, comp) {
   const op = worldOpacity(L, t);
   if (op <= 0 || mScale(m) < 1e-6) { S.bounds.delete(L.id); return; }
   if (L.type === 'group') { S.bounds.set(L.id, { w: 160, h: 160 }); return; }
+  if (L.type === 'fx') { S.bounds.delete(L.id); return; }
+  if (L.type === 'camera') {
+    // a moldura mostra a área que a câmera enxerga: o tamanho do quadro dividido pelo zoom
+    const sc = Math.max(0.01, val(L, 'scale', t) / 100), p = P();
+    S.bounds.set(L.id, { w: p.width / (sc * sc), h: p.height / (sc * sc) });
+    return;
+  }
   const s = L.s;
   const f = [];
   const blur = Math.max(0, val(L, 'blur', t));
@@ -788,6 +829,7 @@ function renderFrame(c, t, opt = {}) {
   let i = ls.length - 1;
   while (i >= 0) {
     const base = ls[i];
+    if (base.type === 'fx') { applyFx(c, base, t); i--; continue; }
     const clipped = [];
     let j = i - 1;
     while (j >= 0 && ls[j].s && ls[j].s.clip && VISUAL(ls[j].type)) clipped.push(ls[j--]);
@@ -816,6 +858,260 @@ function renderMain(t = S.time) {
   const w = Math.max(2, Math.round(p.width * k)), h = Math.max(2, Math.round(p.height * k));
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
   renderFrame(ctx, t, { k });
+}
+
+/* ======================= efeitos (WebGL), partículas e câmera ======================= */
+/* GL: um único canvas WebGL compartilhado que aplica um shader a qualquer imagem (canvas, vídeo, imagem)
+   e devolve o resultado para ser desenhado com drawImage no canvas 2D. Sem WebGL, os efeitos são ignorados. */
+const FX_EFFECTS = {
+  vignette: 'Vinheta', grain: 'Granulação', vhs: 'VHS', glitch: 'Glitch', rgb: 'Separação RGB', pixelate: 'Pixelado', wave: 'Ondas',
+};
+const GL_VERT = 'attribute vec2 p; varying vec2 uv; void main(){ uv = p * 0.5 + 0.5; gl_Position = vec4(p, 0.0, 1.0); }';
+const GL_HEAD = `precision mediump float;
+varying vec2 uv; uniform sampler2D tex; uniform vec2 res; uniform float time; uniform float amount;
+float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+`;
+const GL_FRAG = {
+  vignette: `void main(){ vec4 c = texture2D(tex, uv); float d = length((uv - 0.5) * vec2(res.x / res.y, 1.0)) * 1.25;
+    c.rgb *= 1.0 - amount * smoothstep(0.3, 1.0, d); gl_FragColor = c; }`,
+  grain: `void main(){ vec4 c = texture2D(tex, uv); float n = hash(floor(uv * res) + floor(time * 24.0) * 17.0) - 0.5;
+    c.rgb += n * amount * 0.35; gl_FragColor = c; }`,
+  vhs: `void main(){ float line = floor(uv.y * res.y / 3.0); float f = floor(time * 30.0);
+    float jit = (hash(vec2(line, f)) - 0.5) * 0.006 * amount;
+    float band = smoothstep(0.0, 0.02, abs(fract(uv.y - time * 0.12) - 0.5) - 0.46);
+    vec2 u = uv + vec2(jit + (1.0 - band) * 0.01 * amount, 0.0);
+    float o = 0.004 * amount;
+    vec4 c = texture2D(tex, u);
+    c.r = texture2D(tex, u + vec2(o, 0.0)).r; c.b = texture2D(tex, u - vec2(o, 0.0)).b;
+    float l = dot(c.rgb, vec3(0.299, 0.587, 0.114));
+    c.rgb = mix(c.rgb, vec3(l), 0.25 * amount);
+    c.rgb *= 1.0 - amount * 0.18 * (0.5 + 0.5 * sin(uv.y * res.y * 2.2));
+    c.rgb += (hash(uv * res + f) - 0.5) * 0.12 * amount;
+    gl_FragColor = c; }`,
+  glitch: `void main(){ float f = floor(time * 12.0); float b = floor(uv.y * 24.0 + hash(vec2(f, 1.0)) * 6.0);
+    float on = step(1.0 - 0.3 * amount, hash(vec2(b, f)));
+    float sh = (hash(vec2(b, f + 3.0)) - 0.5) * 0.18 * amount * on;
+    vec2 u = vec2(fract(uv.x + sh), uv.y); float o = (0.006 + 0.02 * on) * amount;
+    vec4 c = texture2D(tex, u);
+    c.r = texture2D(tex, u + vec2(o, 0.0)).r; c.b = texture2D(tex, u - vec2(o, 0.0)).b;
+    gl_FragColor = c; }`,
+  rgb: `void main(){ vec2 o = vec2(0.012, 0.004) * amount; vec4 c = texture2D(tex, uv);
+    c.r = texture2D(tex, uv + o).r; c.b = texture2D(tex, uv - o).b; gl_FragColor = c; }`,
+  pixelate: `void main(){ float cell = mix(1.0, 64.0, amount); vec2 u = (floor(uv * res / cell) + 0.5) * cell / res;
+    gl_FragColor = texture2D(tex, u); }`,
+  wave: `void main(){ vec2 u = uv; u.x += sin(uv.y * 18.0 + time * 4.0) * 0.012 * amount; u.y += cos(uv.x * 14.0 + time * 3.0) * 0.012 * amount;
+    gl_FragColor = texture2D(tex, clamp(u, 0.0, 1.0)); }`,
+  chroma: `uniform vec3 key; uniform float tol; uniform float soft;
+    vec2 cbcr(vec3 c){ return vec2(-0.168736 * c.r - 0.331264 * c.g + 0.5 * c.b, 0.5 * c.r - 0.418688 * c.g - 0.081312 * c.b); }
+    void main(){ vec4 c = texture2D(tex, uv); float d = distance(cbcr(c.rgb), cbcr(key));
+      float a = smoothstep(tol, tol + soft + 0.001, d);
+      float l = dot(c.rgb, vec3(0.299, 0.587, 0.114));
+      c.rgb = mix(vec3(l), c.rgb, 0.4 + 0.6 * a);
+      gl_FragColor = vec4(c.rgb, c.a * a); }`,
+};
+const GL = (() => {
+  let cv = null, gl = null, buf = null, tex = null, failed = false;
+  const progs = {};
+  function init() {
+    if (gl || failed) return !!gl;
+    try {
+      cv = document.createElement('canvas');
+      gl = cv.getContext('webgl', { premultipliedAlpha: false, preserveDrawingBuffer: true, antialias: false });
+    } catch { gl = null; }
+    if (!gl) { failed = true; return false; }
+    buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    return true;
+  }
+  function program(name) {
+    if (progs[name]) return progs[name];
+    const sh = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; };
+    const pr = gl.createProgram();
+    gl.attachShader(pr, sh(gl.VERTEX_SHADER, GL_VERT));
+    gl.attachShader(pr, sh(gl.FRAGMENT_SHADER, GL_HEAD + GL_FRAG[name]));
+    gl.linkProgram(pr);
+    if (!gl.getProgramParameter(pr, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(pr));
+    progs[name] = pr;
+    return pr;
+  }
+  /* aplica o shader "name" em source e devolve um canvas w×h (ou null se não der) */
+  function run(name, source, w, h, u = {}) {
+    if (!GL_FRAG[name] || !init()) return null;
+    try {
+      if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+      gl.viewport(0, 0, w, h);
+      const pr = program(name);
+      gl.useProgram(pr);
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      const loc = gl.getAttribLocation(pr, 'p');
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+      const set = (n, fn, ...v) => { const l = gl.getUniformLocation(pr, n); if (l) gl[fn](l, ...v); };
+      set('tex', 'uniform1i', 0);
+      set('res', 'uniform2f', w, h);
+      set('time', 'uniform1f', u.time || 0);
+      set('amount', 'uniform1f', u.amount ?? 1);
+      if (u.key) set('key', 'uniform3f', ...u.key);
+      if (u.tol != null) set('tol', 'uniform1f', u.tol);
+      if (u.soft != null) set('soft', 'uniform1f', u.soft);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      return cv;
+    } catch { return null; }
+  }
+  return { run, ok: () => init() };
+})();
+
+const hexRGB = hex => { const n = parseInt(String(hex).replace('#', ''), 16) || 0; return [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255]; };
+
+/* chroma key: troca a fonte da mídia por uma versão sem a cor escolhida */
+function chromaSource(source, sw, sh, s) {
+  if (!s.chromaOn) return null;
+  const k = Math.min(1, 1280 / Math.max(sw, sh));
+  const w = Math.max(2, Math.round(sw * k)), h = Math.max(2, Math.round(sh * k));
+  const out = GL.run('chroma', source, w, h, { key: hexRGB(s.chromaColor || '#00ff00'), tol: clamp(s.chromaTol ?? 30, 0, 100) / 400, soft: clamp(s.chromaSoft ?? 10, 0, 100) / 400 });
+  return out ? { source: out, sw: w, sh: h } : null;
+}
+
+/* camada de efeito: aplica o shader em tudo o que já foi desenhado abaixo dela */
+function applyFx(c, L, t) {
+  if (!L.visible || t < L.start || t > L.end) return;
+  const op = worldOpacity(L, t);
+  if (op <= 0) return;
+  const w = c.canvas.width, h = c.canvas.height;
+  const out = GL.run(L.s.effect || 'vignette', c.canvas, w, h, { time: t - L.start, amount: clamp(L.s.amount ?? 60, 0, 100) / 100 });
+  if (!out) return;
+  c.save();
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  c.filter = 'none';
+  c.globalAlpha = op;
+  c.globalCompositeOperation = op >= 0.999 ? 'copy' : 'source-over';
+  c.drawImage(out, 0, 0, w, h);
+  c.restore();
+}
+
+/* ---------- partículas: simulação sem estado (cada quadro é calculado direto do tempo) ---------- */
+const PARTICLES = {
+  confetti: { label: 'Confete', rate: 45, life: 3.2, speed: 1100, spread: 50, direction: -90, gravity: 1500, size: 22, areaW: 300, areaH: 20, shape: 'confetti', colors: ['#ff5a5f', '#ffb547', '#6fd8ff', '#7ee0a8', '#b89cff'] },
+  sparks: { label: 'Faíscas', rate: 70, life: 0.9, speed: 750, spread: 360, direction: 0, gravity: 700, size: 7, areaW: 30, areaH: 30, shape: 'spark', colors: ['#ffe27a', '#ff8a3d'] },
+  snow: { label: 'Neve', rate: 28, life: 9, speed: 140, spread: 20, direction: 90, gravity: 15, size: 12, areaW: 1200, areaH: 20, shape: 'dot', wobble: 50, colors: ['#ffffff', '#dfe8ff'] },
+  smoke: { label: 'Fumaça', rate: 9, life: 4.5, speed: 140, spread: 35, direction: -90, gravity: -25, size: 200, areaW: 220, areaH: 30, shape: 'puff', grow: 1.6, colors: ['#cfd3e0', '#9aa0b4'] },
+  bubbles: { label: 'Bolhas', rate: 10, life: 6, speed: 170, spread: 25, direction: -90, gravity: -30, size: 36, areaW: 900, areaH: 20, shape: 'ring', wobble: 30, colors: ['#9fe7ff', '#ffffff'] },
+  twinkle: { label: 'Brilhos', rate: 22, life: 1.6, speed: 40, spread: 360, direction: 0, gravity: 0, size: 30, areaW: 900, areaH: 900, shape: 'twinkle', colors: ['#fff6c9', '#ffb547'] },
+};
+const PARTICLE_KEYS = ['rate', 'life', 'speed', 'spread', 'direction', 'gravity', 'size', 'areaW', 'areaH'];
+const seedOf = id => { let h = 2166136261; for (const ch of String(id)) h = Math.imul(h ^ ch.charCodeAt(0), 16777619); return (h >>> 0) / 4294967296 * 1000; };
+
+function drawParticles(c, L, local) {
+  const s = L.s, pre = PARTICLES[s.preset] || PARTICLES.confetti;
+  const rate = clamp(s.rate, 0, 400), life = clamp(s.life, 0.1, 30);
+  const colors = s.colorMode === 'custom' ? [s.color1, s.color2] : pre.colors;
+  const seed = seedOf(L.id);
+  const first = Math.max(0, Math.floor((local - life) * rate)), last = Math.floor(local * rate);
+  const max = 2500;
+  const g = s.gravity, sz = s.size;
+  for (let i = Math.max(first, last - max); i <= last; i++) {
+    const a = local - i / rate;
+    if (a < 0 || a > life) continue;
+    const r = k => rand(seed + i * 13.37 + k * 7.17);
+    const ang = (s.direction + (r(3) - 0.5) * s.spread) * Math.PI / 180;
+    const spd = s.speed * (0.45 + r(4) * 0.8);
+    const wob = (pre.wobble || 0) * Math.sin(a * 2 + r(5) * 6.28);
+    const x = (r(1) - 0.5) * s.areaW + Math.cos(ang) * spd * a + wob;
+    const y = (r(2) - 0.5) * s.areaH + Math.sin(ang) * spd * a + 0.5 * g * a * a;
+    const u = a / life;
+    const fade = Math.min(1, u / 0.08, (1 - u) / 0.3);
+    if (fade <= 0) continue;
+    const size = sz * (0.55 + r(6) * 0.9) * (pre.grow ? 1 + pre.grow * u : 1);
+    const col = colors[Math.floor(r(7) * colors.length) % colors.length] || '#ffffff';
+    c.save();
+    c.globalAlpha *= fade;
+    c.translate(x, y);
+    switch (pre.shape) {
+      case 'confetti': {
+        c.rotate((r(8) * 360 + (r(9) - 0.5) * 900 * a) * Math.PI / 180);
+        c.scale(1, Math.cos(a * (4 + r(10) * 6)));
+        c.fillStyle = col; c.fillRect(-size / 2, -size / 4, size, size / 2);
+        break;
+      }
+      case 'spark': {
+        const vx = Math.cos(ang) * spd, vy = Math.sin(ang) * spd + g * a;
+        const len = Math.hypot(vx, vy) || 1, tail = size * 5;
+        c.globalCompositeOperation = 'lighter';
+        c.strokeStyle = col; c.lineWidth = size * 0.6; c.lineCap = 'round';
+        c.beginPath(); c.moveTo(0, 0); c.lineTo(-vx / len * tail, -vy / len * tail); c.stroke();
+        break;
+      }
+      case 'dot':
+        c.fillStyle = col; c.beginPath(); c.arc(0, 0, size / 2, 0, Math.PI * 2); c.fill();
+        break;
+      case 'puff': {
+        const gr = c.createRadialGradient(0, 0, 0, 0, 0, size / 2);
+        gr.addColorStop(0, hexA(col, 0.35)); gr.addColorStop(1, hexA(col, 0));
+        c.fillStyle = gr; c.beginPath(); c.arc(0, 0, size / 2, 0, Math.PI * 2); c.fill();
+        break;
+      }
+      case 'ring':
+        c.strokeStyle = col; c.lineWidth = Math.max(1.5, size * 0.08);
+        c.beginPath(); c.arc(0, 0, size / 2, 0, Math.PI * 2); c.stroke();
+        c.fillStyle = hexA('#ffffff', 0.5); c.beginPath(); c.arc(-size * 0.18, -size * 0.18, size * 0.1, 0, Math.PI * 2); c.fill();
+        break;
+      case 'twinkle': {
+        const k = Math.sin(u * Math.PI);
+        c.scale(k, k); c.rotate(r(8) * Math.PI);
+        c.fillStyle = col; starPath(c, size / 2, 4, 0.28); c.fill();
+        break;
+      }
+    }
+    c.restore();
+  }
+  return { w: Math.max(40, s.areaW + sz * 2), h: Math.max(40, s.areaH + sz * 2) };
+}
+
+/* ---------- câmera virtual ---------- */
+function activeCamera(t) {
+  // com a câmera selecionada, o preview mostra a cena inteira para dar para ver a moldura dela
+  if (!S.exporting && !S.playing && S.sel) { const sl = byId(S.sel); if (sl && sl.type === 'camera') return null; }
+  for (const C of P().layers) if (C.type === 'camera' && C.visible && t >= C.start && t <= C.end) return C;
+  return null;
+}
+/* parallax: 100% acompanha a câmera inteira, 0% fica fixo na tela */
+function cameraMatrix(L, t) {
+  if (L.type === 'camera') return new DOMMatrix();
+  const C = activeCamera(t);
+  if (!C) return new DOMMatrix();
+  const f = clamp((L.s.parallax ?? 100) / 100, 0, 3);
+  if (f === 0) return new DOMMatrix();
+  const p = P(), cx = p.width / 2, cy = p.height / 2;
+  const x = cx + (val(C, 'x', t) - cx) * f, y = cy + (val(C, 'y', t) - cy) * f;
+  const sc = Math.max(0.01, 1 + (val(C, 'scale', t) / 100 - 1) * f);
+  return new DOMMatrix().translate(cx, cy).scale(sc, sc).rotate(-val(C, 'rotation', t) * f).translate(-x, -y);
+}
+
+/* ---------- texto curvo e texto no traço ---------- */
+function textPathPoints(L, pathL, t) {
+  const pts = pathL.s.points || [];
+  if (pts.length < 2) return null;
+  const mp = worldMatrix(pathL, t), inv = worldMatrix(L, t).inverse();
+  const out = pts.map(([x, y]) => inv.transformPoint(mp.transformPoint(new DOMPoint(x, y))));
+  const cum = [0];
+  for (let i = 1; i < out.length; i++) cum.push(cum[i - 1] + Math.hypot(out[i].x - out[i - 1].x, out[i].y - out[i - 1].y));
+  return { pts: out, cum, total: cum[cum.length - 1] };
+}
+function pointOnPath(pp, d) {
+  if (!pp || d < 0 || d > pp.total) return null;
+  let i = 1;
+  while (i < pp.cum.length - 1 && pp.cum[i] < d) i++;
+  const a = pp.pts[i - 1], b = pp.pts[i], seg = pp.cum[i] - pp.cum[i - 1] || 1, k = (d - pp.cum[i - 1]) / seg;
+  return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, a: Math.atan2(b.y - a.y, b.x - a.x) };
 }
 
 /* ======================= seleção no preview ======================= */
@@ -883,7 +1179,7 @@ function drawOverlay() {
   const m = pt => [pt.x * k, pt.y * k];
   octx.lineWidth = 1.5 * dpr;
   octx.strokeStyle = theme.select;
-  octx.setLineDash(L.type === 'group' ? [6 * dpr, 4 * dpr] : []);
+  octx.setLineDash(L.type === 'group' || L.type === 'camera' ? [6 * dpr, 4 * dpr] : []);
   octx.beginPath();
   h.corners.forEach((pt, i) => (i ? octx.lineTo(...m(pt)) : octx.moveTo(...m(pt))));
   octx.closePath(); octx.stroke();
@@ -895,7 +1191,12 @@ function drawOverlay() {
   octx.beginPath(); octx.moveTo(...m(h.top)); octx.lineTo(...m(h.rotate)); octx.stroke();
   const dot = (pt, r, fill) => { octx.beginPath(); octx.arc(...m(pt), r * dpr, 0, Math.PI * 2); octx.fillStyle = fill; octx.fill(); octx.stroke(); };
   dot(h.rotate, 6, theme.bg);
-  dot(h.scale, 7, theme.select);
+  if (L.type === 'camera') {
+    const [lx, ly] = m(h.corners[0]);
+    octx.font = `700 ${11 * dpr}px Figtree, sans-serif`;
+    octx.fillStyle = theme.select;
+    octx.fillText('CÂMERA', lx + 6 * dpr, ly + 16 * dpr);
+  } else dot(h.scale, 7, theme.select);
   drawMotionPath(L, k, dpr);
 }
 
@@ -920,9 +1221,17 @@ function fitStage() {
 
 const toProject = e => { const r = overlay.getBoundingClientRect(); return { x: (e.clientX - r.left) / S.view, y: (e.clientY - r.top) / S.view }; };
 
+function insideLayer(L, pt) {
+  const b = S.bounds.get(L.id);
+  if (!b) return false;
+  const m = worldMatrix(L, S.time);
+  if (mScale(m) < 1e-6) return false;
+  const q = m.inverse().transformPoint(new DOMPoint(pt.x, pt.y));
+  return Math.abs(q.x) <= b.w / 2 && Math.abs(q.y) <= b.h / 2;
+}
 function hitTest(pt) {
   for (const L of P().layers) {
-    if (!VISUAL(L.type) || L.type === 'group' || !L.visible || S.time < L.start || S.time > L.end || S.time === L.end && S.time < P().duration) continue;
+    if (!VISUAL(L.type) || L.type === 'group' || L.type === 'fx' || L.type === 'camera' || !L.visible || S.time < L.start || S.time > L.end || S.time === L.end && S.time < P().duration) continue;
     const b = S.bounds.get(L.id);
     if (!b) continue;
     const m = worldMatrix(L, S.time);
@@ -952,11 +1261,11 @@ overlay.addEventListener('pointerdown', e => {
   if (dot) {
     drag = { mode: 'pathkf', L, t: dot.t, inv: parentMatrix(L, dot.t).inverse() };
     setTime(dot.t);
-  } else if (h && near(h.scale)) {
+  } else if (h && near(h.scale) && L.type !== 'camera') {
     drag = { mode: 'scale', L, c: h.center, d0: Math.hypot(pt.x - h.center.x, pt.y - h.center.y) || 1, v0: val(L, 'scale') };
   } else if (h && near(h.rotate)) {
     drag = { mode: 'rotate', L, c: h.center, a0: Math.atan2(pt.y - h.center.y, pt.x - h.center.x), v0: val(L, 'rotation') };
-  } else if (h && L.type === 'group' && near(h.center, 24)) {
+  } else if (h && (L.type === 'group' && near(h.center, 24) || L.type === 'camera' && insideLayer(L, pt))) {
     drag = { mode: 'move', L };
   } else {
     L = hitTest(pt);
@@ -1391,7 +1700,10 @@ function layerPanel(L) {
       <div class="row plain"><label>Alinhar</label><div class="seg">${['left', 'center', 'right'].map(a => `<button data-align="${a}" class="${s.align === a ? 'on' : ''}">${{ left: 'Esq.', center: 'Centro', right: 'Dir.' }[a]}</button>`).join('')}</div></div>
       ${numRow('stroke', 'Contorno', 0, 40)}
       ${colorRow('strokeColor', 'Cor contorno')}
-      ${selectRow('anim', 'Animação', TEXT_ANIMS)}`;
+      ${selectRow('anim', 'Animação', TEXT_ANIMS)}
+      ${numRow('curve', 'Curvar', -100, 100)}
+      ${P().layers.some(o => o.type === 'path') ? `${selectRow('onPath', 'Seguir traço', { '': 'Nenhum', ...Object.fromEntries(P().layers.filter(o => o.type === 'path').map(o => [o.id, o.name])) })}
+      <div data-show="onPath">${numRow('pathStart', 'Posição no traço %', 0, 100)}<p class="hint">O texto corre ao longo do traço. Esconda o traço (olho na linha do tempo) se quiser só as letras.</p></div>` : ''}`;
   } else if (L.type === 'rect') {
     content = numRow('w', 'Largura', 1, 4000) + numRow('h', 'Altura', 1, 4000) + numRow('radius', 'Cantos', 0, 1000) + fillRows('fill', 'Cor');
   } else if (L.type === 'ellipse') {
@@ -1403,14 +1715,33 @@ function layerPanel(L) {
       ${propRow('trim')}
       <p class="hint">Anime "Desenhado %" de 0 a 100 para o traço se desenhar sozinho, ou use "Desenhar traço" nas animações prontas.</p>
       ${checkRow('fillOn', 'Preencher a forma')}
-      <div data-show="fillOn">${fillRows('fill', 'Cor do preenchimento')}</div>`;
+      <div data-show="fillOn">${fillRows('fill', 'Cor do preenchimento')}</div>
+      <div class="actions"><button class="btn btn-small" data-act="path-mask">Usar como máscara da camada de cima</button></div>`;
   } else if (L.type === 'image' || L.type === 'video') {
     content = numRow('w', 'Largura', 1, 6000) + numRow('h', 'Altura', 1, 6000) +
       selectRow('mediaFit', 'Enquadrar', MEDIA_FITS) +
       `<div data-show="focal">${numRow('focalX', 'Foco X %', 0, 100)}${numRow('focalY', 'Foco Y %', 0, 100)}</div>
       <p class="hint">Preencher recorta sem deformar. Ajuste o foco para manter a pessoa ou o objeto no quadro.</p>
-      <div class="actions"><button class="btn btn-small" data-act="media-frame">Quadro do projeto</button></div>` +
+      <div class="actions"><button class="btn btn-small" data-act="media-frame">Quadro do projeto</button></div>
+      <h4 class="subhead">Fundo verde (chroma key)</h4>
+      ${checkRow('chromaOn', 'Remover a cor de fundo')}
+      <div data-show="chroma">${colorRow('chromaColor', 'Cor a remover')}${numRow('chromaTol', 'Tolerância', 0, 100)}${numRow('chromaSoft', 'Suavidade', 0, 100)}</div>` +
       `<div class="actions"><button class="btn btn-small" data-act="replace-media">Trocar arquivo</button><button class="btn btn-small" data-act="media-ratio">Proporção original</button><button class="btn btn-small" data-act="media-fill">Preencher a tela</button>${L.type === 'video' ? '<button class="btn btn-small" data-act="freeze-frame" title="Congela o quadro atual como nova camada">Congelar quadro</button>' : ''}${L.type === 'image' ? '<button class="btn btn-small btn-ai" data-act="remove-bg">Remover fundo (IA)</button>' : ''}</div>`;
+  } else if (L.type === 'particles') {
+    content = `${selectRow('preset', 'Tipo', Object.fromEntries(Object.entries(PARTICLES).map(([k, v]) => [k, v.label])))}
+      ${numRow('rate', 'Quantidade/s', 1, 300)}${numRow('life', 'Duração (s)', 0.2, 15, 0.1)}${numRow('speed', 'Velocidade', 0, 3000)}
+      ${numRow('size', 'Tamanho', 1, 600)}${numRow('gravity', 'Gravidade', -3000, 3000)}${numRow('direction', 'Direção °', -180, 180)}${numRow('spread', 'Abertura °', 0, 360)}
+      ${numRow('areaW', 'Área largura', 0, 4000)}${numRow('areaH', 'Área altura', 0, 4000)}
+      ${selectRow('colorMode', 'Cores', { preset: 'Do tipo', custom: 'Minhas cores' })}
+      <div data-show="customColors">${colorRow('color1', 'Cor 1')}${colorRow('color2', 'Cor 2')}</div>
+      <p class="hint">As partículas saem da área da camada. Gire a camada para mudar a direção de tudo.</p>`;
+  } else if (L.type === 'fx') {
+    content = `${selectRow('effect', 'Efeito', FX_EFFECTS)}${numRow('amount', 'Intensidade %', 0, 100)}
+      <p class="hint">Aplica o efeito em tudo o que está abaixo desta camada na linha do tempo. Anime a opacidade para o efeito entrar e sair.</p>
+      ${GL.ok() ? '' : '<p class="hint bad">Este aparelho não tem WebGL: o efeito não aparece.</p>'}`;
+  } else if (L.type === 'camera') {
+    content = `<p class="hint">Com a câmera selecionada você vê a cena inteira e a moldura do que ela filma. Toque fora dela para ver pela câmera.</p>
+      <p class="hint">Escala é o zoom. Anime posição, zoom e rotação, ou use os movimentos prontos abaixo. Camadas com "Acompanha a câmera" menor que 100% se mexem menos (profundidade).</p>`;
   } else if (L.type === 'group') {
     content = '<p class="hint">Um grupo não aparece no vídeo. Ele move, gira, escala e esmaece todas as camadas que o seguem. Escolha este grupo em "Seguir camada" nas outras camadas.</p>';
   }
@@ -1445,9 +1776,12 @@ function layerPanel(L) {
   }
 
   const banned = descendants(L);
-  const parents = P().layers.filter(o => !banned.has(o.id) && VISUAL(o.type));
+  const parents = P().layers.filter(o => !banned.has(o.id) && VISUAL(o.type) && o.type !== 'fx' && o.type !== 'camera');
   const visual = VISUAL(L.type);
-  const look = visual && L.type !== 'group';
+  const special = L.type === 'fx' || L.type === 'camera';
+  const look = visual && L.type !== 'group' && !special;
+  const hasCamera = P().layers.some(o => o.type === 'camera');
+  const transformRows = L.type === 'fx' ? propRow('opacity') : (L.type === 'camera' ? TRANSFORM.filter(k => k !== 'opacity') : TRANSFORM).map(propRow).join('');
 
   return `
   <div class="sec"><div class="panel-title"><i class="type-dot ${L.type}"></i><input class="field" id="layer-name" data-name value="${esc(L.name)}" aria-label="Nome da camada"></div>
@@ -1455,7 +1789,9 @@ function layerPanel(L) {
   ${kfBox}
   ${content ? `<div class="sec"><h3>${TYPE_NAMES[L.type]}</h3>${content}</div>` : ''}
   ${media}
-  ${visual ? `<div class="sec"><h3>Transformação <button class="btn btn-small" data-act="kf-all" title="Keyframe em todas (tecla K)">◆ Todas</button></h3>${TRANSFORM.map(propRow).join('')}
+  ${special ? `<div class="sec"><h3>${L.type === 'fx' ? 'Mistura' : 'Movimento da câmera'}</h3>${L.type === 'fx' ? propRow('opacity') : transformRows}</div>` : ''}
+  ${visual && !special ? `<div class="sec"><h3>Transformação <button class="btn btn-small" data-act="kf-all" title="Keyframe em todas (tecla K)">◆ Todas</button></h3>${transformRows}
+    ${hasCamera ? numRow('parallax', 'Acompanha a câmera %', 0, 200) : ''}
     <div class="row plain"><label>Espelhar</label><div class="actions"><button class="btn btn-small${s.flipH ? ' btn-primary' : ''}" data-act="flip-h" title="Inverter horizontalmente">⇄ Horizontal</button><button class="btn btn-small${s.flipV ? ' btn-primary' : ''}" data-act="flip-v" title="Inverter verticalmente">⇅ Vertical</button></div></div>
     <div class="row plain"><label for="s-parent">Seguir camada</label><select id="s-parent" data-parent><option value="">Nenhuma</option>${parents.map(o => `<option value="${o.id}"${L.parent === o.id ? ' selected' : ''}>${esc(o.name)}</option>`).join('')}</select></div></div>` : ''}
   ${look ? `<div class="sec"><h3>Efeitos</h3>${propRow('blur')}${propRow('glow')}${colorRow('glowColor', 'Cor do brilho')}
@@ -1475,7 +1811,17 @@ function layerPanel(L) {
     <p class="hint">Entrada e saída da camada, sem apagar suas animações. Em clipes curtos, as durações se ajustam para caber.</p>
   </div>
   <div class="sec"><h3>Sombra</h3>${numRow('shadowX', 'Deslocar X', -200, 200)}${numRow('shadowY', 'Deslocar Y', -200, 200)}${numRow('shadowBlur', 'Suavidade', 0, 200)}${numRow('shadowOpacity', 'Opacidade %', 0, 100)}${colorRow('shadowColor', 'Cor')}</div>` : ''}
-  ${visual ? `<div class="sec"><h3>Animações prontas</h3>
+  ${L.type === 'camera' ? `<div class="sec"><h3>Movimentos prontos</h3>
+    <div class="presets">
+      <button data-preset="camZoom">Zoom lento</button>
+      <button data-preset="camPan">Panorâmica</button>
+      <button data-preset="camPush">Aproximar rápido</button>
+      <button data-preset="camShake">Tremor de câmera</button>
+    </div>
+    <button class="btn btn-small" data-preset="clear">Remover movimento</button>
+  </div>` : ''}
+  ${L.type === 'fx' ? `<div class="sec"><h3>Animações prontas</h3><div class="presets"><button data-preset="fadeIn">Aparecer suave</button><button data-preset="fadeOut">Sumir no final</button></div></div>` : ''}
+  ${visual && !special ? `<div class="sec"><h3>Animações prontas</h3>
     <div class="presets">
       <button data-preset="fadeIn">Aparecer suave</button>
       <button data-preset="zoomIn">Entrar com zoom</button>
@@ -1535,6 +1881,9 @@ function syncPanel(full) {
     });
     $$('[data-show="grad"]', panel).forEach(el => (el.hidden = !L.s.fillType || L.s.fillType === 'solid'));
     $$('[data-show="fillOn"]', panel).forEach(el => (el.hidden = !L.s.fillOn));
+    $$('[data-show="chroma"]', panel).forEach(el => (el.hidden = !L.s.chromaOn));
+    $$('[data-show="onPath"]', panel).forEach(el => (el.hidden = !L.s.onPath));
+    $$('[data-show="customColors"]', panel).forEach(el => (el.hidden = L.s.colorMode !== 'custom'));
     $$('[data-show="focal"]', panel).forEach(el => (el.hidden = L.s.mediaFit !== 'cover'));
     const ts = $('#t-start', panel), te = $('#t-end', panel);
     if (ts && ts !== active) ts.value = round(L.start, 2);
@@ -1577,6 +1926,15 @@ panel.addEventListener('input', e => {
     $$(`[data-s="${key}"]`, panel).forEach(o => { if (o !== el && o.type !== 'checkbox') o.value = v; });
     if (key === 'fillType') $$('[data-show="grad"]', panel).forEach(x => (x.hidden = v === 'solid'));
     if (key === 'fillOn') $$('[data-show="fillOn"]', panel).forEach(x => (x.hidden = !v));
+    if (key === 'chromaOn') $$('[data-show="chroma"]', panel).forEach(x => (x.hidden = !v));
+    if (key === 'onPath') $$('[data-show="onPath"]', panel).forEach(x => (x.hidden = !v));
+    if (key === 'colorMode') $$('[data-show="customColors"]', panel).forEach(x => (x.hidden = v !== 'custom'));
+    if (key === 'preset' && PARTICLES[v]) {
+      // trocar o tipo de partícula traz os valores típicos dele
+      for (const k of PARTICLE_KEYS) L.s[k] = PARTICLES[v][k];
+      if (v === 'confetti' || v === 'snow' || v === 'bubbles') L.s.areaW = Math.round(P().width * (v === 'snow' ? 1.1 : 0.6));
+      syncPanel(true);
+    }
     if (key === 'mediaFit') $$('[data-show="focal"]', panel).forEach(x => (x.hidden = v !== 'cover'));
     if (key === 'clip' || key === 'trimIn') renderTimeline();
     refreshTime();
@@ -1649,6 +2007,15 @@ panel.addEventListener('click', e => {
       S.selKf = null; renderTimeline(); renderPanel();
     } else if (act === 'split' && L) splitLayer(L);
     else if (act === 'open-code') codeModal();
+    else if (act === 'path-mask' && L) {
+      const ls = P().layers, above = ls[ls.indexOf(L) - 1];
+      if (!above || !VISUAL(above.type)) toast('Não há camada visível logo acima deste traço.');
+      else {
+        L.s.fillOn = true; above.s.clip = true;
+        commit(); renderTimeline(); renderPanel(); refreshTime();
+        toast(`"${above.name}" agora só aparece dentro do traço.`);
+      }
+    }
     else if (act === 'dup' && L) duplicateLayer(L);
     else if (act === 'del' && L) deleteLayer(L);
     else if ((act === 'up' || act === 'down') && L) moveLayer(L, act === 'up' ? -1 : 1);
@@ -1753,6 +2120,22 @@ function applyPreset(L, name) {
   } else if (name === 'spin') {
     const r = reset('rotation');
     add('rotation', s, r, 'linear'); add('rotation', e, r + 360, 'linear');
+  } else if (name === 'camZoom') {
+    const sc = reset('scale') || 100;
+    add('scale', s, sc, 'easeInOut'); add('scale', e, sc * 1.3, 'easeInOut');
+  } else if (name === 'camPan') {
+    const x = reset('x');
+    add('x', s, x - p.width * 0.2, 'easeInOut'); add('x', e, x + p.width * 0.2, 'easeInOut');
+  } else if (name === 'camPush') {
+    const sc = reset('scale') || 100;
+    add('scale', s, sc, 'easeOut'); add('scale', Math.min(e, s + 0.5), sc * 1.6, 'easeOut');
+  } else if (name === 'camShake') {
+    const x = reset('x'), y = reset('y'), d = Math.max(8, Math.round(p.width * 0.012));
+    let i = 0;
+    for (let t = s; t <= e + 1e-6; t = round(t + 0.08, 4), i++) {
+      add('x', t, x + (rand(i * 3.1) - 0.5) * 2 * d, 'easeInOut');
+      add('y', t, y + (rand(i * 7.7) - 0.5) * 2 * d, 'easeInOut');
+    }
   } else if (name === 'drawOn') {
     delete L.kf.trim; L.p.trim = 100;
     add('trim', s, 0, 'easeInOut'); add('trim', Math.min(e, s + 1.5), 100);
@@ -1769,8 +2152,10 @@ function applyPreset(L, name) {
 
 /* ======================= camadas ======================= */
 function select(id) {
+  const camBefore = selLayer() && selLayer().type === 'camera';
   if (S.sel !== id) { S.selKf = null; panel.scrollTop = 0; }
   S.sel = id;
+  if (camBefore || (selLayer() && selLayer().type === 'camera')) renderMain();
   renderTimeline(); renderPanel(); drawOverlay();
 }
 
@@ -1912,6 +2297,8 @@ $$('[data-add]').forEach(b => b.addEventListener('click', () => {
   const type = b.dataset.add;
   if (type === 'image' || type === 'video' || type === 'audio') { pickMedia(type); return; }
   if (type === 'path') { setPen(!S.pen); return; }
+  // câmera e efeito valem para o vídeo todo; o resto começa no cursor
+  if (type === 'camera' || type === 'fx') { addLayer(makeLayer(type), true); return; }
   addLayer(makeLayer(type));
 }));
 

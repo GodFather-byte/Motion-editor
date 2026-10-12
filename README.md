@@ -29,6 +29,13 @@ Editor de motion graphics que roda direto no navegador e pode ser instalado como
 - Seis looks de cor com intensidade: Cinema, Vibrante, Quente, Frio, Vintage e Preto e branco. Combinam com os ajustes manuais de cor.
 - Exportação em MP4 (Chrome recente e Safari) ou WEBM, com som. Frame atual em PNG.
 
+**Efeitos**
+- Chroma key (fundo verde) em imagens e vídeos, com tolerância e suavidade.
+- Camada de efeito (WebGL) que age em tudo abaixo dela: vinheta, granulação, VHS, glitch, separação RGB, pixelado e ondas.
+- Partículas: confete, faíscas, neve, fumaça, bolhas e brilhos, calculadas pelo tempo (funcionam na exportação e ao arrastar o cursor).
+- Câmera virtual: posição, zoom e rotação da cena inteira, com profundidade por camada ("Acompanha a câmera %") e movimentos prontos.
+- Texto curvo e texto seguindo um traço; um traço pode virar máscara da camada de cima.
+
 **Exportação**
 - MP4 rápido quadro a quadro (WebCodecs): H.264 + AAC quando o aparelho tem, senão VP9 + Opus. Não pula quadros e continua com a aba em segundo plano. 720p, 1080p ou 4K (Pro), 24/30/60 fps.
 - GIF animado (com fundo transparente opcional) e PNG do quadro atual (também transparente).
@@ -93,6 +100,7 @@ node --check app.js
 node --test tests/video-editor.cjs
 node --test tests/code-animation.cjs   # painel Código (baixa o GSAP, precisa de internet)
 node --test tests/export.cjs           # exportação rápida, GIF e preview leve (precisa de internet)
+node --test tests/effects.cjs          # câmera, efeitos, chroma key, partículas, texto curvo
 ```
 
 O teste inicia seu próprio servidor e gera mídia temporária. Confere recorte, cores, transições, divisão, desfazer/refazer, persistência, exportação e áudio em diferentes velocidades; inclui layout de 360 px. Defina `CHROMIUM_PATH` se o Chromium não estiver em `/usr/bin/chromium`. Essas ferramentas são apenas para testes; o app continua sem instalação de dependências ou build.

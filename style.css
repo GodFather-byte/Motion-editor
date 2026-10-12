@@ -460,3 +460,15 @@ input[type=color] { width: 100%; height: 34px; padding: 3px; background: var(--p
 /* exportação */
 .export-preview { display: block; max-width: 100%; max-height: 50vh; margin: 0 auto; border-radius: 8px;
   background: repeating-conic-gradient(var(--panel-2) 0 25%, var(--bg) 0 50%) 0 0 / 16px 16px; }
+
+/* efeitos, partículas e câmera */
+.sw-particles { background: radial-gradient(circle at 25% 30%, var(--accent) 0 2px, transparent 2.5px), radial-gradient(circle at 70% 25%, var(--select) 0 2px, transparent 2.5px), radial-gradient(circle at 45% 75%, var(--shape) 0 2px, transparent 2.5px); }
+.sw-fx { background: conic-gradient(var(--accent), var(--select), var(--shape), var(--accent)); border-radius: 50%; }
+.sw-camera { background: var(--accent); clip-path: polygon(0 25%, 65% 25%, 65% 42%, 100% 22%, 100% 78%, 65% 58%, 65% 75%, 0 75%); }
+.type-dot.particles { background: var(--shape); border-radius: 50%; }
+.type-dot.fx { background: conic-gradient(var(--accent), var(--select), var(--shape), var(--accent)); border-radius: 50%; }
+.type-dot.camera { background: none; border: 1.5px solid var(--select); border-radius: 2px; }
+.clip.fx { background: repeating-linear-gradient(45deg, var(--clip) 0 6px, var(--raise) 6px 12px); }
+.clip.camera { background: transparent; border-style: dashed; border-color: var(--select-line); }
+.subhead { margin: 6px 0 0; font-size: 12px; font-weight: 700; color: var(--muted); }
+.hint.bad { color: var(--danger); }

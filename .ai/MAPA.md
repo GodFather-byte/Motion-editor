@@ -9,6 +9,7 @@
 - `manifest.webmanifest`, `icons/`: instalação como app.
 - `tools/licenca.mjs`, `tools/licenca.py`: geram chaves de licença Pro (precisam do `.pem`, que não fica no git).
 - `tests/video-editor.cjs`: testes funcionais com Playwright/Chromium, mídia gerada pelo FFmpeg e servidor Python temporário.
+- `tests/effects.cjs`: câmera, efeitos WebGL, chroma key, partículas, texto curvo/no traço.
 - `tests/export.cjs`: exportação rápida, GIF e preview leve.
 - `tests/code-animation.cjs`: testes do painel Código (GSAP isolado). Precisa de internet. Rode com `CHROMIUM_PATH` apontando para o Chromium do Playwright se não houver `/usr/bin/chromium`.
 
@@ -20,6 +21,7 @@
 | arquivos (IndexedDB) | `idb`, `loadAsset`, `registerAsset`, `syncMedia` (vídeo), `scheduleAudio` (som) |
 | modelo | `newProject`, `defaultS` (campos de cada tipo), `makeLayer`, `normalize`, `val` (valor no tempo), keyframes, `transitionState` (envelope de entrada/saída), `worldMatrix`, `setParent` |
 | render | `drawText` (animações de texto), `drawPath`, `drawFramedMedia` (contain/cover/stretch e foco), `drawShape`, `drawLayer` (filtros, looks, transições, sombra, brilho), `renderFrame` (máscara de recorte) |
+| efeitos, partículas e câmera | `GL` (WebGL compartilhado, `GL_FRAG` com os shaders), `chromaSource`, `applyFx` (camada fx em `renderFrame`), `PARTICLES`/`drawParticles` (sem estado), `activeCamera`/`cameraMatrix` (entra no `parentMatrix` das camadas raiz), `textPathPoints`/`pointOnPath` |
 | seleção no preview | caminho de movimento, caneta, alças, `fitStage`, arrastar no canvas |
 | tempo e reprodução | `refreshTime`, `play`, `pause` |
 | linha do tempo | `renderTimeline`, forma de onda, arrastar keyframes e blocos, botão de mudo, snap magnético |
