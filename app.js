@@ -1816,7 +1816,7 @@ async function exportVideo(forceMime) {
 
   const keepTime = S.time;
   S.exporting = true; drawOverlay();
-  S.time = 0; syncMedia(); renderMain(0);
+  S.time = 0; syncMedia(); renderMain(0); drawWatermark(ctx);
   const vstream = canvas.captureStream(p.fps);
   let ac = null, adest = null, sources = [];
   const tracks = [...vstream.getVideoTracks()];
@@ -1839,8 +1839,8 @@ async function exportVideo(forceMime) {
     const step = () => {
       if (cancelled) return resolve();
       const t = (performance.now() - t0) / 1000;
-      if (t >= p.duration) { S.time = p.duration - 1e-4; renderMain(S.time); return resolve(); }
-      S.time = t; syncMedia(); renderMain(t);
+      if (t >= p.duration) { S.time = p.duration - 1e-4; renderMain(S.time); drawWatermark(ctx); return resolve(); }
+      S.time = t; syncMedia(); renderMain(t); drawWatermark(ctx);
       const bar = $('#expBar');
       if (bar) bar.style.width = (t / p.duration * 100).toFixed(1) + '%';
       requestAnimationFrame(step);
@@ -1872,11 +1872,13 @@ async function exportVideo(forceMime) {
   const file = new File([blob], name, { type: blob.type });
   const canShare = navigator.canShare && navigator.canShare({ files: [file] });
   const size = blob.size > 1048576 ? (blob.size / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(blob.size / 1024)) + ' KB';
-  showModal('Vídeo pronto', `<video src="${url}" controls playsinline loop></video><p>${ext.toUpperCase()} · ${size} · ${p.width}×${p.height}${ext === 'webm' ? '. Seu navegador gera WEBM; para MP4 use o Chrome recente ou o Safari.' : ''}</p>`, [
+  showModal('Vídeo pronto', `<video src="${url}" controls playsinline loop></video><p>${ext.toUpperCase()} · ${size} · ${p.width}×${p.height}${ext === 'webm' ? '. Seu navegador gera WEBM; para MP4 use o Chrome recente ou o Safari.' : ''}</p>${S.pro ? '' : '<p>Versão grátis: o vídeo sai com a marca "feito com Motion". <a href="#" id="goPro">Tirar a marca d\'água</a></p>'}`, [
     ...(canShare ? [{ label: 'Compartilhar', keepOpen: true, onClick: () => navigator.share({ files: [file], title: P().name }).catch(() => {}) }] : []),
     { label: 'Baixar vídeo', cls: 'btn-primary', keepOpen: true, onClick: () => download(blob, name) },
     { label: 'Fechar', onClick: () => URL.revokeObjectURL(url) },
   ]);
+  const gp = $('#goPro');
+  if (gp) gp.onclick = ev => { ev.preventDefault(); hideModal(); setTimeout(() => proModal(), 30); };
 }
 $('#btnExport').onclick = () => exportVideo();
 
@@ -2191,6 +2193,211 @@ function aiMenu() {
 }
 $('#btnAI').onclick = aiMenu;
 
+/* ======================= plano Pro e marca d'água ======================= */
+const LIC_KEY = 'motion-editor:license';
+S.pro = null;  // { n: cliente, u: validade } quando a licença é válida
+const b64uDecode = s => { s = s.replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '='; return Uint8Array.from(atob(s), c => c.charCodeAt(0)); };
+
+async function verifyLicense(text) {
+  const cfg = window.MOTION_PRO;
+  if (!cfg || !cfg.publicKey || !crypto.subtle) return null;
+  const m = String(text).trim().match(/^MOTION-([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/);
+  if (!m) return null;
+  try {
+    const key = await crypto.subtle.importKey('jwk', cfg.publicKey, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+    const ok = await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, b64uDecode(m[2]), new TextEncoder().encode(m[1]));
+    if (!ok) return null;
+    const info = JSON.parse(new TextDecoder().decode(b64uDecode(m[1])));
+    if (info.u && info.u < new Date().toISOString().slice(0, 10)) return { ...info, expired: true };
+    return info;
+  } catch { return null; }
+}
+
+async function loadLicense() {
+  let saved = null;
+  try { saved = localStorage.getItem(LIC_KEY); } catch { /* sem armazenamento */ }
+  const info = saved ? await verifyLicense(saved) : null;
+  S.pro = info && !info.expired ? info : null;
+  $('#btnPro').classList.toggle('is-pro', !!S.pro);
+  $('#btnPro').textContent = S.pro ? 'PRO' : 'Seja Pro';
+  if (info && info.expired) toast('Sua licença Pro venceu. Renove para tirar a marca d\'água.');
+}
+
+function proModal(reason) {
+  const cfg = window.MOTION_PRO || {};
+  const status = S.pro
+    ? `<p class="pro-ok">Motion Pro ativo para <b>${esc(S.pro.n)}</b>${S.pro.u ? `, válido até ${esc(S.pro.u.split('-').reverse().join('/'))}` : ''}.</p>`
+    : (reason ? `<p>${esc(reason)}</p>` : '');
+  showModal('Motion Pro', `${status}
+    <ul class="perks">
+      <li>Vídeos e imagens sem marca d'água</li>
+      <li>Todos os modelos prontos, incluindo os exclusivos</li>
+      <li>Novos modelos todo mês</li>
+    </ul>
+    ${S.pro ? '' : `<p><b>${esc(cfg.price || '')}</b>. ${esc(cfg.buyText || '')}${cfg.buyLink ? ` <a href="${esc(cfg.buyLink)}" target="_blank" rel="noopener">Assinar agora</a>` : ''}</p>`}
+    <label class="hint" for="licIn">${S.pro ? 'Trocar chave de licença' : 'Já tem uma chave? Cole aqui'}<input class="field" id="licIn" spellcheck="false" autocomplete="off" placeholder="MOTION-..."></label>`, [
+    ...(S.pro ? [{ label: 'Remover licença', onClick: () => { try { localStorage.removeItem(LIC_KEY); } catch {} loadLicense(); } }] : []),
+    { label: 'Fechar' },
+    { label: 'Ativar', cls: 'btn-primary', keepOpen: true, onClick: async () => {
+      const v = $('#licIn').value.trim();
+      const info = await verifyLicense(v);
+      if (!info) { toast('Chave inválida. Confira se copiou ela inteira.'); return; }
+      if (info.expired) { toast('Essa chave já venceu.'); return; }
+      try { localStorage.setItem(LIC_KEY, v); } catch { /* sem armazenamento */ }
+      await loadLicense();
+      hideModal();
+      toast('Motion Pro ativado. Obrigado!');
+    } },
+  ]);
+}
+$('#btnPro').onclick = () => proModal();
+
+function drawWatermark(c) {
+  if (S.pro) return;
+  const p = P(), m = Math.min(p.width, p.height);
+  const size = Math.round(m * 0.028), pad = Math.round(m * 0.03);
+  c.save();
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  c.globalAlpha = 0.8; c.filter = 'none'; c.globalCompositeOperation = 'source-over';
+  c.font = `800 ${size}px Unbounded, Figtree, sans-serif`;
+  c.textAlign = 'right'; c.textBaseline = 'bottom';
+  const text = 'feito com Motion';
+  const w = c.measureText(text).width;
+  c.fillStyle = 'rgba(0,0,0,.45)';
+  if (c.roundRect) { c.beginPath(); c.roundRect(p.width - pad - w - size * 0.9, p.height - pad - size * 1.6, w + size * 1.3, size * 2, size * 0.5); c.fill(); }
+  c.fillStyle = '#ffffff';
+  c.fillText(text, p.width - pad - size * 0.2, p.height - pad - size * 0.15);
+  c.restore();
+}
+
+/* ======================= modelos prontos ======================= */
+const K = (...pairs) => pairs.map(([t, v, e]) => ({ t, v, e: e || 'easeInOut' }));
+const circlePts = (r, n = 60) => Array.from({ length: n + 1 }, (_, i) => [round(Math.cos(i / n * Math.PI * 2 - Math.PI / 2) * r, 1), round(Math.sin(i / n * Math.PI * 2 - Math.PI / 2) * r, 1)]);
+
+const TEMPLATES = [
+  {
+    id: 'neon', name: 'Intro neon', aspect: '9:16', dur: 5, bg: '#0b0618', thumbAt: 2.2,
+    layers: p => [
+      makeLayer('text', { name: 'Título', p: { y: 860, glow: 60 }, s: { text: 'SEU NOME', font: 'Unbounded', size: 150, weight: 900, color: '#ffffff', glowColor: '#ff3df5', anim: 'neon' } }),
+      makeLayer('text', { name: 'Subtítulo', start: 0.8, p: { y: 1030 }, s: { text: 'aqui vai sua frase', font: 'Figtree', size: 62, weight: 600, color: '#7ef9ff', anim: 'words' } }),
+      makeLayer('path', { name: 'Linha', p: { y: 1120, glow: 30 }, s: { points: [[-300, 0], [300, 0]], stroke: '#ff3df5', width: 8, glowColor: '#ff3df5' }, kf: { trim: K([0.4, 0], [1.4, 100]) } }),
+      makeLayer('ellipse', { name: 'Luz rosa', p: { x: 260, y: 640, opacity: 55, blur: 90 }, s: { w: 760, h: 760, fill: '#ff3df5', blend: 'screen' }, kf: { y: K([0, 600], [5, 760]) } }),
+      makeLayer('ellipse', { name: 'Luz ciano', p: { x: 860, y: 1300, opacity: 45, blur: 90 }, s: { w: 700, h: 700, fill: '#2de2ff', blend: 'screen' }, kf: { y: K([0, 1360], [5, 1220]) } }),
+    ],
+  },
+  {
+    id: 'lower', name: 'Nome na tela (lower third)', aspect: '16:9', dur: 5, bg: '#151a24', thumbAt: 1.6,
+    layers: p => [
+      makeLayer('text', { name: 'Nome', start: 0.35, p: { x: 470, y: 852 }, s: { text: 'Maria Souza', font: 'Montserrat', size: 64, weight: 900, color: '#111111', align: 'left', anim: 'rise' }, kf: { opacity: K([4.4, 100, 'easeIn'], [4.8, 0]) } }),
+      makeLayer('text', { name: 'Cargo', start: 0.6, p: { x: 448, y: 930 }, s: { text: 'Fundadora · Estúdio Aurora', font: 'Figtree', size: 38, weight: 600, color: '#ffffff', align: 'left', anim: 'fade' }, kf: { opacity: K([4.4, 100, 'easeIn'], [4.8, 0]) } }),
+      makeLayer('rect', { name: 'Faixa clara', p: { y: 852 }, s: { w: 760, h: 92, radius: 6, fill: '#ffffff' }, kf: { x: K([0, -400, 'easeOut'], [0.5, 520], [4.3, 520, 'easeIn'], [4.8, -400]) } }),
+      makeLayer('rect', { name: 'Faixa cor', p: { y: 930 }, s: { w: 620, h: 64, radius: 6, fill: '#ff5a36' }, kf: { x: K([0.15, -400, 'easeOut'], [0.65, 450], [4.2, 450, 'easeIn'], [4.7, -400]) } }),
+      makeLayer('rect', { name: 'Detalhe', p: { x: 132, y: 890 }, s: { w: 14, h: 170, radius: 4, fill: '#ffb547' }, kf: { scale: K([0, 0, 'back'], [0.45, 100], [4.5, 100, 'easeIn'], [4.9, 0]) } }),
+    ],
+  },
+  {
+    id: 'countdown', name: 'Contagem 3, 2, 1', aspect: '9:16', dur: 4.2, bg: '#111018', thumbAt: 1.35,
+    layers: p => [
+      ...[3, 2, 1].map((n, i) => makeLayer('text', { name: `Número ${n}`, start: i, end: i + 1, p: { y: 960 }, s: { text: String(n), font: 'Anton', size: 520, weight: 400, color: '#ffffff', fillType: 'linear', fill2: '#ffb547' }, kf: { scale: K([i, 40, 'back'], [i + 0.35, 100], [i + 0.8, 100, 'easeIn'], [i + 1, 150]), opacity: K([i + 0.75, 100, 'easeIn'], [i + 1, 0]) } })),
+      makeLayer('text', { name: 'Vai', start: 3, p: { y: 960, glow: 50 }, s: { text: 'VAI!', font: 'Unbounded', size: 210, weight: 900, color: '#ffffff', glowColor: '#ff5a36', anim: 'glitch' }, kf: { scale: K([3, 0, 'back'], [3.4, 100]) } }),
+      makeLayer('path', { name: 'Anel', p: { y: 960 }, s: { points: circlePts(330), stroke: '#ffb547', width: 18 }, kf: { trim: K([0, 0, 'linear'], [3, 100]), rotation: K([0, 0, 'linear'], [4.2, 120]) } }),
+      makeLayer('ellipse', { name: 'Luz', p: { y: 960, opacity: 40, blur: 100 }, s: { w: 900, h: 900, fill: '#ff5a36', blend: 'screen' }, kf: { scale: K([0, 80], [1, 110], [2, 80], [3, 130], [4.2, 100]) } }),
+    ],
+  },
+  {
+    id: 'logo', name: 'Revelar logo', aspect: '1:1', dur: 4, bg: '#0f1115', thumbAt: 2.4,
+    layers: p => [
+      makeLayer('text', { name: 'Marca', start: 1.2, p: { y: 800 }, s: { text: 'SUA MARCA', font: 'Montserrat', size: 92, weight: 900, color: '#ffffff', anim: 'scramble' } }),
+      makeLayer('star', { name: 'Símbolo', p: { y: 480, glow: 25 }, s: { w: 260, points: 6, inner: 0.5, fill: '#ffb547', fillType: 'radial', fill2: '#ff5a36', glowColor: '#ffb547' }, kf: { scale: K([0.6, 0, 'back'], [1.2, 100]), rotation: K([0.6, -90, 'easeOut'], [1.6, 0]) } }),
+      makeLayer('path', { name: 'Círculo', p: { y: 480 }, s: { points: circlePts(200), stroke: '#ffffff', width: 10 }, kf: { trim: K([0, 0], [1.1, 100]), opacity: K([3.4, 100, 'easeIn'], [4, 100]) } }),
+    ],
+  },
+  {
+    id: 'promo', name: 'Promoção relâmpago', aspect: '1:1', dur: 5, bg: '#ff3b30', pro: true, thumbAt: 1.8,
+    layers: p => [
+      makeLayer('text', { name: 'Desconto', p: { y: 470 }, s: { text: '50% OFF', font: 'Anton', size: 250, weight: 400, color: '#ffffff', stroke: 10, strokeColor: '#7a0d0d', anim: 'pop', shadowY: 14, shadowBlur: 0, shadowColor: '#7a0d0d', shadowOpacity: 100 } }),
+      makeLayer('text', { name: 'Produto', start: 0.6, p: { y: 660 }, s: { text: 'em toda a loja', font: 'Montserrat', size: 70, weight: 900, color: '#ffe14d', anim: 'words' } }),
+      makeLayer('text', { name: 'Selo texto', start: 1, p: { y: 850 }, s: { text: 'SÓ HOJE', font: 'Montserrat', size: 56, weight: 900, color: '#ff3b30' }, kf: { scale: K([1, 100], [1.5, 112], [2, 100], [2.5, 112], [3, 100], [3.5, 112], [4, 100]) } }),
+      makeLayer('rect', { name: 'Selo', start: 1, p: { y: 850 }, s: { w: 360, h: 100, radius: 50, fill: '#ffffff' }, kf: { scale: K([1, 100], [1.5, 112], [2, 100], [2.5, 112], [3, 100], [3.5, 112], [4, 100]) } }),
+      makeLayer('star', { name: 'Explosão', p: { y: 470, opacity: 35 }, s: { w: 1500, points: 16, inner: 0.7, fill: '#ff6a5f' }, kf: { rotation: K([0, 0, 'linear'], [5, 60]) } }),
+    ],
+  },
+  {
+    id: 'quote', name: 'Citação', aspect: '4:5', dur: 6, bg: '#1d1a17', pro: true, thumbAt: 3,
+    layers: p => [
+      makeLayer('text', { name: 'Aspas', p: { y: 330 }, s: { text: '“', font: 'Playfair Display', size: 320, weight: 900, color: '#ffb547' }, kf: { opacity: K([0, 0], [0.6, 100]), y: K([0, 280, 'easeOut'], [0.8, 330]) } }),
+      makeLayer('text', { name: 'Frase', start: 0.5, p: { y: 640 }, s: { text: 'A simplicidade é o\núltimo grau da\nsofisticação.', font: 'Playfair Display', size: 84, weight: 700, color: '#f4efe6', anim: 'words' } }),
+      makeLayer('text', { name: 'Autor', start: 2.2, p: { y: 940 }, s: { text: '— Leonardo da Vinci', font: 'Figtree', size: 42, weight: 600, color: '#bfb6a8', anim: 'fade' } }),
+      makeLayer('rect', { name: 'Fundo', p: { y: 675 }, s: { w: 1080, h: 1350, radius: 0, fill: '#2a2420', fillType: 'linear', fill2: '#141210', gradAngle: 120 } }),
+    ],
+  },
+  {
+    id: 'subscribe', name: 'Inscreva-se', aspect: '16:9', dur: 4, bg: '#00ff00', pro: true, thumbAt: 1.9,
+    layers: p => [
+      makeLayer('text', { name: 'Texto', p: { x: 960, y: 540 }, s: { text: 'INSCREVA-SE', font: 'Montserrat', size: 64, weight: 900, color: '#ffffff' }, kf: { scale: K([0, 0, 'back'], [0.5, 100], [3.4, 100, 'easeIn'], [3.8, 0]) } }),
+      makeLayer('rect', { name: 'Botão', p: { x: 960, y: 540 }, s: { w: 560, h: 130, radius: 24, fill: '#ff0033' }, kf: { scale: K([0, 0, 'back'], [0.5, 100], [1.8, 100], [1.9, 92], [2.05, 100], [3.4, 100, 'easeIn'], [3.8, 0]), saturate: K([1.85, 100, 'hold'], [1.9, 0]), brightness: K([1.85, 100, 'hold'], [1.9, 60]) } }),
+      makeLayer('ellipse', { name: 'Cursor', p: { opacity: 95 }, s: { w: 46, h: 46, fill: '#ffffff', shadowBlur: 12, shadowOpacity: 60 }, kf: { x: K([0.6, 1500, 'easeInOut'], [1.6, 1100]), y: K([0.6, 860, 'easeInOut'], [1.6, 570]), scale: K([1.75, 100], [1.85, 70], [2, 100]), opacity: K([3.3, 95], [3.6, 0]) } }),
+    ],
+  },
+  {
+    id: 'event', name: 'Story de evento', aspect: '9:16', dur: 6, bg: '#101528', pro: true, thumbAt: 2.6,
+    layers: p => [
+      makeLayer('text', { name: 'Data', p: { y: 560 }, s: { text: '28 NOV', font: 'Bebas Neue', size: 300, weight: 400, color: '#ffffff', fillType: 'linear', fill2: '#7c8cff', gradAngle: 90 }, kf: { y: K([0, 640, 'easeOut'], [0.8, 560]), opacity: K([0, 0], [0.6, 100]) } }),
+      makeLayer('text', { name: 'Evento', start: 0.8, p: { y: 860 }, s: { text: 'FESTA DE\nLANÇAMENTO', font: 'Unbounded', size: 92, weight: 900, color: '#ffffff', anim: 'scramble' } }),
+      makeLayer('text', { name: 'Local', start: 2, p: { y: 1120 }, s: { text: 'Av. Paulista, 1000 · 22h', font: 'Figtree', size: 52, weight: 600, color: '#c9d0ff', anim: 'typewriter' } }),
+      makeLayer('rect', { name: 'Moldura', p: { y: 860 }, s: { w: 900, h: 1500, radius: 40, fill: '#1b2142', shadowBlur: 60, shadowOpacity: 50 }, kf: { scale: K([0, 90, 'easeOut'], [0.7, 100]) } }),
+    ],
+  },
+];
+
+function buildTemplate(t) {
+  const keep = S.project;
+  const p = newProject(t.aspect);
+  S.project = p;
+  p.name = t.name; p.duration = t.dur; p.background = t.bg;
+  p.layers = t.layers(p);
+  for (const L of p.layers) { L.end = Math.min(L.end, p.duration); if (L.end <= L.start) L.end = p.duration; }
+  S.project = keep;
+  return p;
+}
+
+const thumbCache = new Map();
+function templateThumb(t) {
+  if (thumbCache.has(t.id)) return thumbCache.get(t.id);
+  const p = buildTemplate(t);
+  const keep = S.project;
+  const big = document.createElement('canvas');
+  big.width = p.width; big.height = p.height;
+  S.project = p;
+  try { renderFrame(big.getContext('2d'), t.thumbAt); } finally { S.project = keep; }
+  const sm = document.createElement('canvas');
+  const k = 240 / Math.max(p.width, p.height);
+  sm.width = Math.round(p.width * k); sm.height = Math.round(p.height * k);
+  sm.getContext('2d').drawImage(big, 0, 0, sm.width, sm.height);
+  const url = sm.toDataURL('image/jpeg', 0.8);
+  thumbCache.set(t.id, url);
+  return url;
+}
+
+function templatesModal() {
+  showModal('Modelos prontos', `<p>Escolha um modelo, troque os textos e exporte. Todos viram camadas normais que você pode editar.</p>
+    <div class="tpl-grid">${TEMPLATES.map(t => `
+      <button class="tpl" data-tpl="${t.id}">
+        <span class="tpl-img"><img src="${templateThumb(t)}" alt=""></span>
+        <span class="tpl-name">${esc(t.name)}</span>
+        <span class="tpl-meta">${t.aspect} · ${t.dur}s${t.pro ? ' <i class="pro-badge">PRO</i>' : ''}</span>
+      </button>`).join('')}</div>`, [{ label: 'Fechar' }]);
+  $$('[data-tpl]').forEach(b => (b.onclick = () => {
+    const t = TEMPLATES.find(x => x.id === b.dataset.tpl);
+    if (t.pro && !S.pro) { hideModal(); setTimeout(() => proModal(`O modelo "${t.name}" é exclusivo do Motion Pro.`), 30); return; }
+    const use = () => { setProject(buildTemplate(t), true); toast('Modelo aberto. Toque nos textos para trocar.'); };
+    hideModal();
+    if (P().layers.length) setTimeout(() => showModal('Usar este modelo?', '<p>O projeto atual será substituído. Se quiser guardar, use Salvar projeto antes.</p>', [{ label: 'Cancelar' }, { label: 'Usar modelo', cls: 'btn-primary', onClick: use }]), 30);
+    else use();
+  }));
+}
+$('#btnTemplates').onclick = templatesModal;
+
 /* ======================= menu ======================= */
 const menu = $('#menu');
 $('#btnMenu').onclick = e => { e.stopPropagation(); menu.hidden = !menu.hidden; };
@@ -2222,7 +2429,8 @@ menu.addEventListener('click', async e => {
     $('#projectInput').click();
   } else if (act === 'png') {
     pause();
-    canvas.toBlob(b => b && download(b, `${fileBase()}-${S.time.toFixed(2)}s.png`), 'image/png');
+    drawWatermark(ctx);
+    canvas.toBlob(b => { renderMain(); if (b) download(b, `${fileBase()}-${S.time.toFixed(2)}s.png`); }, 'image/png');
   } else if (act === 'help') {
     showModal('Atalhos', `<div class="keys">
       <kbd>Espaço</kbd><span>Reproduzir / pausar</span>
@@ -2324,6 +2532,7 @@ if ('serviceWorker' in navigator && !inFrame && (location.protocol === 'https:' 
 
 /* ======================= início ======================= */
 setProject(loadSaved() || demoProject());
+loadLicense();
 new ResizeObserver(() => fitStage()).observe($('#stage'));
 window.addEventListener('resize', () => renderTimeline());
 if (document.fonts) {

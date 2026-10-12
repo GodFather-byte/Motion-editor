@@ -82,6 +82,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .icon-btn:hover { background: var(--panel-2); border-color: var(--line); }
 .icon-btn:disabled { opacity: .35; cursor: default; background: transparent; border-color: transparent; }
 .btn {
+  white-space: nowrap;
   height: 34px; padding: 0 14px; border-radius: var(--radius);
   border: 1px solid var(--line); background: var(--panel-2); font-weight: 600;
 }
@@ -92,6 +93,20 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .btn-ai { display: inline-flex; align-items: center; gap: 6px; color: var(--select); border-color: rgb(111 216 255 / .35); }
 .btn-ai svg { width: 16px; height: 16px; }
 .ai-list { display: grid; gap: 8px; }
+.btn-pro { color: var(--accent); border-color: rgb(255 181 71 / .4); }
+.btn-pro.is-pro { background: var(--accent); color: var(--accent-ink); font: 800 12px/1 var(--font-display); letter-spacing: .06em; }
+.chip-accent { border-color: var(--accent); color: var(--accent); }
+.sw-tpl { background: none; border: 2px solid var(--accent); border-radius: 3px; box-shadow: 3px 3px 0 -1px var(--accent); }
+.tpl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); gap: 10px; }
+.tpl { display: grid; gap: 4px; padding: 6px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel-2); text-align: left; min-width: 0; }
+.tpl:hover { border-color: var(--accent); }
+.tpl-img { display: grid; place-items: center; height: 120px; background: var(--bg); border-radius: 6px; overflow: hidden; }
+.tpl-img img { max-height: 120px; max-width: 100%; display: block; }
+.tpl-name { font-weight: 600; font-size: 13px; line-height: 1.25; }
+.tpl-meta { color: var(--muted); font: 11px var(--font-mono); display: flex; align-items: center; gap: 6px; }
+.pro-badge { font: 800 10px/1 var(--font-display); font-style: normal; color: var(--accent-ink); background: var(--accent); border-radius: 4px; padding: 3px 5px; }
+.perks { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+.pro-ok { color: var(--fg) !important; }
 .ai-item { display: grid; gap: 2px; text-align: left; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel-2); }
 .ai-item:hover:not(:disabled) { border-color: var(--select); }
 .ai-item:disabled { opacity: .5; cursor: default; }
@@ -275,7 +290,7 @@ input[type=color] { width: 100%; height: 30px; padding: 2px; background: var(--b
 /* ---------- modal / toast ---------- */
 .modal { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 16px; background: rgb(5 6 10 / .7); }
 .modal-card {
-  width: min(460px, 100%); max-height: 90vh; overflow: auto;
+  width: min(520px, 100%); max-height: 90vh; overflow: auto;
   background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 20px;
   display: grid; gap: 14px;
 }
@@ -306,8 +321,10 @@ input[type=color] { width: 100%; height: 30px; padding: 2px; background: var(--b
     grid-template-areas: "top" "stage" "tl" "panel";
   }
   .topbar { gap: 8px; padding-left: 12px; padding-right: 12px; }
-  .brand-name { display: none; }
-  .project-name { max-width: none; }
+  .brand-name, .project-name, .btn-ai span { display: none; }
+  .top-actions { gap: 2px; }
+  .top-actions .icon-btn { width: 30px; }
+  .top-actions .btn { padding: 0 10px; }
   .stage { padding: 10px; }
   .add-bar { padding: 4px 12px 8px; }
   .panel { border-left: 0; border-top: 1px solid var(--line); }

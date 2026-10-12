@@ -1,0 +1,4 @@
+# chave privada das licenças: nunca publicar
+*.pem
+motion-licenca-privada*
+node_modules/
