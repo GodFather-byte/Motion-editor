@@ -132,6 +132,10 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .sw-image { border-radius: 2px; background: linear-gradient(135deg, var(--select) 0 50%, var(--accent) 50%); }
 .sw-video { border-radius: 2px; background: var(--select); clip-path: polygon(0 10%, 70% 10%, 70% 35%, 100% 15%, 100% 85%, 70% 65%, 70% 90%, 0 90%); }
 .sw-audio { background: var(--select); clip-path: polygon(0 40%, 15% 40%, 15% 20%, 30% 20%, 30% 0, 45% 0, 45% 100%, 30% 100%, 30% 80%, 15% 80%, 15% 60%, 0 60%, 0 40%, 55% 30%, 70% 30%, 70% 10%, 85% 10%, 85% 90%, 70% 90%, 70% 70%, 55% 70%); }
+.sw-pen { background: none; border-bottom: 3px solid var(--accent); border-radius: 0 0 0 10px; transform: rotate(-20deg); height: 9px; }
+.chip.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.chip.on .sw-pen { border-color: var(--accent-ink); }
+.curve { width: 100%; height: 170px; display: block; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; touch-action: none; cursor: crosshair; }
 .sw-group { background: none; border: 2px dashed var(--accent); border-radius: 3px; }
 
 /* ---------- timeline ---------- */
@@ -177,7 +181,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .tl-row.off .name { text-decoration: line-through; opacity: .5; }
 .type-dot { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; background: var(--muted); }
 .type-dot.text { background: var(--accent); }
-.type-dot.rect, .type-dot.star { background: #ff8f6b; }
+.type-dot.rect, .type-dot.star, .type-dot.path { background: #ff8f6b; }
 .type-dot.ellipse { background: #b89cff; }
 .type-dot.image, .type-dot.video { background: var(--select); }
 .type-dot.audio { background: #7ee0a8; border-radius: 50%; }

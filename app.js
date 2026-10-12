@@ -41,7 +41,32 @@ const EASES = {
 const EASE_LABELS = {
   linear: 'Linear', easeIn: 'Acelerar', easeOut: 'Desacelerar', easeInOut: 'Suave',
   back: 'Ultrapassar e voltar', elastic: 'Elástico', bounce: 'Quicar', hold: 'Segurar (corte seco)',
+  custom: 'Personalizada (curva)',
 };
+/* curvas de Bézier: as eases nomeadas viram pontos de partida para o editor de curva */
+const BEZ_OF = { linear: [0, 0, 1, 1], easeIn: [0.55, 0.055, 0.675, 0.19], easeOut: [0.215, 0.61, 0.355, 1], easeInOut: [0.645, 0.045, 0.355, 1], back: [0.34, 1.56, 0.64, 1] };
+const bezCache = new Map();
+function bezier(bz) {
+  const key = bz.join(',');
+  if (bezCache.has(key)) return bezCache.get(key);
+  const [x1, y1, x2, y2] = bz;
+  const cx = 3 * x1, bx = 3 * (x2 - x1) - cx, ax = 1 - cx - bx;
+  const cy = 3 * y1, by = 3 * (y2 - y1) - cy, ay = 1 - cy - by;
+  const sx = t => ((ax * t + bx) * t + cx) * t, sy = t => ((ay * t + by) * t + cy) * t, dsx = t => (3 * ax * t + 2 * bx) * t + cx;
+  const fn = x => {
+    if (x <= 0) return 0;
+    if (x >= 1) return 1;
+    let t = x;
+    for (let i = 0; i < 8; i++) { const e = sx(t) - x; if (Math.abs(e) < 1e-5) return sy(t); const d = dsx(t); if (Math.abs(d) < 1e-6) break; t -= e / d; }
+    let lo = 0, hi = 1; t = x;
+    for (let i = 0; i < 30; i++) { const v = sx(t); if (Math.abs(v - x) < 1e-5) break; if (v < x) lo = t; else hi = t; t = (lo + hi) / 2; }
+    return sy(t);
+  };
+  bezCache.set(key, fn);
+  return fn;
+}
+const easeFn = k => (k.e === 'custom' && k.bz ? bezier(k.bz) : EASES[k.e] || EASES.linear);
+const rand = n => { const x = Math.sin(n * 12.9898 + 78.233) * 43758.5453; return x - Math.floor(x); };
 const PROPS = {
   x: { label: 'Posição X', step: 1, def: 0 },
   y: { label: 'Posição Y', step: 1, def: 0 },
@@ -54,18 +79,22 @@ const PROPS = {
   contrast: { label: 'Contraste %', min: 0, max: 300, step: 1, def: 100 },
   saturate: { label: 'Saturação %', min: 0, max: 300, step: 1, def: 100 },
   hue: { label: 'Matiz °', min: -180, max: 180, step: 1, def: 0 },
+  trim: { label: 'Desenhado %', min: 0, max: 100, step: 1, def: 100 },
 };
 const TRANSFORM = ['x', 'y', 'scale', 'rotation', 'opacity'];
 const COLOR_PROPS = ['brightness', 'contrast', 'saturate', 'hue'];
 const TEXT_ANIMS = {
   none: 'Nenhuma', typewriter: 'Máquina de escrever', rise: 'Subir letra por letra',
-  pop: 'Estourar letras', fade: 'Aparecer letra por letra', wave: 'Onda (contínua)',
+  pop: 'Estourar letras', fade: 'Aparecer letra por letra', words: 'Palavra por palavra',
+  scramble: 'Embaralhar e revelar', wave: 'Onda (contínua)', bounce: 'Letras pulando (contínuo)',
+  glitch: 'Glitch (contínuo)', neon: 'Neon piscando',
 };
+const GLYPHS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#$%&@*+=?';
 const BLENDS = {
   'source-over': 'Normal', screen: 'Tela (clarear)', multiply: 'Multiplicar', overlay: 'Sobrepor',
   lighter: 'Somar luz', 'soft-light': 'Luz suave', difference: 'Diferença', 'color-dodge': 'Subexposição de cor',
 };
-const TYPE_NAMES = { text: 'Texto', rect: 'Retângulo', ellipse: 'Círculo', star: 'Estrela', image: 'Imagem', video: 'Vídeo', audio: 'Áudio', group: 'Grupo' };
+const TYPE_NAMES = { text: 'Texto', rect: 'Retângulo', ellipse: 'Círculo', star: 'Estrela', path: 'Traço', image: 'Imagem', video: 'Vídeo', audio: 'Áudio', group: 'Grupo' };
 const VISUAL = t => t !== 'audio';
 const MEDIA = t => t === 'video' || t === 'audio';
 const STORE_KEY = 'motion-editor:v1';
@@ -303,6 +332,7 @@ function defaultS(type) {
     case 'rect': return { ...look, w: Math.round(m * 0.4), h: Math.round(m * 0.4), radius: 28, fill: '#ff8f6b', fill2: '#b89cff', glowColor: '#ff8f6b' };
     case 'ellipse': return { ...look, w: Math.round(m * 0.36), h: Math.round(m * 0.36), fill: '#b89cff', fill2: '#6fd8ff', glowColor: '#b89cff' };
     case 'star': return { ...look, w: Math.round(m * 0.4), points: 5, inner: 0.45, fill: '#ffb547', fill2: '#ff6b4a', glowColor: '#ffb547' };
+    case 'path': return { ...look, points: [], stroke: '#ffb547', width: Math.max(4, Math.round(m * 0.012)), fillOn: false, fill: '#ffb547', fill2: '#ff6b4a', glowColor: '#ffb547' };
     case 'image': return { ...look, asset: null, w: 400, h: 400, glowColor: '#ffffff' };
     case 'video': return { ...look, ...media, w: 800, h: 450, glowColor: '#ffffff' };
     case 'audio': return { ...media };
@@ -350,7 +380,7 @@ function val(L, prop, t = S.time) {
     const a = k[i], b = k[i + 1];
     if (t >= a.t && t <= b.t) {
       const u = (t - a.t) / (b.t - a.t || 1);
-      return a.v + (b.v - a.v) * (EASES[a.e] || EASES.linear)(u);
+      return a.v + (b.v - a.v) * easeFn(a)(u);
     }
   }
   return last.v;
@@ -476,6 +506,9 @@ function drawText(c, L, local) {
     if (s.stroke > 0) { c.lineWidth = s.stroke * 2; c.lineJoin = 'round'; c.strokeStyle = s.strokeColor; c.strokeText(t, x, y); }
     c.fillText(t, x, y);
   };
+  const wordOf = [];
+  let wc = -1;
+  for (const line of lines) { let prev = ' '; for (const ch of [...line]) { if (ch !== ' ' && prev === ' ') wc++; wordOf.push(Math.max(0, wc)); prev = ch; } }
   let ci = 0;
   lines.forEach((line, li) => {
     const ly = -bh / 2 + lh * li + lh / 2;
@@ -489,22 +522,86 @@ function drawText(c, L, local) {
       const cw = c.measureText(ch).width;
       acc += ch;
       const i = ci++;
-      let a = 1, dy = 0, sc = 1;
+      let a = 1, dy = 0, dx = 0, sc = 1, glyph = ch, chroma = false;
       if (s.anim === 'typewriter') { if (local < i * 0.06) continue; }
       else if (s.anim === 'rise') { const u = clamp((local - i * 0.035) / 0.45, 0, 1); const e = EASES.easeOut(u); a = e; dy = (1 - e) * s.size * 0.6; }
       else if (s.anim === 'pop') { const u = clamp((local - i * 0.05) / 0.4, 0, 1); sc = EASES.back(u); a = u > 0 ? 1 : 0; }
       else if (s.anim === 'fade') { a = clamp((local - i * 0.05) / 0.3, 0, 1); }
       else if (s.anim === 'wave') { dy = Math.sin(local * 5 - i * 0.55) * s.size * 0.14; }
+      else if (s.anim === 'words') { const u = clamp((local - wordOf[i] * 0.18) / 0.4, 0, 1); const e = EASES.easeOut(u); a = e; dy = (1 - e) * s.size * 0.5; sc = 0.9 + 0.1 * e; }
+      else if (s.anim === 'scramble') {
+        const done = i * 0.035 + 0.35;
+        if (local < i * 0.035) a = 0;
+        else if (local < done && ch.trim()) glyph = GLYPHS[Math.floor(rand(i * 3.7 + Math.floor(local * 20)) * GLYPHS.length)];
+      }
+      else if (s.anim === 'bounce') { dy = -Math.max(0, Math.sin(local * 6 - i * 0.45)) * s.size * 0.22; }
+      else if (s.anim === 'glitch') {
+        const f = Math.floor(local * 14);
+        if (rand(i * 7.1 + f) < 0.22) { dx = (rand(i + f * 3.3) - 0.5) * s.size * 0.35; chroma = true; }
+        if (rand(f * 1.7) < 0.08) { chroma = true; dy = (rand(f + i) - 0.5) * s.size * 0.15; }
+      }
+      else if (s.anim === 'neon') {
+        const f = local < 1.2 ? Math.floor(local * 18) : Math.floor(local * 6);
+        const off = local < 1.2 ? rand(f * 13 + (i % 3)) < 0.45 : rand(f * 5.3) < 0.06;
+        a = off ? 0.18 : 1;
+      }
       if (a <= 0 || sc <= 0) continue;
       c.save();
       c.globalAlpha *= a;
-      c.translate(cx + cw / 2, ly + dy);
+      c.translate(cx + cw / 2 + dx, ly + dy);
       if (sc !== 1) c.scale(sc, sc);
-      str(ch, -cw / 2, 0);
+      if (chroma) {
+        const keep = c.fillStyle, k = s.size * 0.035;
+        c.globalAlpha *= 0.85;
+        c.fillStyle = '#ff2a6d'; c.fillText(glyph, -cw / 2 - k, 0);
+        c.fillStyle = '#05d9e8'; c.fillText(glyph, -cw / 2 + k, 0);
+        c.globalAlpha /= 0.85;
+        c.fillStyle = keep;
+      }
+      str(glyph, -cw / 2, 0);
       c.restore();
     }
   });
   return { w: bw, h: bh };
+}
+
+function pathPartial(pts, f) {
+  if (f >= 1) return pts;
+  const segs = [];
+  let tot = 0;
+  for (let i = 1; i < pts.length; i++) { const d = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); segs.push(d); tot += d; }
+  let rem = tot * f;
+  const out = [pts[0]];
+  for (let i = 1; i < pts.length; i++) {
+    const d = segs[i - 1];
+    if (rem >= d) { out.push(pts[i]); rem -= d; }
+    else { const k = d ? rem / d : 0; out.push([pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * k, pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * k]); break; }
+  }
+  return out;
+}
+function tracePath(c, pts) {
+  c.beginPath();
+  c.moveTo(pts[0][0], pts[0][1]);
+  if (pts.length === 2) { c.lineTo(pts[1][0], pts[1][1]); return; }
+  for (let i = 1; i < pts.length - 1; i++) c.quadraticCurveTo(pts[i][0], pts[i][1], (pts[i][0] + pts[i + 1][0]) / 2, (pts[i][1] + pts[i + 1][1]) / 2);
+  const l = pts[pts.length - 1];
+  c.lineTo(l[0], l[1]);
+}
+function drawPath(c, L, t) {
+  const s = L.s, pts = s.points || [];
+  if (pts.length < 2) return { w: s.width, h: s.width };
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const [x, y] of pts) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+  const w = x1 - x0, h = y1 - y0;
+  const f = clamp(val(L, 'trim', t), 0, 100) / 100;
+  if (s.fillOn && f >= 1) { tracePath(c, pts); c.closePath(); c.fillStyle = paint(c, s, w, h, s.fill); c.fill(); }
+  if (s.width > 0 && f > 0) {
+    tracePath(c, pathPartial(pts, f));
+    c.lineWidth = s.width; c.lineCap = 'round'; c.lineJoin = 'round';
+    c.strokeStyle = s.fillOn ? s.stroke : paint(c, s, w, h, s.stroke);
+    c.stroke();
+  }
+  return { w: Math.max(w, 1) + s.width, h: Math.max(h, 1) + s.width };
 }
 
 function drawMissing(c, w, h, label) {
@@ -533,6 +630,7 @@ function drawShape(c, L, local) {
       c.fillStyle = paint(c, s, s.w, s.w, s.fill);
       starPath(c, s.w / 2, Math.round(s.points), s.inner); c.fill();
       return { w: s.w, h: s.w };
+    case 'path': return drawPath(c, L, local + L.start);
     case 'image': {
       const rec = A.get(s.asset);
       if (rec && rec.el && rec.el.naturalWidth) c.drawImage(rec.el, -s.w / 2, -s.h / 2, s.w, s.h);
@@ -636,10 +734,48 @@ function handlesOf(L) {
   };
 }
 
+let pathDots = [];
+function drawMotionPath(L, k, dpr) {
+  pathDots = [];
+  if (S.playing || !(isAnimated(L, 'x') || isAnimated(L, 'y'))) return;
+  const times = [...new Set([...(L.kf.x || []), ...(L.kf.y || [])].map(q => round(q.t, 4)))].sort((a, b) => a - b);
+  if (!times.length) return;
+  const at = t => { const q = parentMatrix(L, t).transformPoint(new DOMPoint(val(L, 'x', t), val(L, 'y', t))); return { x: q.x * k, y: q.y * k }; };
+  const t0 = times[0], t1 = times[times.length - 1];
+  if (t1 > t0) {
+    octx.save();
+    octx.strokeStyle = 'rgba(255,181,71,.85)';
+    octx.lineWidth = 1.5 * dpr;
+    octx.setLineDash([4 * dpr, 4 * dpr]);
+    octx.beginPath();
+    const step = Math.max(1 / P().fps, (t1 - t0) / 240);
+    for (let t = t0; t <= t1 + 1e-6; t += step) { const q = at(t); t === t0 ? octx.moveTo(q.x, q.y) : octx.lineTo(q.x, q.y); }
+    octx.stroke();
+    octx.restore();
+  }
+  for (const t of times) {
+    const q = at(t);
+    pathDots.push({ t, x: q.x / k, y: q.y / k });
+    const on = Math.abs(t - S.time) < 0.5 / P().fps;
+    octx.beginPath();
+    octx.rect(q.x - 5 * dpr, q.y - 5 * dpr, 10 * dpr, 10 * dpr);
+    octx.fillStyle = on ? '#ffffff' : '#ffb547';
+    octx.fill();
+    octx.lineWidth = 1.5 * dpr; octx.strokeStyle = '#0e0f14'; octx.stroke();
+  }
+}
+
+let penPts = null;
 function drawOverlay() {
   const dpr = window.devicePixelRatio || 1;
   octx.setTransform(1, 0, 0, 1, 0, 0);
   octx.clearRect(0, 0, overlay.width, overlay.height);
+  if (penPts && penPts.length > 1) {
+    const k = S.view * dpr;
+    octx.strokeStyle = '#ffb547'; octx.lineWidth = 3 * dpr; octx.lineCap = 'round'; octx.lineJoin = 'round';
+    octx.beginPath(); penPts.forEach((q, i) => (i ? octx.lineTo(q.x * k, q.y * k) : octx.moveTo(q.x * k, q.y * k))); octx.stroke();
+    return;
+  }
   const L = selLayer();
   if (!L || S.exporting || !L.visible || !VISUAL(L.type)) return;
   const h = handlesOf(L);
@@ -661,6 +797,7 @@ function drawOverlay() {
   const dot = (pt, r, fill) => { octx.beginPath(); octx.arc(...m(pt), r * dpr, 0, Math.PI * 2); octx.fillStyle = fill; octx.fill(); octx.stroke(); };
   dot(h.rotate, 6, '#0e0f14');
   dot(h.scale, 7, '#6fd8ff');
+  drawMotionPath(L, k, dpr);
 }
 
 function fitStage() {
@@ -700,10 +837,21 @@ let drag = null;
 overlay.addEventListener('pointerdown', e => {
   if (S.exporting) return;
   const pt = toProject(e);
+  if (S.pen) {
+    if (S.playing) pause();
+    penPts = [pt];
+    drag = { mode: 'pen' };
+    overlay.setPointerCapture(e.pointerId);
+    return;
+  }
   const near = (a, r = 18) => a && Math.hypot((a.x - pt.x) * S.view, (a.y - pt.y) * S.view) <= r;
   let L = selLayer();
   const h = L && L.visible && VISUAL(L.type) ? handlesOf(L) : null;
-  if (h && near(h.scale)) {
+  const dot = L && pathDots.find(d => near(d, 12));
+  if (dot) {
+    drag = { mode: 'pathkf', L, t: dot.t, inv: parentMatrix(L, dot.t).inverse() };
+    setTime(dot.t);
+  } else if (h && near(h.scale)) {
     drag = { mode: 'scale', L, c: h.center, d0: Math.hypot(pt.x - h.center.x, pt.y - h.center.y) || 1, v0: val(L, 'scale') };
   } else if (h && near(h.rotate)) {
     drag = { mode: 'rotate', L, c: h.center, a0: Math.atan2(pt.y - h.center.y, pt.x - h.center.x), v0: val(L, 'rotation') };
@@ -727,6 +875,18 @@ overlay.addEventListener('pointerdown', e => {
 overlay.addEventListener('pointermove', e => {
   if (!drag) return;
   const pt = toProject(e), L = drag.L;
+  if (drag.mode === 'pen') {
+    const last = penPts[penPts.length - 1];
+    if (Math.hypot(pt.x - last.x, pt.y - last.y) * S.view > 2) { penPts.push(pt); drawOverlay(); }
+    return;
+  }
+  if (drag.mode === 'pathkf') {
+    const q = drag.inv.transformPoint(new DOMPoint(pt.x, pt.y));
+    upsertKf(L, 'x', drag.t, Math.round(q.x)); upsertKf(L, 'y', drag.t, Math.round(q.y));
+    drag.moved = true;
+    renderMain(); drawOverlay(); syncPanel();
+    return;
+  }
   if (drag.mode === 'move') {
     const q = drag.inv.transformPoint(new DOMPoint(pt.x, pt.y));
     let nx = drag.x0 + q.x - drag.p0.x, ny = drag.y0 + q.y - drag.p0.y;
@@ -746,7 +906,33 @@ overlay.addEventListener('pointermove', e => {
   drag.moved = true;
   renderMain(); drawOverlay(); syncPanel();
 });
-const endDrag = () => { if (!drag) return; if (drag.moved) { commit(); renderTimeline(); } drag = null; };
+const endDrag = () => {
+  if (!drag) return;
+  if (drag.mode === 'pen') { drag = null; finishPen(); return; }
+  if (drag.moved) { commit(); renderTimeline(); }
+  drag = null;
+};
+function setPen(on) {
+  S.pen = on;
+  $('[data-add="path"]').classList.toggle('on', on);
+  overlay.style.cursor = on ? 'crosshair' : '';
+  if (on) toast('Desenhe com o dedo ou o mouse no preview.');
+}
+function finishPen() {
+  const pts = penPts || [];
+  penPts = null;
+  setPen(false);
+  if (pts.length < 2) { drawOverlay(); return; }
+  // simplifica: descarta pontos muito próximos
+  const min = 3 / S.view, simple = [pts[0]];
+  for (const q of pts.slice(1)) { const l = simple[simple.length - 1]; if (Math.hypot(q.x - l.x, q.y - l.y) >= min) simple.push(q); }
+  if (simple.length < 2) simple.push(pts[pts.length - 1]);
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const q of simple) { x0 = Math.min(x0, q.x); y0 = Math.min(y0, q.y); x1 = Math.max(x1, q.x); y1 = Math.max(y1, q.y); }
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+  const L = makeLayer('path', { p: { x: Math.round(cx), y: Math.round(cy) }, s: { points: simple.map(q => [round(q.x - cx, 1), round(q.y - cy, 1)]) } });
+  addLayer(L);
+}
 overlay.addEventListener('pointerup', endDrag);
 overlay.addEventListener('pointercancel', endDrag);
 
@@ -911,6 +1097,7 @@ rows.addEventListener('pointerdown', e => {
       target.onpointermove = target.onpointerup = target.onpointercancel = null;
       if (Math.abs(nt - t0) > 1e-6) { moveKeyframes(L, t0, nt); S.selKf.t = nt; setTime(nt); commit(); }
       renderTimeline(); renderPanel(); refreshTime();
+      const box = $('.kf-box', panel); if (box) box.scrollIntoView({ block: 'nearest' });
     };
     return;
   }
@@ -977,6 +1164,68 @@ function renderPanel() {
   panel.innerHTML = L ? layerPanel(L) : projectPanel();
   panel.scrollTop = scroll;
   syncPanel(true);
+  const cv = $('#curveCv', panel);
+  if (cv && L) setupCurve(cv, L);
+}
+
+const kfsAt = (L, t) => Object.values(L.kf).flat().filter(k => Math.abs(k.t - t) < 0.5 / P().fps);
+function setupCurve(cv, L) {
+  const pad = 14, yMin = -0.4, yMax = 1.4;
+  const geo = () => ({ W: cv.clientWidth, H: cv.clientHeight });
+  const X = (x, g) => pad + x * (g.W - pad * 2);
+  const Y = (y, g) => g.H - pad - (y - yMin) / (yMax - yMin) * (g.H - pad * 2);
+  const inv = (px, py, g) => ({ x: clamp((px - pad) / (g.W - pad * 2), 0, 1), y: clamp(yMin + (g.H - pad - py) / (g.H - pad * 2) * (yMax - yMin), yMin, yMax) });
+  const draw = () => {
+    const ks = S.selKf ? kfsAt(L, S.selKf.t) : [];
+    if (!ks.length) return;
+    const k = ks[0], g = geo(), dpr = window.devicePixelRatio || 1;
+    cv.width = Math.round(g.W * dpr); cv.height = Math.round(g.H * dpr);
+    const c = cv.getContext('2d');
+    c.scale(dpr, dpr);
+    c.strokeStyle = '#2b2f45'; c.lineWidth = 1;
+    for (const y of [0, 1]) { c.beginPath(); c.moveTo(X(0, g), Y(y, g)); c.lineTo(X(1, g), Y(y, g)); c.stroke(); }
+    const fn = easeFn(k);
+    c.strokeStyle = '#ffb547'; c.lineWidth = 2.5; c.beginPath();
+    for (let i = 0; i <= 80; i++) { const x = i / 80, y = fn(x); i ? c.lineTo(X(x, g), Y(y, g)) : c.moveTo(X(x, g), Y(y, g)); }
+    c.stroke();
+    const bz = k.e === 'custom' && k.bz ? k.bz : BEZ_OF[k.e];
+    if (bz) {
+      c.strokeStyle = '#6fd8ff'; c.lineWidth = 1.5;
+      const hs = [[0, 0, bz[0], bz[1]], [1, 1, bz[2], bz[3]]];
+      for (const [ax, ay, hx, hy] of hs) {
+        c.beginPath(); c.moveTo(X(ax, g), Y(ay, g)); c.lineTo(X(hx, g), Y(hy, g)); c.stroke();
+        c.beginPath(); c.arc(X(hx, g), Y(hy, g), 6, 0, Math.PI * 2); c.fillStyle = '#6fd8ff'; c.fill();
+      }
+    } else {
+      c.fillStyle = '#8a8ea9'; c.font = '12px Figtree, sans-serif'; c.fillText('Arraste para editar como curva', X(0, g), Y(1.3, g));
+    }
+  };
+  draw();
+  cv.onpointerdown = e => {
+    const ks = kfsAt(L, S.selKf.t);
+    if (!ks.length) return;
+    const k = ks[0];
+    const bz = (k.e === 'custom' && k.bz ? k.bz : BEZ_OF[k.e] || BEZ_OF.easeInOut).slice();
+    const r = cv.getBoundingClientRect(), g = geo();
+    const px = e.clientX - r.left, py = e.clientY - r.top;
+    const d1 = Math.hypot(px - X(bz[0], g), py - Y(bz[1], g)), d2 = Math.hypot(px - X(bz[2], g), py - Y(bz[3], g));
+    const which = d1 <= d2 ? 0 : 2;
+    cv.setPointerCapture(e.pointerId);
+    const apply = ev => {
+      const q = inv(ev.clientX - r.left, ev.clientY - r.top, g);
+      bz[which] = round(q.x, 3); bz[which + 1] = round(q.y, 3);
+      ks.forEach(o => { o.e = 'custom'; o.bz = bz.slice(); });
+      draw(); renderMain(); drawOverlay();
+    };
+    apply(e);
+    cv.onpointermove = apply;
+    cv.onpointerup = cv.onpointercancel = () => {
+      cv.onpointermove = cv.onpointerup = null;
+      const sel = $('#kf-ease', panel); if (sel) sel.value = 'custom';
+      commit();
+    };
+  };
+  cv.redraw = draw;
 }
 
 function projectPanel() {
@@ -1014,6 +1263,12 @@ function layerPanel(L) {
     content = numRow('w', 'Largura', 1, 4000) + numRow('h', 'Altura', 1, 4000) + fillRows('fill', 'Cor');
   } else if (L.type === 'star') {
     content = numRow('w', 'Tamanho', 1, 4000) + numRow('points', 'Pontas', 3, 16) + numRow('inner', 'Recorte', 0.1, 0.95, 0.01) + fillRows('fill', 'Cor');
+  } else if (L.type === 'path') {
+    content = `${colorRow('stroke', 'Cor do traço')}${numRow('width', 'Espessura', 0, 200)}
+      ${propRow('trim')}
+      <p class="hint">Anime "Desenhado %" de 0 a 100 para o traço se desenhar sozinho, ou use "Desenhar traço" nas animações prontas.</p>
+      ${checkRow('fillOn', 'Preencher a forma')}
+      <div data-show="fillOn">${fillRows('fill', 'Cor do preenchimento')}</div>`;
   } else if (L.type === 'image' || L.type === 'video') {
     content = numRow('w', 'Largura', 1, 6000) + numRow('h', 'Altura', 1, 6000) +
       `<div class="actions"><button class="btn btn-small" data-act="replace-media">Trocar arquivo</button><button class="btn btn-small" data-act="media-ratio">Proporção original</button><button class="btn btn-small" data-act="media-fill">Preencher a tela</button></div>`;
@@ -1041,7 +1296,8 @@ function layerPanel(L) {
     const first = Object.values(L.kf).flat().find(k => Math.abs(k.t - kfSel) < 0.5 / P().fps);
     kfBox = `<div class="sec kf-box"><h3>Keyframe em ${kfSel.toFixed(2)}s</h3>
       <div class="row plain"><label for="kf-ease">Curva</label><select class="field" id="kf-ease" data-kfease>${Object.entries(EASE_LABELS).map(([v, t]) => `<option value="${v}"${first && first.e === v ? ' selected' : ''}>${t}</option>`).join('')}</select></div>
-      <p class="hint">A curva define como o movimento vai deste keyframe até o próximo.</p>
+      <canvas class="curve" id="curveCv" aria-label="Editor de curva: arraste as bolinhas"></canvas>
+      <p class="hint">A curva define como o movimento vai deste keyframe até o próximo. Arraste as bolinhas para criar a sua.</p>
       <div class="actions"><button class="btn btn-small btn-danger" data-act="kf-delete">Excluir keyframe</button><button class="btn btn-small" data-act="kf-deselect">Fechar</button></div></div>`;
   }
 
@@ -1072,6 +1328,7 @@ function layerPanel(L) {
       <button data-preset="pulse">Pulsar</button>
       <button data-preset="spin">Girar 360°</button>
       <button data-preset="fadeOut">Sumir no final</button>
+      ${L.type === 'path' ? '<button data-preset="drawOn">Desenhar traço</button>' : ''}
     </div>
     <button class="btn btn-small" data-preset="clear">Remover animações</button>
   </div>` : ''}
@@ -1113,6 +1370,7 @@ function syncPanel(full) {
       else el.value = L.s[el.dataset.s] ?? '';
     });
     $$('[data-show="grad"]', panel).forEach(el => (el.hidden = !L.s.fillType || L.s.fillType === 'solid'));
+    $$('[data-show="fillOn"]', panel).forEach(el => (el.hidden = !L.s.fillOn));
     const ts = $('#t-start', panel), te = $('#t-end', panel);
     if (ts && ts !== active) ts.value = round(L.start, 2);
     if (te && te !== active) te.value = round(L.end, 2);
@@ -1138,6 +1396,7 @@ panel.addEventListener('input', e => {
     L.s[key] = v;
     $$(`[data-s="${key}"]`, panel).forEach(o => { if (o !== el && o.type !== 'checkbox') o.value = v; });
     if (key === 'fillType') $$('[data-show="grad"]', panel).forEach(x => (x.hidden = v === 'solid'));
+    if (key === 'fillOn') $$('[data-show="fillOn"]', panel).forEach(x => (x.hidden = !v));
     if (key === 'clip' || key === 'trimIn') renderTimeline();
     refreshTime();
   } else if (el.dataset.name !== undefined && L) {
@@ -1168,8 +1427,9 @@ panel.addEventListener('change', e => {
     return;
   }
   if (el.dataset.kfease !== undefined && L && S.selKf) {
-    for (const arr of Object.values(L.kf)) arr.forEach(k => { if (Math.abs(k.t - S.selKf.t) < 0.5 / p.fps) k.e = el.value; });
+    kfsAt(L, S.selKf.t).forEach(k => { k.e = el.value; if (el.value === 'custom' && !k.bz) k.bz = BEZ_OF.easeInOut.slice(); });
     commit(); refreshTime();
+    const cv = $('#curveCv', panel); if (cv && cv.redraw) cv.redraw();
     return;
   }
   if (el.dataset.name !== undefined) { commit(); renderTimeline(); return; }
@@ -1191,7 +1451,7 @@ panel.addEventListener('click', e => {
     applyPreset(L, b.dataset.preset);
     commit(); renderTimeline(); renderPanel();
     if (b.dataset.preset !== 'clear') {
-      const showAt = { fadeOut: L.end - 0.6, spin: L.start + 0.5, pulse: L.start + 0.25 }[b.dataset.preset] ?? L.start + 1;
+      const showAt = { fadeOut: L.end - 0.6, spin: L.start + 0.5, pulse: L.start + 0.25, drawOn: L.start + 0.75 }[b.dataset.preset] ?? L.start + 1;
       setTime(clamp(showAt, L.start, L.end));
       toast('Animação aplicada. Dê play para ver.');
     } else refreshTime();
@@ -1273,6 +1533,9 @@ function applyPreset(L, name) {
   } else if (name === 'spin') {
     const r = reset('rotation');
     add('rotation', s, r, 'linear'); add('rotation', e, r + 360, 'linear');
+  } else if (name === 'drawOn') {
+    delete L.kf.trim; L.p.trim = 100;
+    add('trim', s, 0, 'easeInOut'); add('trim', Math.min(e, s + 1.5), 100);
   } else if (name === 'fadeOut') {
     const op = isAnimated(L, 'opacity') ? val(L, 'opacity', Math.max(s, e - 0.5)) : L.p.opacity;
     add('opacity', Math.max(s, e - 0.5), op, 'easeIn'); add('opacity', e, 0);
@@ -1281,7 +1544,7 @@ function applyPreset(L, name) {
 
 /* ======================= camadas ======================= */
 function select(id) {
-  if (S.sel !== id) S.selKf = null;
+  if (S.sel !== id) { S.selKf = null; panel.scrollTop = 0; }
   S.sel = id;
   renderTimeline(); renderPanel(); drawOverlay();
 }
@@ -1350,6 +1613,7 @@ function pickMedia(kind, replaceId = null) {
 $$('[data-add]').forEach(b => b.addEventListener('click', () => {
   const type = b.dataset.add;
   if (type === 'image' || type === 'video' || type === 'audio') { pickMedia(type); return; }
+  if (type === 'path') { setPen(!S.pen); return; }
   addLayer(makeLayer(type));
 }));
 
