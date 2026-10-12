@@ -1,39 +1,36 @@
 # Handoff
-Atualizado por: Codex em 12/10/2026
+Atualizado por: Antigravity em 12/10/2026
 
 ## Objetivo atual
-Edição automática por pedido entregue, integrada às atualizações recentes de Photopea e FFmpeg.
+Integração de Whisper (Transformers.js) e Google MediaPipe ao editor.
 
 ## Feito nas últimas sessões
-- Editar com IA: Gemini analisa áudio/quadros, escolhe cortes, cria legendas e zoom; revisão antes de aplicar.
-- Trecho de até 10 minutos, analisado em partes de 60 s; montagem de até 120 s, com formato e enquadramento escolhidos.
-- Revisão permite desmarcar cortes; timeline editável, preview, exportação, undo/redo e backup persistente do original.
-- Cortar pausas sem IA funciona localmente, sem chave ou envio de dados.
-- Cancelamento, timeout, validação de tempos e proteção contra respostas de um projeto alterado.
-- Mantidos Photopea, FFmpeg, exportação rápida/GIF, efeitos, música, narração e figurinhas. PWA motion-v16.
-- 47 verificações validadas: 16 novas de IA e 31 existentes; exportação com mídia real e layout de 360 px.
+- Transformers.js v3 + Whisper (`onnx-community/whisper-tiny`): transcrição de áudio e legendas locais na timeline sem chave de API, além de exportação .SRT/texto.
+- Modal de legendas (`aiCaptionsPicker`) atualizado com suporte a Whisper (local) e Gemini (nuvem).
+- Google MediaPipe Tasks Vision:
+  - Recorte instantâneo de pessoas (`selfie_segmenter`, ~250 KB) com máscara alfa suave.
+  - Auto-enquadramento facial (`blaze_face_short_range`) ajustando foco X/Y da camada automaticamente.
+- Botões integrados no painel de camadas e menu IA (`#btnAI`).
+- Ícones `.sw-whisper` e `.sw-mediapipe` em `style.css`.
+- Integrações de edição com IA (Gemini), Photopea e FFmpeg preservadas e compatíveis.
+- Testes automatizados em `tests/ai-local.cjs`. Cache do PWA em `motion-v17`.
 
 ## Próximo passo
-Avaliar transcrição e escolha dos destaques com vídeos reais e a chave Gemini do usuário; não houve chamada real à API nesta sessão.
+Testar desempenho de transcrição e detecção facial em celulares reais via PWA.
 
 ## Arquivos relevantes
-- ai-edit.js: normalizePlan, normalizeTranscript, findSilences, assemble (helpers puros).
-- app.js: seção "editar vídeo por pedido"; editWithAIModal, beginAIEdit, reviewAIEdit, applyAIEditAssembly, restoreAIEditOriginal.
-- tests/ai-edit-plan.cjs e tests/ai-edit.cjs: Gemini simulado, áudio/vídeo real, múltiplas partes, erros, cancelamento e restauração.
-- .ai/MAPA.md descreve as demais seções, incluindo Photopea/FFmpeg.
+- `app.js`: seções Whisper, MediaPipe, `createCaptionLayers`, `aiCaptionsPicker` e `window.__motion`.
+- `style.css`: `.sw-whisper`, `.sw-mediapipe`.
+- `sw.js`: `motion-v17`.
+- `tests/ai-local.cjs`, `tests/ai-edit.cjs`, `tests/ffmpeg.cjs`, `tests/photopea.cjs`.
 
 ## Decisões tomadas e motivo
-- IA retorna somente dados; tempos validados antes de montar. Não executa código, URLs ou IDs fornecidos pelo modelo.
-- Envio de áudio WAV mono e 3 quadros JPEG reduzidos por parte, usando a chave configurada no app.
-- aiEdit.original guarda um único backup; assets preservados e troca de projeto mantém o histórico de undo.
-- Tempos do modelo são relativos ao trecho; trim soma sourceFrom, e a timeline divide pela velocidade.
+- Carregamento 100% sob demanda via CDN dinâmico (`import()`), mantendo o app leve e sem dependências no build.
+- Whisper roda localmente via WebAssembly/WebGPU, sem depender de nuvem ou chaves pagas.
+- MediaPipe usa máscaras de probabilidade alfa para recorte suave e suporta enquadramento inteligente em vídeos/imagens verticais.
 
 ## Pendências e armadilhas
-- Gemini precisa de internet/chave e pode cobrar; qualidade de transcrição e seleção ainda precisa de avaliação real.
-- Pausas usam energia do áudio: música contínua pode impedir cortes. Enquadramento focal é fixo por clipe, sem tracking.
-- FFmpeg/Photopea/CDNs precisam de internet; microfone precisa de HTTPS/localhost e permissão.
-- Aumentar VERSION em sw.js sempre que mudar o app; manter ai-edit.js no cache.
+- No primeiro uso offline, o usuário precisa carregar uma vez com internet para cachear os modelos.
 
 ## Como rodar e testar
-`python3 -m http.server 8000`, `node --check app.js`, `node --check ai-edit.js`.
-`CHROMIUM_PATH=/usr/bin/chromium node --test --test-concurrency=2 tests/*.cjs` (Playwright, FFmpeg e internet).
+`python3 -m http.server 8000`, `node --check app.js`, `node --test tests/*.cjs`.

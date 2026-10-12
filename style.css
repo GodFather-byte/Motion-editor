@@ -552,3 +552,8 @@ input[type=color] { width: 100%; height: 34px; padding: 3px; background: var(--p
   object-fit: contain; display: block; margin: 6px 0;
 }
 
+/* whisper e mediapipe */
+.sw-whisper { width: 13px; height: 13px; border-radius: 3px; background: #e07a5f; position: relative; flex-shrink: 0; }
+.sw-whisper::after { content: 'W'; position: absolute; inset: 0; display: grid; place-items: center; font: 800 8.5px/1 var(--font-display); color: #fff; }
+.sw-mediapipe { width: 13px; height: 13px; border-radius: 3px; background: #4285f4; position: relative; flex-shrink: 0; }
+.sw-mediapipe::after { content: 'MP'; position: absolute; inset: 0; display: grid; place-items: center; font: 800 7px/1 var(--font-display); color: #fff; letter-spacing: -0.05em; }

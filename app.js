@@ -2150,7 +2150,7 @@ function layerPanel(L) {
       <h4 class="subhead">Fundo verde (chroma key)</h4>
       ${checkRow('chromaOn', 'Remover a cor de fundo')}
       <div data-show="chroma">${colorRow('chromaColor', 'Cor a remover')}${numRow('chromaTol', 'Tolerância', 0, 100)}${numRow('chromaSoft', 'Suavidade', 0, 100)}</div>` +
-      `<div class="actions"><button class="btn btn-small" data-act="replace-media">Trocar arquivo</button><button class="btn btn-small" data-act="media-ratio">Proporção original</button><button class="btn btn-small" data-act="media-fill">Preencher a tela</button>${L.type === 'video' ? '<button class="btn btn-small" data-act="freeze-frame" title="Congela o quadro atual como nova camada">Congelar quadro</button><button class="btn btn-small" data-act="ffmpeg-media" title="Converter ou comprimir com FFmpeg"><i class="sw sw-ffmpeg"></i> FFmpeg</button>' : ''}${L.type === 'image' ? '<button class="btn btn-small" data-act="photopea-edit" title="Editar no Photopea"><i class="sw sw-photopea"></i> Editar no Photopea</button><button class="btn btn-small btn-ai" data-act="remove-bg">Remover fundo (IA)</button>' : ''}</div>`;
+      `<div class="actions"><button class="btn btn-small" data-act="replace-media">Trocar arquivo</button><button class="btn btn-small" data-act="media-ratio">Proporção original</button><button class="btn btn-small" data-act="media-fill">Preencher a tela</button>${L.type === 'video' ? '<button class="btn btn-small" data-act="freeze-frame" title="Congela o quadro atual como nova camada">Congelar quadro</button><button class="btn btn-small" data-act="ffmpeg-media" title="Converter ou comprimir com FFmpeg"><i class="sw sw-ffmpeg"></i> FFmpeg</button><button class="btn btn-small" data-act="mediapipe-face" title="Auto-enquadrar no rosto com MediaPipe"><i class="sw sw-mediapipe"></i> Focar no rosto</button>' : ''}${L.type === 'image' ? '<button class="btn btn-small" data-act="photopea-edit" title="Editar no Photopea"><i class="sw sw-photopea"></i> Editar no Photopea</button><button class="btn btn-small btn-ai" data-act="mediapipe-segment" title="Recortar pessoa usando Google MediaPipe"><i class="sw sw-mediapipe"></i> Recortar pessoa</button><button class="btn btn-small" data-act="mediapipe-face" title="Auto-enquadrar no rosto com MediaPipe"><i class="sw sw-mediapipe"></i> Focar no rosto</button><button class="btn btn-small btn-ai" data-act="remove-bg">Remover fundo (@imgly)</button>' : ''}</div>`;
   } else if (L.type === 'icon') {
     content = `${selectRow('iconName', 'Ícone', Object.fromEntries(Object.keys(ICONS).map(k => [k, k[0].toUpperCase() + k.slice(1)])))}
       ${numRow('size', 'Tamanho', 4, 3000)}${fillRows('fill', 'Cor')}${numRow('stroke', 'Contorno', 0, 40)}${colorRow('strokeColor', 'Cor contorno')}`;
@@ -2185,7 +2185,7 @@ function layerPanel(L) {
       ${numRow('fadeOut', 'Saída (s)', 0, 10, 0.1)}
       ${numRow('trimIn', 'Começa em (s)', 0, Math.max(1, Math.floor(mediaSourceDur(L) === Infinity ? 60 : mediaSourceDur(L))), 0.1)}
       <p class="hint">${info}</p>
-      ${rec && rec.buffer ? '<div class="actions"><button class="btn btn-small btn-ai" data-act="captions">Gerar legendas (IA)</button></div>' : ''}
+      ${rec && rec.buffer ? '<div class="actions"><button class="btn btn-small btn-ai" data-act="captions"><i class="sw sw-whisper"></i> Legendas (Whisper / IA)</button></div>' : ''}
       ${rec && rec.buffer ? `<h4 class="subhead">Ritmo</h4>
         ${s.beats && s.beats.length ? `<p class="hint">${s.bpm ? s.bpm + ' BPM · ' : ''}${beatsOf(L).length} batidas marcadas na linha do tempo. Os blocos grudam nelas ao arrastar.</p>` : '<p class="hint">Marque as batidas para cortar e animar no ritmo.</p>'}
         <div class="actions"><button class="btn btn-small" data-act="beats">${s.beats && s.beats.length ? 'Detectar de novo' : 'Detectar batidas'}</button>
@@ -2468,6 +2468,8 @@ panel.addEventListener('click', e => {
     else if (act === 'freeze-frame' && L) freezeFrame(L);
     else if (act === 'replace-media' && L) pickMedia(L.type, L.id);
     else if (act === 'remove-bg' && L) removeBackground(L);
+    else if (act === 'mediapipe-segment' && L) mediaPipeCutPerson(L);
+    else if (act === 'mediapipe-face' && L) mediaPipeFaceAutoFrame(L);
     else if (act === 'photopea-edit' && L) openPhotopea({ mode: 'layer', layer: L });
     else if (act === 'ffmpeg-media' && L) ffmpegModal({ layer: L });
     else if (act === 'captions' && L) aiCaptionsPicker();
@@ -3843,6 +3845,170 @@ async function sliceToWav(buffer, from, dur) {
 }
 const blobToB64 = async b => (await blobToDataURL(b)).split(',')[1];
 
+function createCaptionLayers(L, segs, style, groupName = 'Legendas') {
+  const p = P(), m = Math.min(p.width, p.height);
+  const group = makeLayer('group', { name: groupName, p: { x: p.width / 2, y: Math.round(p.height * 0.74) } });
+  group.start = 0; group.end = p.duration;
+  const caps = segs.map((s, i) => {
+    const next = segs[i + 1];
+    const start = clamp(L.start + s.start, 0, p.duration - 0.05);
+    const end = clamp(Math.min(L.start + s.end + 0.15, next ? L.start + next.start : Infinity), start + 0.15, p.duration);
+    return makeLayer('text', {
+      name: `Legenda ${i + 1}`, parent: group.id, start, end, p: { x: 0, y: 0 },
+      s: { text: s.text, font: 'Montserrat', size: Math.round(m * 0.075), weight: 900, color: '#ffffff', stroke: Math.round(m * 0.008), strokeColor: '#000000', anim: style, shadowY: 6, shadowBlur: 12, shadowOpacity: 50 },
+    });
+  });
+  p.layers.unshift(group, ...caps);
+  S.sel = group.id; S.selKf = null;
+  commit(); hideModal(); renderTimeline(); renderPanel(); setTime(caps[0].start);
+  toast(`${caps.length} legendas criadas. Mova o grupo "${groupName}" para reposicionar todas.`);
+}
+
+/* ======================= Transformers.js / Whisper ======================= */
+const WHISPER_CDN = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1';
+let whisperPipeInstance = null;
+let whisperLoadedModel = null;
+
+async function getWhisper(modelName = 'onnx-community/whisper-tiny', onProgress) {
+  const { pipeline, env } = await import(WHISPER_CDN);
+  env.allowLocalModels = false;
+  if (whisperPipeInstance && whisperLoadedModel === modelName) return whisperPipeInstance;
+  whisperPipeInstance = await pipeline('automatic-speech-recognition', modelName, {
+    progress_callback: p => {
+      if (onProgress && typeof onProgress === 'function') onProgress(p);
+    }
+  });
+  whisperLoadedModel = modelName;
+  return whisperPipeInstance;
+}
+
+async function extractAudioFloat32(audioBuffer, from = 0, dur) {
+  const len = dur ?? (audioBuffer.duration - from);
+  const rate = 16000;
+  const count = Math.max(1, Math.ceil(len * rate));
+  const oc = new OfflineAudioContext(1, count, rate);
+  const src = oc.createBufferSource();
+  src.buffer = audioBuffer;
+  src.connect(oc.destination);
+  src.start(0, from, len);
+  const rendered = await oc.startRendering();
+  return rendered.getChannelData(0);
+}
+
+async function transcribeAudioWhisper(audioBuffer, { from = 0, dur, lang, model = 'onnx-community/whisper-tiny', onStatus } = {}) {
+  const pipe = await getWhisper(model, p => {
+    if (onStatus && p) {
+      if (p.status === 'progress' && p.total) {
+        const pct = Math.round((p.loaded / p.total) * 100);
+        onStatus(`Baixando IA (${p.file || 'modelo'}): ${pct}%`);
+      } else if (p.status === 'download' || p.status === 'initiate') {
+        onStatus('Iniciando download do modelo Whisper…');
+      } else if (p.status === 'done') {
+        onStatus('Modelo pronto!');
+      }
+    }
+  });
+  if (onStatus) onStatus('Transcrevendo áudio com Whisper local…');
+  const durToProcess = dur ?? (audioBuffer.duration - from);
+  const audioData = await extractAudioFloat32(audioBuffer, from, durToProcess);
+  const opts = {
+    return_timestamps: true,
+    chunk_length_s: 30,
+    stride_length_s: 5,
+    task: 'transcribe',
+  };
+  if (lang) opts.language = lang;
+  return await pipe(audioData, opts);
+}
+
+async function runCaptionsWhisper(L, { style = 'pop', lang = 'portuguese', action = 'layers', model = 'onnx-community/whisper-tiny' } = {}) {
+  const say = busy('Transcrevendo com Whisper…', 'Carregando Transformers.js…');
+  try {
+    const rec = A.get(L.s.asset);
+    if (!rec || !rec.buffer) throw new Error('Áudio da camada não encontrado.');
+    const from = L.s.trimIn || 0;
+    const len = Math.min(L.end - L.start, rec.buffer.duration - from);
+    if (len <= 0.1) throw new Error('Duração do áudio muito curta.');
+
+    const result = await transcribeAudioWhisper(rec.buffer, {
+      from,
+      dur: len,
+      lang: lang || undefined,
+      model,
+      onStatus: msg => say(msg)
+    });
+
+    const fullText = (result && result.text ? result.text : '').trim();
+    if (!fullText) throw new Error('Não encontrei fala nesse áudio.');
+
+    let segs = [];
+    if (Array.isArray(result.chunks) && result.chunks.length) {
+      for (let i = 0; i < result.chunks.length; i++) {
+        const c = result.chunks[i];
+        const txt = (c.text || '').trim();
+        if (!txt) continue;
+        const ts = c.timestamp;
+        let st = Array.isArray(ts) && isNum(ts[0]) ? ts[0] : 0;
+        let en = Array.isArray(ts) && isNum(ts[1]) ? ts[1] : (i < result.chunks.length - 1 && isNum(result.chunks[i + 1].timestamp?.[0]) ? result.chunks[i + 1].timestamp[0] : st + 1.8);
+        if (en <= st) en = st + 1.5;
+        segs.push({ start: clamp(st, 0, len), end: clamp(en, st + 0.2, len), text: txt });
+      }
+    }
+
+    if (!segs.length && fullText) {
+      const words = fullText.split(/\s+/);
+      const wordsPerSeg = 4;
+      const totalSegs = Math.ceil(words.length / wordsPerSeg);
+      const step = len / totalSegs;
+      for (let i = 0; i < totalSegs; i++) {
+        const slice = words.slice(i * wordsPerSeg, (i + 1) * wordsPerSeg).join(' ');
+        segs.push({ start: i * step, end: Math.min((i + 1) * step, len), text: slice });
+      }
+    }
+
+    if (action === 'text') {
+      hideModal();
+      showModal('Transcrição Whisper', `
+        <p>Texto identificado com sucesso (${segs.length} trechos):</p>
+        <textarea style="width:100%;height:150px;font:12px var(--font-mono);padding:8px;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;" readonly>${esc(fullText)}</textarea>
+        <div style="margin-top:8px;" class="actions">
+          <button class="btn btn-small" id="btnCopyWhisper">Copiar texto</button>
+          <button class="btn btn-small" id="btnDownloadSrt">Baixar legendas (.SRT)</button>
+        </div>
+      `, [
+        { label: 'Fechar' },
+        { label: 'Criar legendas animadas', cls: 'btn-primary', onClick: () => createCaptionLayers(L, segs, style, 'Legendas (Whisper)') }
+      ]);
+      $('#btnCopyWhisper').onclick = () => {
+        navigator.clipboard.writeText(fullText).then(() => toast('Texto copiado para a área de transferência.'));
+      };
+      $('#btnDownloadSrt').onclick = () => {
+        const srtContent = segs.map((s, idx) => {
+          const fmt = sec => {
+            const h = String(Math.floor(sec / 3600)).padStart(2, '0');
+            const m = String(Math.floor((sec % 3600) / 60)).padStart(2, '0');
+            const sc = String(Math.floor(sec % 60)).padStart(2, '0');
+            const ms = String(Math.round((sec % 1) * 1000)).padStart(3, '0');
+            return `${h}:${m}:${sc},${ms}`;
+          };
+          return `${idx + 1}\n${fmt(L.start + s.start)} --> ${fmt(L.start + s.end)}\n${s.text}\n`;
+        }).join('\n');
+        const blob = new Blob([srtContent], { type: 'text/plain;charset=utf-8' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `${P().name || 'legendas'}-whisper.srt`;
+        a.click();
+        toast('Arquivo SRT baixado.');
+      };
+      return;
+    }
+
+    createCaptionLayers(L, segs, style, 'Legendas (Whisper)');
+  } catch (err) {
+    aiError(err, () => runCaptionsWhisper(L, { style, lang, action, model }));
+  }
+}
+
 function aiCaptionsPicker() {
   const media = P().layers.filter(L => MEDIA(L.type) && A.get(L.s.asset) && A.get(L.s.asset).buffer);
   if (!media.length) {
@@ -3851,17 +4017,49 @@ function aiCaptionsPicker() {
   }
   const sel = selLayer();
   const first = media.includes(sel) ? sel : media[0];
-  showModal('Legendas automáticas', `
-    <p>A IA escuta o som, transcreve e cria as legendas sincronizadas, já animadas no estilo Reels.</p>
+  showModal('Legendas automáticas & Transcrição', `
+    <p>A IA escuta o áudio, transcreve e sincroniza legendas animadas estilo Reels.</p>
+    <div class="row plain"><label for="capEngine">Motor de IA</label><select id="capEngine">
+      <option value="whisper" selected>Whisper (no aparelho / sem chave / grátis)</option>
+      <option value="gemini">Gemini (nuvem / requer chave API)</option>
+    </select></div>
     <div class="row plain"><label for="capLayer">Áudio de</label><select id="capLayer">${media.map(L => `<option value="${L.id}"${L === first ? ' selected' : ''}>${esc(L.name)}</option>`).join('')}</select></div>
-    <div class="row plain"><label for="capStyle">Estilo</label><select id="capStyle"><option value="pop">Estourar letras</option><option value="words">Palavra por palavra</option><option value="none">Sem animação</option></select></div>`, [
+    <div class="row plain"><label for="capLang">Idioma</label><select id="capLang">
+      <option value="portuguese" selected>Português</option>
+      <option value="english">Inglês</option>
+      <option value="spanish">Espanhol</option>
+      <option value="">Detectar automático</option>
+    </select></div>
+    <div class="row plain"><label for="capStyle">Estilo</label><select id="capStyle">
+      <option value="pop">Estourar letras</option>
+      <option value="words">Palavra por palavra</option>
+      <option value="none">Sem animação</option>
+    </select></div>
+    <div class="row plain"><label for="capAction">Ação</label><select id="capAction">
+      <option value="layers" selected>Criar legendas animadas na linha do tempo</option>
+      <option value="text">Apenas ver e copiar transcrição em texto</option>
+    </select></div>
+    <p class="hint">O Whisper roda no seu navegador com Transformers.js e funciona sem gastar créditos de nuvem.</p>`, [
     { label: 'Cancelar' },
-    { label: 'Criar legendas', cls: 'btn-primary', keepOpen: true, onClick: () => runCaptions(byId($('#capLayer').value), $('#capStyle').value) },
+    {
+      label: 'Processar', cls: 'btn-primary', keepOpen: true, onClick: () => {
+        const engine = $('#capEngine').value;
+        const layer = byId($('#capLayer').value);
+        const style = $('#capStyle').value;
+        const lang = $('#capLang').value;
+        const action = $('#capAction').value;
+        if (engine === 'gemini') {
+          runCaptions(layer, style);
+        } else {
+          runCaptionsWhisper(layer, { style, lang, action });
+        }
+      }
+    },
   ]);
 }
 
 async function runCaptions(L, style) {
-  const say = busy('Criando legendas…', 'Preparando o áudio…');
+  const say = busy('Criando legendas com Gemini…', 'Preparando o áudio…');
   try {
     const rec = A.get(L.s.asset);
     const from = L.s.trimIn || 0;
@@ -3883,24 +4081,196 @@ async function runCaptions(L, style) {
       }
     }
     if (!segs.length) throw new Error('Não encontrei fala nesse áudio.');
-    const p = P(), m = Math.min(p.width, p.height);
-    const group = makeLayer('group', { name: 'Legendas', p: { x: p.width / 2, y: Math.round(p.height * 0.74) } });
-    group.start = 0; group.end = p.duration;
-    const caps = segs.map((s, i) => {
-      const next = segs[i + 1];
-      const start = clamp(L.start + s.start, 0, p.duration - 0.05);
-      const end = clamp(Math.min(L.start + s.end + 0.15, next ? L.start + next.start : Infinity), start + 0.15, p.duration);
-      return makeLayer('text', {
-        name: `Legenda ${i + 1}`, parent: group.id, start, end, p: { x: 0, y: 0 },
-        s: { text: s.text, font: 'Montserrat', size: Math.round(m * 0.075), weight: 900, color: '#ffffff', stroke: Math.round(m * 0.008), strokeColor: '#000000', anim: style, shadowY: 6, shadowBlur: 12, shadowOpacity: 50 },
-      });
-    });
-    p.layers.unshift(group, ...caps);
-    S.sel = group.id; S.selKf = null;
-    commit(); hideModal(); renderTimeline(); renderPanel(); setTime(caps[0].start);
-    toast(`${caps.length} legendas criadas. Mova o grupo "Legendas" para reposicionar todas.`);
+    createCaptionLayers(L, segs, style, 'Legendas (Gemini)');
   } catch (err) {
     aiError(err, () => runCaptions(L, style));
+  }
+}
+
+/* ======================= Google MediaPipe ======================= */
+const MEDIAPIPE_CDN = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm';
+const MEDIAPIPE_WASM = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm';
+const MP_SEGMENTER_MODEL = 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite';
+const MP_FACE_MODEL = 'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/latest/blaze_face_short_range.tflite';
+
+let mpFilesetResolver = null;
+let mpSegmenterInstance = null;
+let mpFaceDetectorInstance = null;
+
+async function getMediaPipeVision() {
+  const vision = await import(MEDIAPIPE_CDN);
+  if (!mpFilesetResolver) {
+    mpFilesetResolver = await vision.FilesetResolver.forVisionTasks(MEDIAPIPE_WASM);
+  }
+  return { vision, resolver: mpFilesetResolver };
+}
+
+async function getMediaPipeSegmenter() {
+  if (mpSegmenterInstance) return mpSegmenterInstance;
+  const { vision, resolver } = await getMediaPipeVision();
+  mpSegmenterInstance = await vision.ImageSegmenter.createFromOptions(resolver, {
+    baseOptions: {
+      modelAssetPath: MP_SEGMENTER_MODEL,
+      delegate: 'GPU',
+    },
+    runningMode: 'IMAGE',
+    outputCategoryMask: false,
+    outputConfidenceMasks: true,
+  });
+  return mpSegmenterInstance;
+}
+
+async function segmentPersonMediaPipe(source) {
+  const segmenter = await getMediaPipeSegmenter();
+  const result = segmenter.segment(source);
+  if (!result.confidenceMasks || !result.confidenceMasks.length) {
+    throw new Error('Nenhuma máscara gerada pelo MediaPipe.');
+  }
+  const mask = result.confidenceMasks[0];
+  const maskW = mask.width, maskH = mask.height;
+  const maskData = mask.getAsFloat32Array();
+
+  const maskCv = document.createElement('canvas');
+  maskCv.width = maskW; maskCv.height = maskH;
+  const mCtx = maskCv.getContext('2d');
+  const imgData = mCtx.createImageData(maskW, maskH);
+  const d = imgData.data;
+  for (let i = 0; i < maskData.length; i++) {
+    const conf = clamp(maskData[i], 0, 1);
+    const a = Math.round(conf * 255);
+    const p = i * 4;
+    d[p] = 255; d[p + 1] = 255; d[p + 2] = 255; d[p + 3] = a;
+  }
+  mCtx.putImageData(imgData, 0, 0);
+
+  const srcW = source.naturalWidth || source.videoWidth || source.width;
+  const srcH = source.naturalHeight || source.videoHeight || source.height;
+  const outCv = document.createElement('canvas');
+  outCv.width = srcW; outCv.height = srcH;
+  const outCtx = outCv.getContext('2d');
+  outCtx.drawImage(source, 0, 0, srcW, srcH);
+  outCtx.globalCompositeOperation = 'destination-in';
+  outCtx.drawImage(maskCv, 0, 0, srcW, srcH);
+
+  return new Promise((resolve, reject) => {
+    outCv.toBlob(blob => {
+      if (blob) resolve(blob);
+      else reject(new Error('Falha ao exportar imagem recortada.'));
+    }, 'image/png');
+  });
+}
+
+async function getMediaPipeFaceDetector() {
+  if (mpFaceDetectorInstance) return mpFaceDetectorInstance;
+  const { vision, resolver } = await getMediaPipeVision();
+  mpFaceDetectorInstance = await vision.FaceDetector.createFromOptions(resolver, {
+    baseOptions: {
+      modelAssetPath: MP_FACE_MODEL,
+      delegate: 'GPU',
+    },
+    runningMode: 'IMAGE',
+  });
+  return mpFaceDetectorInstance;
+}
+
+async function getLayerVisualElement(L) {
+  if (L.type === 'video') {
+    const vid = VIDS.get(L.id);
+    if (!vid || !vid.videoWidth) throw new Error('Vídeo não carregado.');
+    const cv = document.createElement('canvas');
+    cv.width = vid.videoWidth; cv.height = vid.videoHeight;
+    cv.getContext('2d').drawImage(vid, 0, 0);
+    return cv;
+  }
+  const rec = A.get(L.s.asset);
+  if (!rec) throw new Error('Arquivo da camada não encontrado.');
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('Erro ao carregar imagem para análise.'));
+    img.src = URL.createObjectURL(rec.blob);
+  });
+}
+
+async function mediaPipeCutPerson(L) {
+  const say = busy('Recortando pessoa com MediaPipe…', 'Carregando IA do Google…');
+  try {
+    const sourceEl = await getLayerVisualElement(L);
+    say('Segmentando pessoa no quadro…');
+    const blob = await segmentPersonMediaPipe(sourceEl);
+    const name = (P().assets[L.s.asset] && P().assets[L.s.asset].name) || 'recorte';
+    const nrec = await registerAsset(blob, 'image', name.replace(/\.[^.]+$/, '') + ' pessoa mediapipe.png');
+    hideModal();
+    const previewUrl = URL.createObjectURL(blob);
+    showModal('Pessoa recortada (MediaPipe)', `
+      <p>Pessoa identificada e recortada com sucesso pelo Google MediaPipe!</p>
+      <div style="text-align:center;margin:8px 0;"><img src="${previewUrl}" style="max-height:160px;max-width:100%;border-radius:8px;background:var(--stage-checker);border:1px solid var(--line);" alt="Prévia"></div>
+    `, [
+      { label: 'Fechar' },
+      { label: 'Substituir camada atual', cls: 'btn-small', onClick: () => {
+        L.s.asset = nrec.id;
+        commit(); renderPanel(); refreshTime();
+        toast('Camada atualizada com a pessoa recortada.');
+      }},
+      { label: 'Adicionar como nova camada', cls: 'btn-primary', onClick: () => {
+        const fit = Math.min(P().width * 0.7 / nrec.w, P().height * 0.7 / nrec.h, 1);
+        const newL = makeLayer('image', {
+          name: name.slice(0, 18) + ' (Pessoa)',
+          s: { asset: nrec.id, w: Math.round(nrec.w * fit), h: Math.round(nrec.h * fit) }
+        });
+        newL.start = L.start; newL.end = L.end;
+        addLayer(newL);
+        toast('Nova camada adicionada com o recorte do MediaPipe.');
+      }}
+    ]);
+  } catch (err) {
+    hideModal();
+    showModal('Não deu para recortar com MediaPipe', `<p>${esc(err && err.message ? err.message : 'Erro desconhecido.')}</p><p>Confira se há pessoas visíveis na imagem e conexão para baixar o modelo na primeira vez.</p>`, [{ label: 'Fechar' }]);
+  }
+}
+
+async function mediaPipeFaceAutoFrame(L) {
+  const say = busy('Detectando rosto com Google MediaPipe…', 'Carregando detector facial…');
+  try {
+    const sourceEl = await getLayerVisualElement(L);
+    const detector = await getMediaPipeFaceDetector();
+    say('Analisando rostos no quadro…');
+    const detections = (detector.detect(sourceEl) || {}).detections || [];
+    if (!detections.length) {
+      hideModal();
+      toast('Nenhum rosto detectado neste quadro.');
+      return;
+    }
+    const origW = sourceEl.naturalWidth || sourceEl.videoWidth || sourceEl.width;
+    const origH = sourceEl.naturalHeight || sourceEl.videoHeight || sourceEl.height;
+
+    let best = detections[0];
+    let maxArea = (best.boundingBox.width || 0) * (best.boundingBox.height || 0);
+    for (let i = 1; i < detections.length; i++) {
+      const d = detections[i];
+      const area = (d.boundingBox.width || 0) * (d.boundingBox.height || 0);
+      if (area > maxArea) { maxArea = area; best = d; }
+    }
+    const bb = best.boundingBox;
+    const isNorm = bb.width <= 1.0 && origW > 10;
+    const w = isNorm ? bb.width * origW : bb.width;
+    const h = isNorm ? bb.height * origH : bb.height;
+    const x = isNorm ? bb.originX * origW : bb.originX;
+    const y = isNorm ? bb.originY * origH : bb.originY;
+    const cx = x + w / 2;
+    const cy = y + h / 2;
+    const focalX = clamp(Math.round((cx / origW) * 100), 0, 100);
+    const focalY = clamp(Math.round((cy / origH) * 100), 0, 100);
+
+    L.s.mediaFit = 'cover';
+    L.s.focalX = focalX;
+    L.s.focalY = focalY;
+    commit(); hideModal(); renderPanel(); refreshTime();
+    toast(`Rosto enquadrado! Foco centralizado em (${focalX}%, ${focalY}%).`);
+  } catch (err) {
+    hideModal();
+    showModal('Falha na detecção facial', `<p>${esc(err && err.message ? err.message : 'Erro desconhecido.')}</p>`, [{ label: 'Fechar' }]);
   }
 }
 
@@ -3930,13 +4300,17 @@ async function removeBackground(L) {
 function aiMenu() {
   const L = selLayer();
   const img = L && L.type === 'image';
+  const imgOrVid = L && (L.type === 'image' || L.type === 'video');
+  const hasAudio = L && MEDIA(L.type) && A.get(L.s.asset) && A.get(L.s.asset).buffer;
   showModal('Ferramentas de IA', `<div class="ai-list">
     <button class="ai-item" data-ai="edit"><b>Editar vídeo com IA</b><span>Escolhe trechos, corta pausas, cria legendas e zoom. Você revisa antes de aplicar.</span></button>
+    <button class="ai-item" data-ai="cap"><b>Legendas automáticas (Whisper / Gemini)</b><span>Transcreve áudio com Whisper local (sem chave de API) ou Gemini na nuvem.</span></button>
+    <button class="ai-item" data-ai="mp-seg"${imgOrVid ? '' : ' disabled'}><b>Recortar pessoa (Google MediaPipe)</b><span>${imgOrVid ? 'Segmenta e recorta pessoas instantaneamente.' : 'Selecione uma imagem ou vídeo primeiro.'}</span></button>
+    <button class="ai-item" data-ai="mp-face"${imgOrVid ? '' : ' disabled'}><b>Auto-enquadrar no rosto (MediaPipe)</b><span>${imgOrVid ? 'Detecta o rosto e ajusta o ponto focal automaticamente.' : 'Selecione uma imagem ou vídeo primeiro.'}</span></button>
     <button class="ai-item" data-ai="gen"><b>Criar animação com texto</b><span>Descreva e a IA monta camadas e keyframes.</span></button>
     <button class="ai-item" data-ai="code"><b>Animar com código (GSAP)</b><span>A IA escreve o código da animação e o editor transforma em keyframes.</span></button>
-    <button class="ai-item" data-ai="cap"><b>Legendas automáticas</b><span>Transcreve a fala de um vídeo ou áudio e cria legendas animadas.</span></button>
-    <button class="ai-item" data-ai="bg"${img ? '' : ' disabled'}><b>Remover fundo</b><span>${img ? 'Recorta a imagem selecionada.' : 'Selecione uma camada de imagem primeiro.'}</span></button>
-    <button class="ai-item" data-ai="cfg"><b>Configurar chave do Gemini</b><span>${aiCfg().key ? 'Chave configurada neste aparelho.' : 'Necessária para criar animações e legendas.'}</span></button>
+    <button class="ai-item" data-ai="bg"${img ? '' : ' disabled'}><b>Remover fundo completo (@imgly)</b><span>${img ? 'Recorta objetos e pessoas com modelo detalhado.' : 'Selecione uma camada de imagem primeiro.'}</span></button>
+    <button class="ai-item" data-ai="cfg"><b>Configurar chave do Gemini</b><span>${aiCfg().key ? 'Chave configurada neste aparelho.' : 'Necessária para criar animações e opções Gemini.'}</span></button>
   </div>`, [{ label: 'Fechar' }]);
   $$('[data-ai]').forEach(b => (b.onclick = () => {
     const a = b.dataset.ai;
@@ -3945,6 +4319,8 @@ function aiMenu() {
       if (a === 'gen') aiGenerate();
       else if (a === 'edit') editWithAIModal();
       else if (a === 'cap') aiCaptionsPicker();
+      else if (a === 'mp-seg' && imgOrVid) mediaPipeCutPerson(L);
+      else if (a === 'mp-face' && imgOrVid) mediaPipeFaceAutoFrame(L);
       else if (a === 'code') codeModal();
       else if (a === 'bg' && img) removeBackground(L);
       else if (a === 'cfg') aiSettings();
@@ -5369,5 +5745,10 @@ if (document.fonts) {
   Promise.all(FONTS.map(f => document.fonts.load(`700 40px "${f}"`).catch(() => {}))).then(() => refreshTime());
   document.fonts.ready.then(() => refreshTime());
 }
-window.__motion = { S, A, P, byId, select, setTime, setParent, makeLayer, addLayer, splitLayer, freezeFrame, registerAsset, commit, openPhotopea, closePhotopea, photopeaChoiceModal, ffmpegModal, getFFmpeg };
+window.__motion = {
+  S, A, P, byId, select, setTime, setParent, makeLayer, addLayer, splitLayer, freezeFrame, registerAsset, commit,
+  openPhotopea, closePhotopea, photopeaChoiceModal, ffmpegModal, getFFmpeg,
+  getWhisper, transcribeAudioWhisper, runCaptionsWhisper, aiCaptionsPicker,
+  getMediaPipeVision, getMediaPipeSegmenter, segmentPersonMediaPipe, mediaPipeCutPerson, getMediaPipeFaceDetector, mediaPipeFaceAutoFrame
+};
 })();
