@@ -1,34 +1,39 @@
 # Handoff
-Atualizado por: Antigravity em 12/10/2026
+Atualizado por: Codex em 12/10/2026
 
 ## Objetivo atual
-Integração completa do FFmpeg e Photopea concluídas com sucesso.
+Edição automática por pedido entregue, integrada às atualizações recentes de Photopea e FFmpeg.
 
 ## Feito nas últimas sessões
-- Photopea: edição e criação de imagens via iframe, Live Messaging e salvamento direto com Ctrl+S.
-- FFmpeg WebAssembly: caixa de ferramentas completa (`ffmpegModal`) carregada sob demanda via CDN.
-- Operações do FFmpeg: converter para MP4 (H.264), extrair áudio (WAV), comprimir com CRF, gerar GIF animado com paleta Lanczos, remover som (mudo) e comandos personalizados.
-- Pontos de acesso do FFmpeg: chip na barra de adicionar, botão nos painéis de vídeo e áudio, e menu do projeto.
-- Barra de progresso em tempo real, console de log expansível, prévia imediata e botões para adicionar à timeline, substituir camada ou baixar arquivo.
-- Testes unitários em `tests/photopea.cjs` (4/4) e `tests/ffmpeg.cjs` (4/4). PWA em `motion-v15`.
+- Editar com IA: Gemini analisa áudio/quadros, escolhe cortes, cria legendas e zoom; revisão antes de aplicar.
+- Trecho de até 10 minutos, analisado em partes de 60 s; montagem de até 120 s, com formato e enquadramento escolhidos.
+- Revisão permite desmarcar cortes; timeline editável, preview, exportação, undo/redo e backup persistente do original.
+- Cortar pausas sem IA funciona localmente, sem chave ou envio de dados.
+- Cancelamento, timeout, validação de tempos e proteção contra respostas de um projeto alterado.
+- Mantidos Photopea, FFmpeg, exportação rápida/GIF, efeitos, música, narração e figurinhas. PWA motion-v16.
+- 47 verificações validadas: 16 novas de IA e 31 existentes; exportação com mídia real e layout de 360 px.
 
 ## Próximo passo
-Testar transcodificação e compressão com arquivos de vídeo reais de diferentes formatos (MOV, MKV, WebM) em navegadores desktop e móveis.
+Avaliar transcrição e escolha dos destaques com vídeos reais e a chave Gemini do usuário; não houve chamada real à API nesta sessão.
 
 ## Arquivos relevantes
-- `app.js`: seções `photopea` e `FFmpeg` (`getFFmpeg`, `ffmpegModal`), botões no painel e menu.
-- `index.html`: chips `#btnPhotopea` e `#btnFFmpeg`, menus e inputs de arquivos.
-- `style.css`: `.sw-photopea`, `.sw-ffmpeg`, `.ffmpeg-log`, `.ffmpeg-preview`.
-- `tests/ffmpeg.cjs`, `tests/photopea.cjs`. `sw.js`: versão `motion-v15`.
+- ai-edit.js: normalizePlan, normalizeTranscript, findSilences, assemble (helpers puros).
+- app.js: seção "editar vídeo por pedido"; editWithAIModal, beginAIEdit, reviewAIEdit, applyAIEditAssembly, restoreAIEditOriginal.
+- tests/ai-edit-plan.cjs e tests/ai-edit.cjs: Gemini simulado, áudio/vídeo real, múltiplas partes, erros, cancelamento e restauração.
+- .ai/MAPA.md descreve as demais seções, incluindo Photopea/FFmpeg.
 
 ## Decisões tomadas e motivo
-- Carregamento 100% sob demanda do FFmpeg WebAssembly (single-threaded core sem necessidade de COOP/COEP para compatibilidade total com GitHub Pages).
-- Opção para substituir camada existente preservando sincronia ou adicionar como nova faixa.
-- Arquivos processados são registrados no IndexedDB via `registerAsset`.
+- IA retorna somente dados; tempos validados antes de montar. Não executa código, URLs ou IDs fornecidos pelo modelo.
+- Envio de áudio WAV mono e 3 quadros JPEG reduzidos por parte, usando a chave configurada no app.
+- aiEdit.original guarda um único backup; assets preservados e troca de projeto mantém o histórico de undo.
+- Tempos do modelo são relativos ao trecho; trim soma sourceFrom, e a timeline divide pela velocidade.
 
 ## Pendências e armadilhas
-- FFmpeg e Photopea requerem conexão com a internet na primeira inicialização para baixar os binários.
-- Sempre atualizar `VERSION` em `sw.js` a cada mudança nos assets do app.
+- Gemini precisa de internet/chave e pode cobrar; qualidade de transcrição e seleção ainda precisa de avaliação real.
+- Pausas usam energia do áudio: música contínua pode impedir cortes. Enquadramento focal é fixo por clipe, sem tracking.
+- FFmpeg/Photopea/CDNs precisam de internet; microfone precisa de HTTPS/localhost e permissão.
+- Aumentar VERSION em sw.js sempre que mudar o app; manter ai-edit.js no cache.
 
 ## Como rodar e testar
-`python3 -m http.server 8000`, `node --check app.js`, `node --test tests/ffmpeg.cjs tests/photopea.cjs`.
+`python3 -m http.server 8000`, `node --check app.js`, `node --check ai-edit.js`.
+`CHROMIUM_PATH=/usr/bin/chromium node --test --test-concurrency=2 tests/*.cjs` (Playwright, FFmpeg e internet).

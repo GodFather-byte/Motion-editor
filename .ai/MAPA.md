@@ -4,11 +4,13 @@
 - `index.html`: estrutura da interface (barra de projeto, status de salvamento, cabeçalho de prévia com formato/fps, ferramentas de criação, linha do tempo, painel, modal).
 - `style.css`: visual. Variáveis no topo; bloco `@media (max-width: 860px)` é o layout de celular.
 - `app.js`: o editor inteiro, num único IIFE, dividido em seções (abaixo).
+- `ai-edit.js`: helpers puros `normalizePlan`, `normalizeTranscript`, `findSilences`, `assemble` (navegador/Node).
 - `pro-config.js`: chave pública ECDSA e textos/preço do plano Pro.
 - `sw.js`: service worker (cache offline). Mude `VERSION` a cada release.
 - `manifest.webmanifest`, `icons/`: instalação como app.
 - `tools/licenca.mjs`, `tools/licenca.py`: geram chaves de licença Pro (precisam do `.pem`, que não fica no git).
 - `tests/video-editor.cjs`: testes funcionais com Playwright/Chromium, mídia gerada pelo FFmpeg e servidor Python temporário.
+- `tests/ai-edit-plan.cjs` e `tests/ai-edit.cjs`: plano, pausas e edição por pedido com Gemini simulado, mídia real, exportação e backup.
 - `tests/effects.cjs`: câmera, efeitos WebGL, chroma key, partículas, texto curvo/no traço.
 - `tests/export.cjs`: exportação rápida, GIF e preview leve.
 - `tests/music.cjs`: detecção de batida, pulso e montagem na batida, batidas prontas, narração (microfone falso do Chromium), figurinhas.
@@ -37,6 +39,7 @@
 | exportação | `exportModal`, `exportVideo` (MediaRecorder + Web Audio, fallback MP4 → WEBM) |
 | exportação rápida | `fastExport` (WebCodecs + mp4-muxer), `renderAudioMix` (OfflineAudioContext), `seekVideosExact`, `exportGif` (gifenc), `exportPng`, `fileReady`. `renderFrame(c, t, {k, transparent})` desenha em qualquer escala (`RK`) |
 | IA | `gemini()` (generateContent com a chave do usuário), gerar animação, legendas, remover fundo |
+| edição de vídeo com IA | `editWithAIModal`, `beginAIEdit` (áudio/quadros em partes), `reviewAIEdit`, `applyAIEditAssembly`, `restoreAIEditOriginal`; `gemini(parts,json,{signal,temperature})` |
 | animação por código (GSAP) | `codeWorkerMain` (roda no worker isolado), `runCodeSandbox`, `simplifySeries`, `bakeCode`, `applyCode`, `codeModal`, `CODE_EXAMPLES`, `aiWriteCode` |
 | plano Pro | `verifyLicense`, `proModal`, `drawWatermark` |
 | modelos prontos | `TEMPLATES` (cada um é uma função que cria camadas), miniaturas |
@@ -54,3 +57,5 @@ Novos campos em `s`: `colorLook`, `lookIntensity`, `transitionIn/Out`, `transiti
 Música: camada de áudio guarda `s.beats` (segundos do arquivo, antes de corte e velocidade) e `s.bpm`. A régua e o painel Código usam `projectBeats()`. Tipo `icon`: `s.iconName`, `s.d` (path SVG), `s.size`, mais preenchimento/degradê/contorno/brilho das formas.
 
 Tema do editor: tokens no início de `style.css`; `theme` em app.js lê essas variáveis para alças, caminho de movimento, curvas e ondas de áudio. Cores de conteúdo dos projetos são independentes. No desktop, propriedades ocupam a coluna direita inteira; em <=860 px a página empilha os blocos com rolagem, sem reduzir a prévia em telas curtas.
+
+Edição IA: `sourceStart/End` e transcrição são relativos ao início do trecho enviado, em segundos de fonte. `assemble` soma `sourceFrom` no trim e divide por speed na timeline, fecha pausas e limita a duração a quadros completos. Projeto guarda `aiEdit.original` (um único backup, sem aninhamento), request/summary/sourceAsset/localOnly. Assets originais ficam declarados; aplicar/restaurar preserva undo e não chama cleanupAssets. Modais cancelam `aiEditJob`; snapshots rejeitam resultados de uma versão antiga do projeto.

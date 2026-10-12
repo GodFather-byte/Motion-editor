@@ -165,6 +165,18 @@ textarea.code {
 .ai-item:hover:not(:disabled) { border-color: var(--select); }
 .ai-item:disabled { opacity: .5; cursor: default; }
 .ai-item span { color: var(--muted); font-size: 13px; }
+.ai-edit-label { display: block; margin: 14px 0 6px; font-size: 13px; color: var(--fg); }
+#modalBody:has(#editVideo), #modalBody:has(.ai-edit-cuts) { display: grid; gap: 12px; }
+.ai-edit-options { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--line); background: var(--panel-2); border-radius: 10px; }
+.ai-edit-error { min-height: 1em; color: var(--danger) !important; font-size: 13px; overflow-wrap: anywhere; }
+#modalBody:has(.ai-edit-cuts) p { overflow-wrap: anywhere; }
+.ai-edit-frames { display: flex; gap: 6px; overflow-x: auto; padding: 4px 0; }
+.ai-edit-frames img { width: 76px; height: 58px; border-radius: 6px; object-fit: contain; background: var(--bg); flex-shrink: 0; }
+.ai-edit-cuts { display: grid; gap: 8px; max-height: 260px; overflow-y: auto; }
+.ai-edit-cut { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel-2); font-size: 12px; cursor: pointer; }
+.ai-edit-cut input { width: 18px; height: 18px; accent-color: var(--accent); }
+.ai-edit-cut b { display: block; overflow-wrap: anywhere; font-weight: 600; }
+.ai-edit-cut small { display: block; margin-top: 4px; color: var(--muted); }
 .modal-card a { color: var(--select); }
 .modal-card textarea { width: 100%; }
 .modal-card .actions .chip { height: auto; min-height: 30px; padding: 6px 12px; white-space: normal; text-align: left; flex-shrink: 1; }

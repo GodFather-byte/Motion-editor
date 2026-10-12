@@ -58,9 +58,18 @@ Editor de motion graphics que roda direto no navegador e pode ser instalado como
 - Precisa de internet na hora de aplicar, para baixar o GSAP.
 
 **IA** (botão IA, usa o Gemini com a chave do próprio usuário)
+- **Editar com IA**: analisa o som e as cenas de um vídeo, escolhe trechos conforme seu pedido, corta pausas, cria legendas e zoom nos destaques. Você revisa os cortes antes de aplicar.
 - Criar animação a partir de uma descrição em texto.
 - Legendas automáticas a partir da fala, sincronizadas e animadas.
 - Remover fundo de imagens, no próprio aparelho.
+
+Para editar um vídeo: importe o arquivo, toque em **Editar com IA**, descreva o resultado e escolha duração, formato e opções. Configure sua chave em **IA → Configurar chave do Gemini**. A análise envia ao Gemini o áudio e três quadros reduzidos por minuto do trecho escolhido; não envia o arquivo de vídeo completo. O serviço pode cobrar pelo uso.
+
+Cada análise cobre até 10 minutos de fonte, em partes de 60 segundos. A montagem final tem até 2 minutos. Os tempos de início/fim são do arquivo original; corte e velocidade são respeitados. Vídeos sem áudio legível podem ser analisados visualmente, sem legendas. O enquadramento usa um ponto focal por clipe, sem rastreamento contínuo de pessoas.
+
+Na revisão, desmarque os trechos que não quiser e toque em **Aplicar e ver prévia**. Clipes e legendas ficam editáveis na timeline e podem ser exportados normalmente. Confira o texto e os cortes sugeridos antes de exportar. **Desfazer** recupera a versão anterior; **Editar com IA → Voltar ao original** restaura o projeto original mesmo após recarregar. O backup do original e os arquivos permanecem na edição salva.
+
+**Cortar pausas sem IA** funciona no aparelho, sem chave nem envio de dados: remove trechos de som baixo, sem escolher destaques ou criar legendas. Música contínua pode impedir a detecção de pausas.
 
 **Produto**
 - 8 modelos prontos (4 grátis e 4 Pro).
@@ -111,6 +120,7 @@ node --test tests/code-animation.cjs   # painel Código (baixa o GSAP, precisa d
 node --test tests/export.cjs           # exportação rápida, GIF e preview leve (precisa de internet)
 node --test tests/effects.cjs          # câmera, efeitos, chroma key, partículas, texto curvo
 node --test tests/music.cjs            # batidas, montagem, batidas prontas, narração, figurinhas
+node --test tests/ai-edit-plan.cjs tests/ai-edit.cjs # edição por pedido, corte de pausas e Gemini simulado
 ```
 
 O teste inicia seu próprio servidor e gera mídia temporária. Confere recorte, cores, transições, divisão, desfazer/refazer, persistência, exportação e áudio em diferentes velocidades; inclui layout de 360 px. Defina `CHROMIUM_PATH` se o Chromium não estiver em `/usr/bin/chromium`. Essas ferramentas são apenas para testes; o app continua sem instalação de dependências ou build.
@@ -122,6 +132,7 @@ O teste inicia seu próprio servidor e gera mídia temporária. Confere recorte,
 | `index.html` | Estrutura da interface |
 | `style.css` | Visual e layout (desktop e celular) |
 | `app.js` | Editor completo: modelo, render, áudio/vídeo, timeline, painel, IA, Pro, modelos, exportação |
+| `ai-edit.js` | Validação do plano, detecção de silêncio e remapeamento de clipes/legendas |
 | `pro-config.js` | Chave pública e textos do plano Pro |
 | `tools/` | Geradores de licença (Node e Python) |
 | `sw.js` | Cache offline. Mude `VERSION` a cada atualização |
