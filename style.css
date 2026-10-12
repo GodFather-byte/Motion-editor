@@ -89,6 +89,18 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .btn-primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 .btn-primary:hover { background: #ffc46e; }
 .btn-danger { color: var(--danger); }
+.btn-ai { display: inline-flex; align-items: center; gap: 6px; color: var(--select); border-color: rgb(111 216 255 / .35); }
+.btn-ai svg { width: 16px; height: 16px; }
+.ai-list { display: grid; gap: 8px; }
+.ai-item { display: grid; gap: 2px; text-align: left; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel-2); }
+.ai-item:hover:not(:disabled) { border-color: var(--select); }
+.ai-item:disabled { opacity: .5; cursor: default; }
+.ai-item span { color: var(--muted); font-size: 13px; }
+.modal-card a { color: var(--select); }
+.modal-card textarea { width: 100%; }
+.modal-card .actions .chip { height: auto; min-height: 30px; padding: 6px 12px; white-space: normal; text-align: left; flex-shrink: 1; }
+.progress.indeterminate div { width: 35%; animation: indet 1.2s ease-in-out infinite; }
+@keyframes indet { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
 .btn-small { height: 30px; padding: 0 10px; font-size: 13px; }
 
 .menu {

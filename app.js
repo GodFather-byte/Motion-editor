@@ -1271,7 +1271,7 @@ function layerPanel(L) {
       <div data-show="fillOn">${fillRows('fill', 'Cor do preenchimento')}</div>`;
   } else if (L.type === 'image' || L.type === 'video') {
     content = numRow('w', 'Largura', 1, 6000) + numRow('h', 'Altura', 1, 6000) +
-      `<div class="actions"><button class="btn btn-small" data-act="replace-media">Trocar arquivo</button><button class="btn btn-small" data-act="media-ratio">Proporção original</button><button class="btn btn-small" data-act="media-fill">Preencher a tela</button></div>`;
+      `<div class="actions"><button class="btn btn-small" data-act="replace-media">Trocar arquivo</button><button class="btn btn-small" data-act="media-ratio">Proporção original</button><button class="btn btn-small" data-act="media-fill">Preencher a tela</button>${L.type === 'image' ? '<button class="btn btn-small btn-ai" data-act="remove-bg">Remover fundo (IA)</button>' : ''}</div>`;
   } else if (L.type === 'group') {
     content = '<p class="hint">Um grupo não aparece no vídeo. Ele move, gira, escala e esmaece todas as camadas que o seguem. Escolha este grupo em "Seguir camada" nas outras camadas.</p>';
   }
@@ -1285,6 +1285,7 @@ function layerPanel(L) {
       ${numRow('fadeOut', 'Saída (s)', 0, 10, 0.1)}
       ${numRow('trimIn', 'Começa em (s)', 0, Math.max(1, Math.floor(mediaDur(L) === Infinity ? 60 : mediaDur(L))), 0.1)}
       <p class="hint">${info}</p>
+      ${rec && rec.buffer ? '<div class="actions"><button class="btn btn-small btn-ai" data-act="captions">Gerar legendas (IA)</button></div>' : ''}
       ${L.type === 'audio' ? '<div class="actions"><button class="btn btn-small" data-act="replace-media">Trocar arquivo</button><button class="btn btn-small" data-act="fit-project">Projeto do tamanho da música</button></div>' : ''}
     </div>`;
   }
@@ -1470,6 +1471,8 @@ panel.addEventListener('click', e => {
     else if (act === 'del' && L) deleteLayer(L);
     else if ((act === 'up' || act === 'down') && L) moveLayer(L, act === 'up' ? -1 : 1);
     else if (act === 'replace-media' && L) pickMedia(L.type, L.id);
+    else if (act === 'remove-bg' && L) removeBackground(L);
+    else if (act === 'captions' && L) aiCaptionsPicker();
     else if (act === 'media-ratio' && L) {
       const rec = A.get(L.s.asset);
       if (rec && rec.w) { L.s.h = Math.round(L.s.w * rec.h / rec.w); commit(); syncPanel(true); refreshTime(); }
@@ -1876,6 +1879,317 @@ async function exportVideo(forceMime) {
   ]);
 }
 $('#btnExport').onclick = () => exportVideo();
+
+/* ======================= IA (Gemini + remoção de fundo) ======================= */
+const AI_KEY = 'motion-editor:ai';
+const AI_DEFAULT_MODEL = 'gemini-3.8-flash';
+const aiCfg = () => { try { return JSON.parse(localStorage.getItem(AI_KEY)) || {}; } catch { return {}; } };
+const saveAiCfg = c => { try { localStorage.setItem(AI_KEY, JSON.stringify(c)); } catch { /* sem armazenamento */ } };
+const isNum = v => typeof v === 'number' && isFinite(v);
+
+function parseJSONLoose(text) {
+  const t = String(text).replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+  try { return JSON.parse(t); } catch { /* tenta achar o JSON dentro do texto */ }
+  const i = Math.min(...['{', '['].map(c => { const k = t.indexOf(c); return k < 0 ? Infinity : k; }));
+  const j = Math.max(t.lastIndexOf('}'), t.lastIndexOf(']'));
+  if (isFinite(i) && j > i) return JSON.parse(t.slice(i, j + 1));
+  throw new Error('A IA não respondeu em JSON.');
+}
+
+async function gemini(parts, json = true) {
+  const cfg = aiCfg();
+  if (!cfg.key) throw Object.assign(new Error('Configure sua chave do Gemini primeiro.'), { code: 'nokey' });
+  const model = (cfg.model || AI_DEFAULT_MODEL).trim();
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': cfg.key },
+    body: JSON.stringify({
+      contents: [{ role: 'user', parts }],
+      generationConfig: json ? { responseMimeType: 'application/json', temperature: 0.9 } : { temperature: 0.7 },
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = data.error && data.error.message ? data.error.message : `Erro ${res.status}`;
+    if (res.status === 400 && /api key/i.test(msg)) throw Object.assign(new Error('A chave do Gemini foi recusada. Confira se copiou ela inteira.'), { code: 'nokey' });
+    if (res.status === 404) throw new Error(`O modelo "${model}" não existe mais ou não está liberado na sua conta. Troque o modelo nas configurações de IA.`);
+    if (res.status === 429) throw new Error('Limite de uso do Gemini atingido. Espere um pouco e tente de novo.');
+    throw new Error(msg);
+  }
+  const text = ((data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) || []).map(p => p.text || '').join('');
+  if (!text) throw new Error('A IA não devolveu nada. Tente reformular o pedido.');
+  return json ? parseJSONLoose(text) : text;
+}
+
+function aiSettings(after) {
+  const c = aiCfg();
+  showModal('Configurar IA', `
+    <p>As funções de IA usam o Gemini, do Google, com a sua chave. Ela fica salva só neste aparelho.</p>
+    <p>Crie uma chave grátis em <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> e cole abaixo.</p>
+    <label class="hint" for="aiKey">Chave da API<input class="field" id="aiKey" type="password" autocomplete="off" spellcheck="false" value="${esc(c.key || '')}" placeholder="AIza..."></label>
+    <label class="hint" for="aiModel">Modelo<input class="field" id="aiModel" spellcheck="false" value="${esc(c.model || AI_DEFAULT_MODEL)}"></label>`, [
+    { label: 'Cancelar' },
+    { label: 'Salvar', cls: 'btn-primary', onClick: () => {
+      saveAiCfg({ key: $('#aiKey').value.trim(), model: $('#aiModel').value.trim() || AI_DEFAULT_MODEL });
+      toast('Configuração de IA salva.');
+      if (after) setTimeout(after, 50);
+    } },
+  ]);
+}
+
+function aiError(err, retry) {
+  if (err && err.code === 'nokey') { aiSettings(retry); return; }
+  showModal('A IA não conseguiu', `<p>${esc(err && err.message ? err.message : 'Erro desconhecido.')}</p>`, [
+    { label: 'Fechar' }, ...(retry ? [{ label: 'Tentar de novo', cls: 'btn-primary', onClick: () => setTimeout(retry, 50) }] : []),
+  ]);
+}
+
+function busy(title, text) {
+  showModal(title, `<p id="busyText">${esc(text)}</p><div class="progress indeterminate"><div></div></div>`, []);
+  return t => { const el = $('#busyText'); if (el) el.textContent = t; };
+}
+
+/* ---------- 1. gerar animação a partir de um texto ---------- */
+function aiPrompt(request, replace) {
+  const p = P();
+  return `Você é um motion designer sênior. Crie uma animação para um editor de motion graphics descrito por JSON.
+
+QUADRO: ${p.width}x${p.height} px, origem no canto superior esquerdo. "x" e "y" são o CENTRO da camada. ${replace ? 'Escolha a duração (entre 3 e 15 s).' : `Duração do projeto: ${p.duration} s.`} ${p.fps} quadros/s.
+
+FORMATO DA RESPOSTA (somente JSON, sem comentários):
+{"background":"#rrggbb","duration":number,"layers":[CAMADA, ...]}
+A primeira camada da lista fica na frente de todas.
+
+CAMADA: {"type":"text|rect|ellipse|star|path","name":string,"start":s,"end":s,"p":{...},"s":{...},"kf":{"prop":[{"t":s,"v":number,"e":ease}]}}
+- "p" são valores fixos: x, y, scale (%, 100 = normal), rotation (graus), opacity (0-100), blur (px), glow (0-150, brilho externo), brightness/contrast/saturate (%, 100 = normal), hue (graus), trim (0-100, só "path": quanto do traço aparece).
+- "kf" anima qualquer uma dessas propriedades. "t" é o tempo absoluto em segundos. Quando uma propriedade tem keyframes, eles mandam no valor.
+- ease: ${Object.keys(EASES).join(', ')}.
+- "s" por tipo:
+  text: text, font (${FONTS.join(', ')}), size (px), weight (400|600|700|900), color, fillType (solid|linear|radial), fill2, gradAngle, align (left|center|right), stroke (px), strokeColor, glowColor, anim (${Object.keys(TEXT_ANIMS).join(', ')}).
+  rect: w, h, radius, fill, fillType, fill2, gradAngle.  ellipse: w, h, fill, fillType, fill2.  star: w, points, inner (0.1-0.9), fill.
+  path: points ([[x,y],...] relativos ao centro da camada), stroke, width, fillOn, fill.
+  Todos podem ter: blend (${Object.keys(BLENDS).join(', ')}), glowColor, shadowX, shadowY, shadowBlur, shadowColor, shadowOpacity.
+- Cores sempre em "#rrggbb".
+
+REGRAS: 3 a 12 camadas. Paleta harmoniosa e contraste legível. Movimento elegante com keyframes (entradas com easeOut/back, saídas com easeIn) e escalonamento entre camadas. Textos curtos, no idioma do pedido. No fim das entradas tudo deve estar dentro do quadro. Use formas e luzes desfocadas (ellipse com blur alto e blend screen) para dar profundidade.
+
+PEDIDO: ${request}`;
+}
+
+function sanitizeAI(obj, replace) {
+  const p = P();
+  const dur = replace && isNum(obj.duration) ? clamp(obj.duration, 1, 60) : p.duration;
+  const hex = v => { if (typeof v !== 'string') return null; const m = v.trim().match(/^#?([0-9a-f]{3}|[0-9a-f]{6})$/i); if (!m) return null; const h = m[1].length === 3 ? m[1].split('').map(c => c + c).join('') : m[1]; return '#' + h.toLowerCase(); };
+  const enums = { font: FONTS, anim: Object.keys(TEXT_ANIMS), blend: Object.keys(BLENDS), fillType: ['solid', 'linear', 'radial'], align: ['left', 'center', 'right'] };
+  const layers = [];
+  for (const raw of (Array.isArray(obj.layers) ? obj.layers : []).slice(0, 30)) {
+    if (!raw || !['text', 'rect', 'ellipse', 'star', 'path'].includes(raw.type)) continue;
+    const L = makeLayer(raw.type);
+    if (typeof raw.name === 'string' && raw.name.trim()) L.name = raw.name.trim().slice(0, 40);
+    L.start = clamp(isNum(raw.start) ? raw.start : 0, 0, dur - 0.1);
+    L.end = clamp(isNum(raw.end) ? raw.end : dur, L.start + 0.1, dur);
+    const clampP = (k, v) => {
+      if (k === 'x') return clamp(v, -p.width, p.width * 2);
+      if (k === 'y') return clamp(v, -p.height, p.height * 2);
+      const d = PROPS[k]; return d.min != null ? clamp(v, d.min, d.max) : v;
+    };
+    for (const k of Object.keys(PROPS)) if (raw.p && isNum(raw.p[k])) L.p[k] = clampP(k, raw.p[k]);
+    for (const [k, v] of Object.entries(raw.s || {})) {
+      if (!(k in L.s) || k === 'asset' || k === 'clip') continue;
+      const cur = L.s[k];
+      if (k === 'points') {
+        if (Array.isArray(v)) L.s.points = v.filter(q => Array.isArray(q) && isNum(q[0]) && isNum(q[1])).slice(0, 400).map(q => [clamp(q[0], -p.width * 2, p.width * 2), clamp(q[1], -p.height * 2, p.height * 2)]);
+      } else if (enums[k]) { if (enums[k].includes(String(v))) L.s[k] = String(v); }
+      else if (typeof cur === 'number' && isNum(v)) L.s[k] = clamp(v, -10000, 10000);
+      else if (typeof cur === 'boolean') L.s[k] = !!v;
+      else if (typeof cur === 'string' && hex(cur)) { const h = hex(v); if (h) L.s[k] = h; }
+      else if (k === 'text' && typeof v === 'string') L.s.text = v.slice(0, 300);
+    }
+    if (L.type === 'text' && isNum(L.s.weight)) L.s.weight = [400, 600, 700, 900].reduce((a, b) => (Math.abs(b - L.s.weight) < Math.abs(a - L.s.weight) ? b : a));
+    for (const [k, arr] of Object.entries(raw.kf || {})) {
+      if (!PROPS[k] || !Array.isArray(arr)) continue;
+      const ks = arr.filter(q => q && isNum(q.t) && isNum(q.v)).slice(0, 60)
+        .map(q => ({ t: round(clamp(q.t, 0, dur), 4), v: clampP(k, q.v), e: EASES[q.e] ? q.e : 'easeInOut' }))
+        .sort((a, b) => a.t - b.t);
+      if (ks.length) L.kf[k] = ks;
+    }
+    if (L.type === 'path' && L.s.points.length < 2) continue;
+    layers.push(L);
+  }
+  if (!layers.length) throw new Error('A IA não criou nenhuma camada válida. Tente descrever de outro jeito.');
+  return { layers, dur, background: hex(obj.background) };
+}
+
+function aiGenerate() {
+  const ideas = ['Abertura de canal de música eletrônica com título neon', 'Promoção de pizza: 50% OFF só hoje', 'Contagem regressiva 3, 2, 1 com explosão de cores', 'Intro elegante para loja de roupas'];
+  showModal('Criar animação com IA', `
+    <p>Descreva o que você quer. A IA monta as camadas e os keyframes, e depois você edita tudo normalmente.</p>
+    <textarea id="aiReq" rows="4" placeholder="Ex.: título &quot;NOITE DO FUNK&quot; entrando com zoom e brilho roxo, estrelas girando"></textarea>
+    <div class="actions">${ideas.map(i => `<button class="chip" data-idea="${esc(i)}">${esc(i)}</button>`).join('')}</div>
+    <label class="check"><input type="checkbox" id="aiReplace" ${P().layers.length ? '' : 'checked'}> Começar do zero (substitui o projeto atual)</label>`, [
+    { label: 'Cancelar' },
+    { label: 'Configurar chave', onClick: () => setTimeout(() => aiSettings(aiGenerate), 50) },
+    { label: 'Gerar', cls: 'btn-primary', keepOpen: true, onClick: () => {
+      const req = $('#aiReq').value.trim();
+      if (!req) { toast('Descreva a animação primeiro.'); return; }
+      runGenerate(req, $('#aiReplace').checked);
+    } },
+  ]);
+  $$('[data-idea]').forEach(b => (b.onclick = () => { $('#aiReq').value = b.dataset.idea; $('#aiReq').focus(); }));
+  setTimeout(() => $('#aiReq') && $('#aiReq').focus(), 30);
+}
+
+async function runGenerate(req, replace) {
+  busy('Criando sua animação…', 'A IA está montando as camadas. Leva de 5 a 30 segundos.');
+  try {
+    const obj = await gemini([{ text: aiPrompt(req, replace) }]);
+    const { layers, dur, background } = sanitizeAI(obj, replace);
+    const p = P();
+    if (replace) {
+      p.layers = [];
+      p.duration = dur;
+      if (background) p.background = background;
+      p.name = req.slice(0, 40);
+      $('#projectName').value = p.name;
+    }
+    p.layers.unshift(...layers);
+    S.sel = null; S.selKf = null;
+    commit();
+    hideModal();
+    renderTimeline(); renderPanel(); setTime(0);
+    play();
+    toast(`${layers.length} camadas criadas. Toque em qualquer uma para editar.`);
+  } catch (err) {
+    aiError(err, () => runGenerate(req, replace));
+  }
+}
+
+/* ---------- 2. legendas automáticas ---------- */
+function encodeWav(buf) {
+  const data = buf.getChannelData(0), n = data.length;
+  const out = new DataView(new ArrayBuffer(44 + n * 2));
+  const w = (o, s) => [...s].forEach((c, i) => out.setUint8(o + i, c.charCodeAt(0)));
+  w(0, 'RIFF'); out.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt ');
+  out.setUint32(16, 16, true); out.setUint16(20, 1, true); out.setUint16(22, 1, true);
+  out.setUint32(24, buf.sampleRate, true); out.setUint32(28, buf.sampleRate * 2, true);
+  out.setUint16(32, 2, true); out.setUint16(34, 16, true); w(36, 'data'); out.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) out.setInt16(44 + i * 2, clamp(data[i], -1, 1) * 0x7fff, true);
+  return new Blob([out], { type: 'audio/wav' });
+}
+async function sliceToWav(buffer, from, dur) {
+  const rate = 16000;
+  const oc = new OfflineAudioContext(1, Math.max(1, Math.ceil(dur * rate)), rate);
+  const src = oc.createBufferSource();
+  src.buffer = buffer; src.connect(oc.destination); src.start(0, from, dur);
+  return encodeWav(await oc.startRendering());
+}
+const blobToB64 = async b => (await blobToDataURL(b)).split(',')[1];
+
+function aiCaptionsPicker() {
+  const media = P().layers.filter(L => MEDIA(L.type) && A.get(L.s.asset) && A.get(L.s.asset).buffer);
+  if (!media.length) {
+    showModal('Nada para legendar', '<p>Adicione um vídeo com fala ou uma música/narração primeiro. As legendas são criadas a partir do som.</p>', [{ label: 'Entendi', cls: 'btn-primary' }]);
+    return;
+  }
+  const sel = selLayer();
+  const first = media.includes(sel) ? sel : media[0];
+  showModal('Legendas automáticas', `
+    <p>A IA escuta o som, transcreve e cria as legendas sincronizadas, já animadas no estilo Reels.</p>
+    <div class="row plain"><label for="capLayer">Áudio de</label><select id="capLayer">${media.map(L => `<option value="${L.id}"${L === first ? ' selected' : ''}>${esc(L.name)}</option>`).join('')}</select></div>
+    <div class="row plain"><label for="capStyle">Estilo</label><select id="capStyle"><option value="pop">Estourar letras</option><option value="words">Palavra por palavra</option><option value="none">Sem animação</option></select></div>`, [
+    { label: 'Cancelar' },
+    { label: 'Criar legendas', cls: 'btn-primary', keepOpen: true, onClick: () => runCaptions(byId($('#capLayer').value), $('#capStyle').value) },
+  ]);
+}
+
+async function runCaptions(L, style) {
+  const say = busy('Criando legendas…', 'Preparando o áudio…');
+  try {
+    const rec = A.get(L.s.asset);
+    const from = L.s.trimIn || 0;
+    const len = Math.min(L.end - L.start, rec.buffer.duration - from);
+    const CHUNK = 240;
+    const segs = [];
+    for (let off = 0; off < len - 0.05; off += CHUNK) {
+      const d = Math.min(CHUNK, len - off);
+      say(len > CHUNK ? `Transcrevendo parte ${Math.floor(off / CHUNK) + 1} de ${Math.ceil(len / CHUNK)}…` : 'Transcrevendo… leva alguns segundos.');
+      const wav = await sliceToWav(rec.buffer, from + off, d);
+      const res = await gemini([
+        { text: `Transcreva a fala deste áudio de ${d.toFixed(1)} segundos. Responda só JSON no formato {"segments":[{"start":0.0,"end":1.2,"text":"..."}]}. Cada segmento deve ter no máximo 5 palavras, com tempos em segundos contados do início deste áudio, sem sobreposição, no idioma falado e com pontuação natural. Se não houver fala, devolva {"segments":[]}.` },
+        { inline_data: { mime_type: 'audio/wav', data: await blobToB64(wav) } },
+      ]);
+      const arr = Array.isArray(res) ? res : res.segments || [];
+      for (const s of arr) if (s && isNum(s.start) && typeof s.text === 'string' && s.text.trim()) {
+        const st = clamp(s.start, 0, d), en = clamp(isNum(s.end) ? s.end : st + 1.5, st + 0.2, d + 0.5);
+        segs.push({ start: off + st, end: off + en, text: s.text.trim() });
+      }
+    }
+    if (!segs.length) throw new Error('Não encontrei fala nesse áudio.');
+    const p = P(), m = Math.min(p.width, p.height);
+    const group = makeLayer('group', { name: 'Legendas', p: { x: p.width / 2, y: Math.round(p.height * 0.74) } });
+    group.start = 0; group.end = p.duration;
+    const caps = segs.map((s, i) => {
+      const next = segs[i + 1];
+      const start = clamp(L.start + s.start, 0, p.duration - 0.05);
+      const end = clamp(Math.min(L.start + s.end + 0.15, next ? L.start + next.start : Infinity), start + 0.15, p.duration);
+      return makeLayer('text', {
+        name: `Legenda ${i + 1}`, parent: group.id, start, end, p: { x: 0, y: 0 },
+        s: { text: s.text, font: 'Montserrat', size: Math.round(m * 0.075), weight: 900, color: '#ffffff', stroke: Math.round(m * 0.008), strokeColor: '#000000', anim: style, shadowY: 6, shadowBlur: 12, shadowOpacity: 50 },
+      });
+    });
+    p.layers.unshift(group, ...caps);
+    S.sel = group.id; S.selKf = null;
+    commit(); hideModal(); renderTimeline(); renderPanel(); setTime(caps[0].start);
+    toast(`${caps.length} legendas criadas. Mova o grupo "Legendas" para reposicionar todas.`);
+  } catch (err) {
+    aiError(err, () => runCaptions(L, style));
+  }
+}
+
+/* ---------- 3. remover fundo ---------- */
+const BG_LIB = 'https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.7.0/+esm';
+async function removeBackground(L) {
+  const rec = A.get(L.s.asset);
+  if (!rec) { toast('Imagem não encontrada neste aparelho.'); return; }
+  const say = busy('Removendo o fundo…', 'Baixando o modelo de IA (só na primeira vez, cerca de 40 MB)…');
+  try {
+    const lib = await import(BG_LIB);
+    const out = await lib.removeBackground(rec.blob, {
+      progress: (key, cur, total) => { if (total) say(`${key.startsWith('fetch') ? 'Baixando o modelo' : 'Processando'}… ${Math.round(cur / total * 100)}%`); },
+      output: { format: 'image/png' },
+    });
+    const name = (P().assets[L.s.asset] && P().assets[L.s.asset].name) || 'imagem';
+    const nrec = await registerAsset(out, 'image', name.replace(/\.[^.]+$/, '') + ' sem fundo.png');
+    L.s.asset = nrec.id;
+    commit(); hideModal(); renderPanel(); refreshTime();
+    toast('Fundo removido. Ctrl+Z ou ↶ volta a imagem original.');
+  } catch (err) {
+    hideModal();
+    showModal('Não deu para remover o fundo', `<p>${esc(err && err.message ? err.message : 'Erro desconhecido.')}</p><p>Essa função baixa um modelo da internet na primeira vez. Confira a conexão e tente de novo.</p>`, [{ label: 'Fechar' }, { label: 'Tentar de novo', cls: 'btn-primary', onClick: () => setTimeout(() => removeBackground(L), 50) }]);
+  }
+}
+
+function aiMenu() {
+  const L = selLayer();
+  const img = L && L.type === 'image';
+  showModal('Ferramentas de IA', `<div class="ai-list">
+    <button class="ai-item" data-ai="gen"><b>Criar animação com texto</b><span>Descreva e a IA monta camadas e keyframes.</span></button>
+    <button class="ai-item" data-ai="cap"><b>Legendas automáticas</b><span>Transcreve a fala de um vídeo ou áudio e cria legendas animadas.</span></button>
+    <button class="ai-item" data-ai="bg"${img ? '' : ' disabled'}><b>Remover fundo</b><span>${img ? 'Recorta a imagem selecionada.' : 'Selecione uma camada de imagem primeiro.'}</span></button>
+    <button class="ai-item" data-ai="cfg"><b>Configurar chave do Gemini</b><span>${aiCfg().key ? 'Chave configurada neste aparelho.' : 'Necessária para criar animações e legendas.'}</span></button>
+  </div>`, [{ label: 'Fechar' }]);
+  $$('[data-ai]').forEach(b => (b.onclick = () => {
+    const a = b.dataset.ai;
+    hideModal();
+    setTimeout(() => {
+      if (a === 'gen') aiGenerate();
+      else if (a === 'cap') aiCaptionsPicker();
+      else if (a === 'bg' && img) removeBackground(L);
+      else if (a === 'cfg') aiSettings();
+    }, 30);
+  }));
+}
+$('#btnAI').onclick = aiMenu;
 
 /* ======================= menu ======================= */
 const menu = $('#menu');
