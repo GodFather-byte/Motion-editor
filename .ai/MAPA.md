@@ -1,8 +1,8 @@
 # Mapa do repositório
 
 ## Arquivos
-- `index.html`: estrutura da interface (barra de projeto, status de salvamento, cabeçalho de prévia com formato/fps, ferramentas de criação, linha do tempo, painel, modal).
-- `style.css`: visual. Variáveis no topo; `@media (max-width: 860px)` é o layout de celular (tela cheia, sem molduras); `@media (pointer: coarse)` aumenta os alvos de toque em celular e tablet. PC usa o layout padrão, sem media query.
+- `index.html`: estrutura da interface (topo com nome e histórico, prévia, barra Adicionar, linha do tempo, painel de propriedades, menu do projeto, barra de abas e scrim do celular, modal). Um DOM só: no celular os mesmos nós viram folhas.
+- `style.css`: visual. Variáveis no topo; `@media (max-width: 860px)` é o celular como app (tela de trabalho fixa, barra de abas e folhas, veja a seção abaixo); `@media (pointer: coarse)` aumenta os alvos de toque em celular e tablet. As peças novas do celular ficam `display: none` no PC, fora de media.
 - `app.js`: o editor inteiro, num único IIFE, dividido em seções (abaixo).
 - `ai-edit.js`: helpers puros `normalizePlan`, `normalizeTranscript`, `findSilences`, `assemble` (navegador/Node).
 - `lottie.js`: `MotionLottie.load/render/sourceInfo`, runtime dotlottie-web 0.81.0 ESM/WASM sob demanda (JSON e dotLottie v1/v2).
@@ -10,7 +10,8 @@
 - `sw.js`: service worker (cache offline). Mude `VERSION` a cada release.
 - `manifest.webmanifest`, `icons/`: instalação como app.
 - `tools/licenca.mjs`, `tools/licenca.py`: geram chaves de licença Pro (precisam do `.pem`, que não fica no git).
-- `tests/video-editor.cjs`: testes funcionais com Playwright/Chromium, mídia gerada pelo FFmpeg e servidor Python temporário.
+- `tests/mobile-sheets.cjs`: celular (360 e 390 px): tela fixa, abas, folhas, toque na prévia e na linha do tempo, Projeto, Play e largura.
+- `tests/video-editor.cjs`: testes funcionais com Playwright/Chromium, mídia gerada pelo FFmpeg e servidor Python temporário. Em 360 px usa `sheet()`/`closeSheet()` para abrir a folha certa antes de cada clique.
 - `tests/ai-edit-plan.cjs` e `tests/ai-edit.cjs`: plano, pausas e edição por pedido com Gemini simulado, mídia real, exportação e backup.
 - `tests/lottie.cjs`: runtime real, pacotes v1/v2 com imagens, frames/trim/speed/loop/reverso, clones, portabilidade, MP4/GIF, falhas e troca de projeto.
 - `tests/effects.cjs`: câmera, efeitos WebGL, chroma key, partículas, texto curvo/no traço.
@@ -49,6 +50,7 @@
 | modelos prontos | `TEMPLATES` (cada um é uma função que cria camadas), miniaturas |
 | photopea | `openPhotopea`, `closePhotopea`, `photopeaChoiceModal`, `applyPhotopeaResult`, Live Messaging (`saveToOE`), integração de atalhos e arquivo |
 | FFmpeg | `getFFmpeg`, `ffmpegModal` (converter para MP4 H.264, extrair áudio WAV, comprimir CRF, gerar GIF animado, mudo, comandos livres) |
+| abas e folhas (celular) | logo após `const app`: `phoneMQ`, `openSheet`/`closeSheet`, estado em `app.dataset.sheet`, clique delegado (abas, X, fundo, encaminhamentos), fechamento antes de ações de chip e de Projeto |
 | menu, modal, teclado, PWA, início | resto da interface e inicialização |
 
 ## Modelo de dados (resumo)
@@ -65,3 +67,13 @@ Tema do editor: tokens no início de `style.css`; `theme` em app.js lê essas va
 Edição IA: `sourceStart/End` e transcrição são relativos ao início do trecho enviado, em segundos de fonte. `assemble` soma `sourceFrom` no trim e divide por speed na timeline, fecha pausas e limita a duração a quadros completos. Projeto guarda `aiEdit.original` (um único backup, sem aninhamento), request/summary/sourceAsset/localOnly. Assets originais ficam declarados; aplicar/restaurar preserva undo e não chama cleanupAssets. Modais cancelam `aiEditJob`; snapshots rejeitam resultados de uma versão antiga do projeto.
 
 Lottie: `assets.kind='lottie'` guarda o blob original (JSON ou ZIP). `s` tem `animationId`, `trimIn`, `speed`, `loop`, `reverse`, `w/h` e enquadramento. `TIMED_MEDIA` inclui Lottie para cortes/duração; `MEDIA` continua só vídeo/áudio para som. Um player/canvas por asset, reposicionado/resize síncrono antes de cada draw; metadados separados por animationId. Tempo de fonte `(t-start)*speed+trimIn`, com módulo da duração em loop; frame usa a taxa da fonte. Runtime limita o canvas e não inicia player/state machines. Cargas descartadas destroem o player; arquivos só são registrados após validar. `sw.js` guarda ESM/WASM fixos após primeiro uso, além de lottie.js no shell.
+
+## Celular como app (até 860 px)
+- Abas: `nav.tabbar > button[data-sheet-open]` (add, ia, props, project). Aba aberta tem `aria-pressed="true"`. Tocar a aba aberta fecha.
+- Folhas (`.sheet`, `position: fixed` acima de `--tab-h`): `.add-bar` (folhas add e ia; grupos com `data-g` e `.add-title`; `#app[data-sheet=ia]` mostra só `data-g=ia`), `#panel` (props; cabeçalho com `.fwd-play` e `.sheet-close`), `#menu` (project; `.menu-group` com títulos). Scrim: `.sheet-scrim` (último filho de `#app`).
+- Estado: só `app.dataset.sheet` (`add`, `ia`, `props`, `project`). CSS usa `#app[data-sheet=...]`. No celular o atributo `hidden` do `#menu` não controla mais a visibilidade.
+- Abrir: aba; toque no nome da camada (`.tl-label`); toque sem arraste sobre a camada no preview (`drag.tap` em `endDrag`, menos de 8 px). Não abre ao adicionar camada, ao desfazer nem ao usar IA.
+- Fechar: X (`[data-sheet-close]`), fundo, Esc (no teclado, Esc e atalhos ficam bloqueados com folha aberta), aba aberta, ou ação de chip ou item do Projeto (`closeSheet(false)` antes da ação).
+- Encaminhamentos: `button[data-forward="ID"]` chama `#ID.click()` sem duplicar IDs. Usados: `btnAI` (IA), `btnPro` e `btnInstall` (Projeto, copiados ao abrir) e `btnPlay` com `data-keep` (cabeçalho de Propriedades).
+- Inputs de arquivo (`#mediaInput`, `#photopeaFileInput`, `#ffmpegFileInput`, `#projectInput`) ficam no fim de `#app`, escondidos.
+- `#btnMenu`, `#btnPro`, `#btnAI`, `#btnInstall` e `#btnFFmpeg` ficam `display: none` no celular. A ação de FFmpeg está em Projeto > Ferramentas (`data-menu="ffmpeg"`).

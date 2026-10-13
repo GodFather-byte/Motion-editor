@@ -36,6 +36,8 @@ after(async () => {
   if (fixtures) rmSync(fixtures, { recursive: true, force: true });
 });
 
+async function sheet(page, name) { if ((await page.locator('#app').getAttribute('data-sheet')) !== name && await page.locator(`[data-sheet-open="${name}"]`).isVisible()) await page.locator(`[data-sheet-open="${name}"]`).click(); }
+async function closeSheet(page) { if (await page.locator('#app[data-sheet]').count()) await page.keyboard.press('Escape'); }
 async function editor(t, width = 1280, offlineAudio = false) {
   const context = await browser.newContext({ viewport: { width, height: 800 } });
   t.after(() => context.close());
@@ -63,6 +65,7 @@ async function editor(t, width = 1280, offlineAudio = false) {
   return page;
 }
 async function input(page, key, value) {
+  await sheet(page, 'props');
   const field = page.locator(`#s-${key}`);
   if (await field.evaluate(el => el.tagName === 'SELECT')) await field.selectOption(String(value));
   else { await field.fill(String(value)); await field.dispatchEvent('input'); await field.dispatchEvent('change'); }
@@ -72,6 +75,7 @@ async function pixel(page, x = 90, y = 160) {
   return page.evaluate(({ x, y }) => [...document.querySelector('#canvas').getContext('2d').getImageData(x, y, 1, 1).data], { x, y });
 }
 async function importVideo(page) {
+  await sheet(page, 'add');
   await page.locator('[data-add="video"]').click();
   await page.locator('#mediaInput').setInputFiles(path.join(fixtures, 'bands.webm'));
   await page.waitForFunction(() => window.__motion.P().layers.some(l => l.type === 'video'));
@@ -87,10 +91,11 @@ async function importImage(page) {
     ['#ff0000', '#00ff00', '#0000ff'].forEach((color, i) => { ctx.fillStyle = color; ctx.fillRect(i * 100, 0, 100, 100); });
     return c.toDataURL('image/png').split(',')[1];
   });
+  await sheet(page, 'add');
   await page.locator('[data-add="image"]').click();
   await page.locator('#mediaInput').setInputFiles({ name: 'faixas.png', mimeType: 'image/png', buffer: Buffer.from(data, 'base64') });
   await page.waitForFunction(() => window.__motion.P().layers.length === 1);
-  await page.locator('[data-act="media-frame"]').click();
+  await sheet(page, 'props'); await page.locator('[data-act="media-frame"]').click();
   await input(page, 'focalX', 0);
 }
 
@@ -131,7 +136,7 @@ test('transições preservam keyframes e não se repetem no corte', async t => {
   await input(page, 'transitionOut', 'fade'); await input(page, 'transitionOutDuration', 1);
   await time(page, 0); assert.equal((await pixel(page))[0], 0);
   await time(page, 0.5); const halfway = await pixel(page); assert.ok(halfway[0] >= 126 && halfway[0] <= 129);
-  await page.locator('#btnSplit').click();
+  await closeSheet(page); await page.locator('#btnSplit').click();
   assert.deepEqual(await pixel(page), halfway, 'sem dupla composição no quadro do corte');
   await time(page, 1); assert.equal((await pixel(page))[0], 255);
   await time(page, 3.5); assert.ok((await pixel(page))[0] >= 126 && (await pixel(page))[0] <= 129);
@@ -161,7 +166,7 @@ test('zoom mantém posição ao seguir camada e saída acompanha o fim do projet
   assert.deepEqual(await pixel(page, 10), before, 'zoom não é aplicado duas vezes ao mudar o pai');
   await input(page, 'transitionIn', 'none'); await input(page, 'transitionOut', 'fade');
   await input(page, 'transitionOutDuration', 1); await time(page, 2);
-  await page.locator('#btnSplit').click();
+  await closeSheet(page); await page.locator('#btnSplit').click();
   await page.evaluate(() => window.__motion.select(null));
   await page.locator('#pj-duration').fill('3'); await page.locator('#pj-duration').dispatchEvent('change');
   await time(page, 2.5);
@@ -170,7 +175,7 @@ test('zoom mantém posição ao seguir camada e saída acompanha o fim do projet
 
 test('vídeo real congela e exporta com enquadramento e look', async t => {
   const page = await editor(t, 360); await importVideo(page);
-  await page.locator('[data-act="media-frame"]').click(); await input(page, 'focalX', 0);
+  await sheet(page, 'props'); await page.locator('[data-act="media-frame"]').click(); await input(page, 'focalX', 0);
   await input(page, 'colorLook', 'mono'); await time(page, 1);
   await page.waitForFunction(() => {
     const p = document.querySelector('#canvas').getContext('2d').getImageData(90, 160, 1, 1).data;
@@ -178,7 +183,7 @@ test('vídeo real congela e exporta com enquadramento e look', async t => {
   });
   const preview = await pixel(page);
   assert.ok(Math.max(...preview.slice(0, 3)) - Math.min(...preview.slice(0, 3)) <= 1);
-  await page.locator('[data-act="freeze-frame"]').click();
+  await sheet(page, 'props'); await page.locator('[data-act="freeze-frame"]').click();
   await page.waitForFunction(() => window.__motion.P().layers.some(l => l.type === 'image'));
   assert.deepEqual(await pixel(page), preview);
   // Projeto curto e pequeno mantém o teste de MediaRecorder rápido.

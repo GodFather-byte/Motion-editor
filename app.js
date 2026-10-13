@@ -130,6 +130,47 @@ const A = new Map();    // arquivos carregados: id -> {kind, blob, url, el, buff
 const VIDS = new Map(); // id da camada -> <video> próprio
 
 const app = $('#app');
+
+/* ======================= abas e folhas (celular, até 860 px) ======================= */
+const phoneMQ = matchMedia('(max-width: 860px)');
+let sheetOpener = null;
+const SHEET_FOCUS = { add: '.add-bar', ia: '.add-bar', props: '#panel', project: '#menu' };
+const sheetOpen = () => phoneMQ.matches && !!app.dataset.sheet;
+function syncSheetTabs() { $$('[data-sheet-open]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.sheetOpen === app.dataset.sheet))); }
+function syncForwards() {
+  const pro = $('#menu [data-forward="btnPro"]'), inst = $('#menu [data-forward="btnInstall"]');
+  if (pro) pro.textContent = $('#btnPro').textContent;
+  if (inst) inst.hidden = $('#btnInstall').hidden;
+}
+function openSheet(name, opener = null) {
+  if (!phoneMQ.matches || !SHEET_FOCUS[name]) return;
+  if (!app.dataset.sheet) sheetOpener = opener;
+  app.dataset.sheet = name;
+  if (name === 'project') syncForwards();
+  syncSheetTabs();
+  $(SHEET_FOCUS[name]).focus({ preventScroll: true });
+}
+function closeSheet(restoreFocus = true) {
+  if (!app.dataset.sheet) return;
+  const act = document.activeElement, inSheet = !!(act && act.closest && act.closest('.sheet'));
+  delete app.dataset.sheet;
+  syncSheetTabs();
+  const back = sheetOpener;
+  sheetOpener = null;
+  if (restoreFocus && back && back.isConnected) back.focus({ preventScroll: true });
+  else if (inSheet) act.blur();
+}
+document.addEventListener('click', e => {
+  if (!phoneMQ.matches) return; // no PC não faz nada
+  const tab = e.target.closest('[data-sheet-open]');
+  if (tab) { if (app.dataset.sheet === tab.dataset.sheetOpen) { sheetOpener = tab; closeSheet(); } else openSheet(tab.dataset.sheetOpen, tab); return; }
+  if (e.target.closest('[data-sheet-close]')) { closeSheet(); return; }
+  const fwd = e.target.closest('[data-forward]');
+  if (fwd) { if (!fwd.hasAttribute('data-keep')) closeSheet(false); $('#' + fwd.dataset.forward).click(); return; }
+  if (sheetOpen() && e.target.closest('.add-bar .chip, #menu [data-menu]')) closeSheet(false);
+});
+phoneMQ.addEventListener('change', e => { if (!e.matches) { closeSheet(false); $('#menu').hidden = true; } });
+
 const canvas = $('#canvas');
 const ctx = canvas.getContext('2d');
 const overlay = $('#overlay');
@@ -1729,7 +1770,7 @@ overlay.addEventListener('pointerdown', e => {
     L = hitTest(pt);
     if (L !== selLayer()) select(L ? L.id : null);
     if (!L) return;
-    drag = { mode: 'move', L };
+    drag = { mode: 'move', L, tap: S.pen ? null : { x: e.clientX, y: e.clientY } };
   }
   if (drag.mode === 'move') {
     drag.inv = parentMatrix(drag.L, S.time).inverse();
@@ -1774,10 +1815,12 @@ overlay.addEventListener('pointermove', e => {
   drag.moved = true;
   renderMain(); drawOverlay(); syncPanel();
 });
-const endDrag = () => {
+const endDrag = ev => {
   if (!drag) return;
   if (drag.mode === 'pen') { drag = null; finishPen(); return; }
   if (drag.moved) { commit(); renderTimeline(); }
+  // toque sem arraste sobre uma camada abre Propriedades (celular); pointercancel não conta
+  if (ev && ev.type === 'pointerup' && ev.isPrimary && drag.tap && phoneMQ.matches && Math.hypot(ev.clientX - drag.tap.x, ev.clientY - drag.tap.y) < 8) openSheet('props');
   drag = null;
 };
 function setPen(on) {
@@ -1949,7 +1992,7 @@ rows.addEventListener('click', e => {
   const L = byId(row.dataset.id);
   if (e.target.closest('[data-eye]')) { L.visible = !L.visible; commit(); renderTimeline(); refreshTime(); return; }
   if (e.target.closest('[data-mute]')) { L.s.muted = !L.s.muted; commit(); renderTimeline(); renderPanel(); refreshTime(); return; }
-  if (e.target.closest('.tl-label')) { select(L.id); return; }
+  if (e.target.closest('.tl-label')) { select(L.id); openSheet('props'); return; }
   if (e.target.classList.contains('tl-track')) {
     if (S.playing) pause();
     setTime((e.clientX - e.target.getBoundingClientRect().left - TL_PAD) / S.pps);
@@ -2065,7 +2108,7 @@ const fillRows = (colorKey, label) => `${selectRow('fillType', 'Preenchimento', 
 function renderPanel() {
   const scroll = panel.scrollTop;
   const L = selLayer();
-  panel.innerHTML = `<div class="inspector-head"><div><span class="eyebrow">${L ? TYPE_NAMES[L.type] : 'Seu espaço de criação'}</span><h2>Propriedades</h2></div><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/></svg></div>` + (L ? layerPanel(L) : projectPanel());
+  panel.innerHTML = `<div class="inspector-head"><div><span class="eyebrow">${L ? TYPE_NAMES[L.type] : 'Seu espaço de criação'}</span><h2>Propriedades</h2></div><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/></svg><button class="fwd-play" data-forward="btnPlay" data-keep aria-label="Reproduzir"><svg viewBox="0 0 24 24" class="i-play" aria-hidden="true"><path d="M7 4.5v15l12.5-7.5z"/></svg><svg viewBox="0 0 24 24" class="i-pause" aria-hidden="true"><path d="M7 4.5h3.5v15H7zM13.5 4.5H17v15h-3.5z"/></svg></button><button class="sheet-close" data-sheet-close aria-label="Fechar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>` + (L ? layerPanel(L) : projectPanel());
   panel.scrollTop = scroll;
   syncPanel(true);
   const cv = $('#curveCv', panel);
@@ -5775,7 +5818,8 @@ function toast(msg) {
 let arrowTimer;
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && isPhotopeaOpen()) { e.preventDefault(); closePhotopea(); return; }
-  if (isTyping(e.target) || !$('#modal').hidden || isPhotopeaOpen() || S.exporting) return;
+  if (e.key === 'Escape' && sheetOpen()) { e.preventDefault(); closeSheet(); return; }
+  if (isTyping(e.target) || !$('#modal').hidden || isPhotopeaOpen() || S.exporting || sheetOpen()) return;
   const L = selLayer();
   const mod = e.ctrlKey || e.metaKey;
   if (e.code === 'Space') { e.preventDefault(); S.playing ? pause() : play(); }
