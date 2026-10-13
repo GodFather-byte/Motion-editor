@@ -45,6 +45,7 @@
 | edição de vídeo com IA | `editWithAIModal`, `beginAIEdit` (áudio/quadros em partes), `reviewAIEdit`, `applyAIEditAssembly`, `restoreAIEditOriginal`; `gemini(parts,json,{signal,temperature})` |
 | animação por código (GSAP) | `codeWorkerMain` (roda no worker isolado), `runCodeSandbox`, `simplifySeries`, `bakeCode`, `applyCode`, `codeModal`, `CODE_EXAMPLES`, `aiWriteCode` |
 | bibliotecas abertas | `LIBS` e `lib()` carregam sob demanda: Lucide (`loadLucide`, `lucideD`, `lucideGridHtml`), wavesurfer (`mountPanelWave`, forma de onda no painel de áudio), mp4box (`videoInfo`, rotação e fps no `loadAsset` de vídeo), opentype (`pickFont`, `addCustomFont`, `registerFontFace` para fontes próprias) |
+| rastreio e cortes por cena | `trackLayer` (grava keyframes de x e y a partir de `matchPatch`, com modelo fixo), `cutByScenes` (diferença de cor entre quadros pequenos e `splitLayer`), `grayOf`, `patchOf` |
 | modelos prontos | `TEMPLATES` (cada um é uma função que cria camadas), miniaturas |
 | photopea | `openPhotopea`, `closePhotopea`, `photopeaChoiceModal`, `applyPhotopeaResult`, Live Messaging (`saveToOE`), integração de atalhos e arquivo |
 | FFmpeg | `getFFmpeg`, `ffmpegModal` (converter para MP4 H.264, extrair áudio WAV, comprimir CRF, gerar GIF animado, mudo, comandos livres) |
