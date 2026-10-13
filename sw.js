@@ -1,5 +1,5 @@
 /* Service worker: guarda o app para abrir offline. Troque VERSION a cada release. */
-const VERSION = 'motion-v23';
+const VERSION = 'motion-v24';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'ai-edit.js', 'lottie.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 const CDN_FILES = new Set([
