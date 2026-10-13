@@ -5,8 +5,8 @@ Atualizado por: Claude em 13/10/2026
 Motion Editor 100% código aberto (AGPL-3.0). Novidades de IA local no navegador, sem nuvem: rastreio de movimento e cortes por cena.
 
 ## Estado agora
-- main em 23b339e (PR #7 mergeado). A branch ccr-a74f83ad-cpkqwi traz as novidades abaixo, em PR de rascunho.
-- Feito: "Rastrear movimento" (seção Transformação) grava keyframes de x e y; "Cortar por cenas" (vídeos) divide a camada nas trocas de cena. sw.js em motion-v22.
+- main em 3442fb1 (PR #8 mergeado). Apoiar o projeto: o item do menu fica escondido até o dono preencher DONATE em app.js (chave PIX e/ou links).
+- Feito: "Rastrear movimento" (seção Transformação) grava keyframes de x e y; "Cortar por cenas" (vídeos) divide a camada nas trocas de cena. sw.js em motion-v23.
 - Testes: tests/modern.cjs (2) e regressão (video-editor, ai-edit, ai-edit-plan, photopea, mobile-sheets, export, effects, music, libs) passaram: 51 de 51.
 
 ## Como retomar (Codex)
@@ -31,4 +31,5 @@ Motion Editor 100% código aberto (AGPL-3.0). Novidades de IA local no navegador
 - O rastreio só faz translação (x, y). Não acompanha rotação nem escala.
 - Cortes por cena usam diferença de cor, sem IA: podem falhar em cortes suaves. Limite de 600 s.
 - Fonte própria: não testei salvar e reabrir um .motion.json.
+- DONATE em app.js está vazio: falta a chave PIX e/ou links do dono.
 - lottie.cjs não foi rodado (precisa de internet).

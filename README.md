@@ -124,6 +124,10 @@ O teste inicia seu próprio servidor e gera mídia temporária. Confere recorte,
 | `sw.js` | Cache offline. Mude `VERSION` a cada atualização |
 | `manifest.webmanifest`, `icons/` | Dados de instalação do app |
 
+## Apoiar o projeto
+
+O Motion é gratuito. Para receber doações, preencha o objeto `DONATE` no topo da seção "apoiar o projeto" de `app.js` (chave PIX e/ou links). Sem nada preenchido, o item "Apoiar o projeto" não aparece no menu.
+
 ## Código aberto e licenças de terceiros
 
 Motion Editor é 100% código aberto, sem plano pago e sem marca d'água.

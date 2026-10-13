@@ -5956,6 +5956,8 @@ menu.addEventListener('click', async e => {
     openPhotopea({ mode: 'frame' });
   } else if (act === 'ffmpeg') {
     ffmpegModal();
+  } else if (act === 'donate') {
+    showDonate();
   } else if (act === 'help') {
     showModal('Atalhos', `<div class="keys">
       <kbd>Espaço</kbd><span>Reproduzir / pausar</span>
@@ -6063,6 +6065,26 @@ $('#btnInstall').onclick = async () => {
 if ('serviceWorker' in navigator && !inFrame && (location.protocol === 'https:' || location.hostname === 'localhost')) {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 }
+
+/* ======================= apoiar o projeto (opcional) ======================= */
+/* O Motion é gratuito. Preencha só o que quiser oferecer; sem nada preenchido, o item do menu fica escondido. */
+const DONATE = {
+  pix: '',           // chave PIX: e-mail, telefone, CPF/CNPJ ou chave aleatória
+  pixName: '',       // nome do titular, como aparece no app do banco
+  links: [],         // ex.: [{ label: 'GitHub Sponsors', url: 'https://github.com/sponsors/usuario' }]
+};
+function showDonate() {
+  const pix = DONATE.pix ? `<p>Chave PIX: <code>${esc(DONATE.pix)}</code>${DONATE.pixName ? ` (${esc(DONATE.pixName)})` : ''}</p>` : '';
+  const links = DONATE.links.map(l => `<a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.label)}</a>`).join(' · ');
+  showModal('Apoiar o Motion', `<p>O Motion é gratuito e de código aberto. Se ele te ajudou, você pode apoiar o projeto.</p>${pix}${links ? `<p>${links}</p>` : ''}`, [
+    ...(DONATE.pix ? [{ label: 'Copiar chave PIX', keepOpen: true, onClick: () => {
+      const copy = navigator.clipboard ? navigator.clipboard.writeText(DONATE.pix) : Promise.reject(new Error('sem área de transferência'));
+      copy.then(() => toast('Chave PIX copiada.'), () => toast('Não consegui copiar. Copie a chave acima.'));
+    } }] : []),
+    { label: 'Fechar' },
+  ]);
+}
+$$('[data-menu="donate"]').forEach(b => { b.hidden = !(DONATE.pix || DONATE.links.length); });
 
 /* ======================= início ======================= */
 setProject(loadSaved() || demoProject());
