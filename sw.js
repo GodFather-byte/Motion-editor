@@ -1,5 +1,5 @@
 /* Service worker: guarda o app para abrir offline. Troque VERSION a cada release. */
-const VERSION = 'motion-v19';
+const VERSION = 'motion-v20';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'ai-edit.js', 'lottie.js', 'pro-config.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', e => {

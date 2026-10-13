@@ -27,6 +27,8 @@ before(async () => {
 });
 after(async () => { await browser?.close(); server?.kill(); if (fixtures) rmSync(fixtures, { recursive: true, force: true }); });
 
+async function sheet(page, name) { if ((await page.locator('#app').getAttribute('data-sheet')) !== name && await page.locator(`[data-sheet-open="${name}"]`).isVisible()) await page.locator(`[data-sheet-open="${name}"]`).click(); }
+async function closeSheet(page) { if (await page.locator('#app[data-sheet]').count()) await page.keyboard.press('Escape'); }
 async function editor(t, { width = 1280, key = true, file = 'video.webm' } = {}) {
   const context = await browser.newContext({ viewport: { width, height: 800 } });
   t.after(() => context.close());
@@ -47,6 +49,7 @@ async function editor(t, { width = 1280, key = true, file = 'video.webm' } = {})
     return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: { message: 'Requisição sem mock' } }) });
   });
   await page.goto(origin, { waitUntil: 'networkidle' });
+  await sheet(page, 'add');
   await page.locator('[data-add="video"]').click();
   await page.locator('#mediaInput').setInputFiles(path.join(fixtures, file));
   await page.waitForFunction(() => window.__motion.P().layers.some(l => l.type === 'video'));
@@ -68,6 +71,7 @@ async function mockAI(page, requests, { analysis = normalAnalysis, plan = normal
   });
 }
 async function form(page) {
+  await sheet(page, 'ia');
   await page.locator('#btnAIEdit').click();
   await page.locator('#editAspect').selectOption('keep');
   await page.locator('#editTarget').fill('4');
@@ -112,7 +116,7 @@ test('vídeo real vira montagem editável em 360 px, com revisão, undo e restau
   await page.waitForTimeout(750); await page.reload({ waitUntil: 'networkidle' });
   await page.waitForFunction(() => window.__motion?.A.size > 0);
   await page.evaluate(() => window.__motion.A.clear()); // O backup também deve ser acessível sem mídia carregada.
-  await page.locator('#btnAIEdit').click(); await page.getByRole('button', { name: 'Voltar ao original', exact: true }).click();
+  await sheet(page, 'ia'); await page.locator('#btnAIEdit').click(); await page.getByRole('button', { name: 'Voltar ao original', exact: true }).click();
   assert.equal(await original(page), base, 'backup persiste fora do histórico de undo');
 });
 

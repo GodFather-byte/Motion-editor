@@ -58,6 +58,8 @@ for version, anim_folder, image_folder, output in [('1.0','animations','images',
 });
 after(async () => { await browser?.close(); server?.kill(); if (dir) rmSync(dir, { recursive: true, force: true }); });
 
+async function sheet(page, name) { if ((await page.locator('#app').getAttribute('data-sheet')) !== name && await page.locator(`[data-sheet-open="${name}"]`).isVisible()) await page.locator(`[data-sheet-open="${name}"]`).click(); }
+async function closeSheet(page) { if (await page.locator('#app[data-sheet]').count()) await page.keyboard.press('Escape'); }
 async function editor(t, width = 1280) {
   const context = await browser.newContext({ viewport: { width, height: 800 }, serviceWorkers: 'block' });
   t.after(() => context.close());
@@ -78,10 +80,11 @@ async function editor(t, width = 1280) {
 }
 async function importFile(page, file = 'red.json') {
   const count = await page.evaluate(() => window.__motion.P().layers.length);
-  await page.locator('[data-add="lottie"]').click(); await page.locator('#mediaInput').setInputFiles(path.join(dir, file));
+  await sheet(page, 'add'); await page.locator('[data-add="lottie"]').click(); await page.locator('#mediaInput').setInputFiles(path.join(dir, file));
   await page.waitForFunction(count => window.__motion.P().layers.length > count, count, { timeout: 15000 });
 }
 async function input(page, key, value) {
+  await sheet(page, 'props');
   const field = page.locator('#s-' + key), type = await field.evaluate(el => el.type);
   if (type === 'checkbox') await field.setChecked(value);
   else if (type === 'select-one') await field.selectOption(String(value));
@@ -104,7 +107,7 @@ test('Lottie JSON anima na timeline em 360 px, com alpha, loop, reverso e quadro
   await page.evaluate(() => { window.__motion.P().layers[0].end = 4; window.__motion.commit(); });
   await time(page, 3); assert.equal((await pixel(page, 100))[0], 255, 'repetição usa tempo de fonte');
   await input(page, 'reverse', true); await time(page, 0); assert.equal((await pixel(page, 123))[0], 255);
-  await page.locator('[data-act="freeze-frame"]').click();
+  await sheet(page, 'props'); await page.locator('[data-act="freeze-frame"]').click();
   await page.waitForFunction(() => window.__motion.P().layers.some(l => l.type === 'image'));
   const image = await page.evaluate(() => { const m = window.__motion, l = m.P().layers.find(l => l.type === 'image'); return { w: l.s.w, h: l.s.h, asset: !!m.A.get(l.s.asset)?.el }; });
   assert.deepEqual(image, { w: 100, h: 100, asset: true });
@@ -116,10 +119,11 @@ test('fonte com ip diferente de zero mantém frame ao acelerar, cortar e arrasta
   await input(page, 'loop', false); await input(page, 'speed', 2); await input(page, 'trimIn', 0.5);
   assert.equal(await page.evaluate(() => window.__motion.P().layers[0].end), 0.75);
   await time(page, 0.3); const before = await pixel(page, 100); assert.equal(before[0], 255);
-  await page.locator('#btnSplit').click(); assert.deepEqual(await pixel(page, 100), before);
+  await closeSheet(page); await page.locator('#btnSplit').click(); assert.deepEqual(await pixel(page, 100), before);
   const parts = await page.evaluate(() => window.__motion.P().layers.map(l => [l.start, l.end, l.s.trimIn]));
   assert.deepEqual(parts, [[0.3, 0.75, 1.1], [0, 0.3, 0.5]]);
   await time(page, 0.5); assert.equal((await pixel(page, 113))[0], 255);
+  await closeSheet(page);
   const handle = page.locator('.tl-row.sel .h.l'), box = await handle.boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down();
   await page.mouse.move(box.x + box.width / 2 + 24, box.y + box.height / 2); await page.mouse.up();

@@ -34,15 +34,31 @@
       <button class="btn btn-install" id="btnInstall" hidden>Instalar app</button>
       <button class="btn btn-primary btn-export" id="btnExport"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M5 16v5h14v-5"/></svg> Exportar</button>
     </div>
-    <div class="menu" id="menu" hidden>
-      <button data-menu="new">Novo projeto</button>
-      <button data-menu="demo">Carregar exemplo</button>
-      <button data-menu="open">Abrir projeto (.motion.json)</button>
-      <button data-menu="save">Salvar projeto</button>
-      <button data-menu="png">Exportar frame atual (PNG)</button>
-      <button data-menu="photopea-frame">Editar frame atual no Photopea</button>
-      <button data-menu="ffmpeg">Ferramentas FFmpeg</button>
-      <button data-menu="help">Atalhos e ajuda</button>
+    <div class="menu sheet" id="menu" hidden tabindex="-1">
+      <h2 class="sheet-head">Projeto</h2>
+      <button class="sheet-close" data-sheet-close aria-label="Fechar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      <div class="menu-group">
+        <h3 class="menu-group-title">Arquivo</h3>
+        <button data-menu="new">Novo projeto</button>
+        <button data-menu="demo">Carregar exemplo</button>
+        <button data-menu="open">Abrir projeto (.motion.json)</button>
+        <button data-menu="save">Salvar projeto</button>
+      </div>
+      <div class="menu-group">
+        <h3 class="menu-group-title">Exportar</h3>
+        <button data-menu="png">Exportar frame atual (PNG)</button>
+      </div>
+      <div class="menu-group">
+        <h3 class="menu-group-title">Ferramentas</h3>
+        <button data-menu="photopea-frame">Editar frame atual no Photopea</button>
+        <button data-menu="ffmpeg">Ferramentas FFmpeg</button>
+      </div>
+      <div class="menu-group">
+        <h3 class="menu-group-title">Conta e ajuda</h3>
+        <button class="fwd" data-forward="btnPro">Seja Pro</button>
+        <button class="fwd fwd-install" data-forward="btnInstall" hidden>Instalar app</button>
+        <button data-menu="help">Atalhos e ajuda</button>
+      </div>
     </div>
   </header>
 
@@ -52,35 +68,37 @@
       <canvas id="canvas"></canvas>
       <canvas id="overlay"></canvas>
     </div>
-    <div class="add-bar" role="toolbar" aria-label="Adicionar camada">
-      <span class="add-label">Adicionar</span>
-      <button class="chip chip-media" data-add="video"><i class="sw sw-video"></i> Vídeo</button>
-      <button class="chip chip-accent" id="btnAIEdit"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5z"/></svg> Editar com IA</button>
-      <button class="chip chip-media" data-add="image"><i class="sw sw-image"></i> Imagem</button>
-      <button class="chip chip-media" data-add="lottie" title="Importar animação .json ou .lottie"><i class="sw sw-lottie"></i> Lottie / dotLottie</button>
-      <button class="chip chip-media" data-add="audio"><i class="sw sw-audio"></i> Música</button>
-      <button class="chip chip-media" id="btnBeats"><i class="sw sw-beats"></i> Batidas</button>
-      <button class="chip chip-media" id="btnVoice"><i class="sw sw-mic"></i> Gravar voz</button>
-      <button class="chip chip-media" id="btnPhotopea" title="Criar ou editar no Photopea"><i class="sw sw-photopea"></i> Photopea</button>
-      <button class="chip chip-media" id="btnFFmpeg" title="Converter e processar com FFmpeg"><i class="sw sw-ffmpeg"></i> FFmpeg</button>
+    <div class="add-bar sheet" role="toolbar" aria-label="Adicionar camada" tabindex="-1">
+      <span class="add-label"><span class="lbl-add">Adicionar</span><span class="lbl-ia">IA</span></span>
+      <button class="sheet-close" data-sheet-close aria-label="Fechar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      <span class="add-title" data-g="midia">Mídia</span>
+      <button class="chip chip-media" data-g="midia" data-add="video"><i class="sw sw-video"></i> Vídeo</button>
+      <button class="chip chip-accent" id="btnAIEdit" data-g="ia"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5z"/></svg> Editar com IA</button>
+      <button class="fwd" data-g="ia" data-forward="btnAI"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5z"/></svg> Ferramentas de IA</button>
+      <button class="chip chip-media" data-g="midia" data-add="image"><i class="sw sw-image"></i> Imagem</button>
+      <button class="chip chip-media" data-g="midia" data-add="lottie" title="Importar animação .json ou .lottie"><i class="sw sw-lottie"></i> Lottie / dotLottie</button>
+      <button class="chip chip-media" data-g="midia" data-add="audio"><i class="sw sw-audio"></i> Música</button>
+      <button class="chip chip-media" data-g="midia" id="btnBeats"><i class="sw sw-beats"></i> Batidas</button>
+      <button class="chip chip-media" data-g="midia" id="btnVoice"><i class="sw sw-mic"></i> Gravar voz</button>
+      <button class="chip chip-media" data-g="midia" id="btnPhotopea" title="Criar ou editar no Photopea"><i class="sw sw-photopea"></i> Photopea</button>
+      <button class="chip chip-media" data-g="midia" id="btnFFmpeg" title="Converter e processar com FFmpeg"><i class="sw sw-ffmpeg"></i> FFmpeg</button>
       <span class="tool-divider" aria-hidden="true"></span>
-      <button class="chip" data-add="text"><b>T</b> Texto</button>
-      <button class="chip" data-add="rect"><i class="sw sw-rect"></i> Retângulo</button>
-      <button class="chip" data-add="ellipse"><i class="sw sw-ellipse"></i> Círculo</button>
-      <button class="chip" data-add="star"><i class="sw sw-star"></i> Estrela</button>
-      <button class="chip" data-add="path"><i class="sw sw-pen"></i> Caneta</button>
-      <button class="chip" id="btnStickers"><i class="sw sw-sticker"></i> Figurinhas</button>
-      <button class="chip" data-add="particles"><i class="sw sw-particles"></i> Partículas</button>
-      <button class="chip" data-add="fx"><i class="sw sw-fx"></i> Efeito</button>
-      <button class="chip" data-add="camera"><i class="sw sw-camera"></i> Câmera</button>
-      <button class="chip" data-add="group"><i class="sw sw-group"></i> Grupo</button>
+      <span class="add-title" data-g="texto">Texto e formas</span>
+      <button class="chip" data-g="texto" data-add="text"><b>T</b> Texto</button>
+      <button class="chip" data-g="texto" data-add="rect"><i class="sw sw-rect"></i> Retângulo</button>
+      <button class="chip" data-g="texto" data-add="ellipse"><i class="sw sw-ellipse"></i> Círculo</button>
+      <button class="chip" data-g="texto" data-add="star"><i class="sw sw-star"></i> Estrela</button>
+      <button class="chip" data-g="texto" data-add="path"><i class="sw sw-pen"></i> Caneta</button>
+      <button class="chip" data-g="texto" id="btnStickers"><i class="sw sw-sticker"></i> Figurinhas</button>
+      <span class="add-title" data-g="efeitos">Efeitos e grupos</span>
+      <button class="chip" data-g="efeitos" data-add="particles"><i class="sw sw-particles"></i> Partículas</button>
+      <button class="chip" data-g="efeitos" data-add="fx"><i class="sw sw-fx"></i> Efeito</button>
+      <button class="chip" data-g="efeitos" data-add="camera"><i class="sw sw-camera"></i> Câmera</button>
+      <button class="chip" data-g="efeitos" data-add="group"><i class="sw sw-group"></i> Grupo</button>
       <span class="tool-divider" aria-hidden="true"></span>
-      <button class="chip chip-accent" id="btnTemplates"><i class="sw sw-tpl"></i> Modelos</button>
-      <button class="chip chip-accent" id="btnCode"><i class="sw sw-code"></i> Código</button>
-      <input type="file" id="mediaInput" hidden>
-      <input type="file" id="photopeaFileInput" accept="image/*,.psd" hidden>
-      <input type="file" id="ffmpegFileInput" accept="video/*,audio/*" hidden>
-      <input type="file" id="projectInput" accept=".json,application/json" hidden>
+      <span class="add-title" data-g="modelos">Modelos e código</span>
+      <button class="chip chip-accent" data-g="modelos" id="btnTemplates"><i class="sw sw-tpl"></i> Modelos</button>
+      <button class="chip chip-accent" data-g="modelos" id="btnCode"><i class="sw sw-code"></i> Código</button>
     </div>
     <p class="stage-hint">Arraste para mover <span>·</span> <kbd>Espaço</kbd> para reproduzir <span>·</span> <kbd>K</kbd> para animar</p>
   </main>
@@ -105,7 +123,19 @@
     </div>
   </section>
 
-  <aside class="panel" id="panel" aria-label="Propriedades"></aside>
+  <aside class="panel sheet" id="panel" aria-label="Propriedades" tabindex="-1"></aside>
+
+  <nav class="tabbar" aria-label="Principal">
+    <button data-sheet-open="add" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>Adicionar</span></button>
+    <button data-sheet-open="ia" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5z"/></svg><span>IA</span></button>
+    <button data-sheet-open="props" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/></svg><span>Propriedades</span></button>
+    <button data-sheet-open="project" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6H10l2 2.5h7.5A1.5 1.5 0 0 1 21 10v7.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z"/></svg><span>Projeto</span></button>
+  </nav>
+  <input type="file" id="mediaInput" hidden>
+  <input type="file" id="photopeaFileInput" accept="image/*,.psd" hidden>
+  <input type="file" id="ffmpegFileInput" accept="video/*,audio/*" hidden>
+  <input type="file" id="projectInput" accept=".json,application/json" hidden>
+  <div class="sheet-scrim" data-sheet-close aria-hidden="true"></div>
 </div>
 
 <div class="modal" id="modal" hidden>
