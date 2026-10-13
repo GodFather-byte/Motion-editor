@@ -54,7 +54,7 @@ Editor de motion graphics que roda direto no navegador e pode ser instalado como
 - No painel Código, `beats` traz os tempos das batidas: `beats.forEach(b => tl.to(layer('Título'), { scale: 1.2, duration: 0.1, yoyo: true, repeat: 1 }, b))`.
 
 **Exportação**
-- MP4 rápido quadro a quadro (WebCodecs): H.264 + AAC quando o aparelho tem, senão VP9 + Opus. Não pula quadros e continua com a aba em segundo plano. 720p, 1080p ou 4K (Pro), 24/30/60 fps.
+- MP4 rápido quadro a quadro (WebCodecs): H.264 + AAC quando o aparelho tem, senão VP9 + Opus. Não pula quadros e continua com a aba em segundo plano. 720p, 1080p ou 4K, 24/30/60 fps.
 - GIF animado (com fundo transparente opcional) e PNG do quadro atual (também transparente).
 - Gravação em tempo real (MediaRecorder) continua como alternativa em navegadores sem WebCodecs.
 - O preview desenha na resolução da tela enquanto toca, bem mais leve no celular.
@@ -80,35 +80,12 @@ Na revisão, desmarque os trechos que não quiser e toque em **Aplicar e ver pr�
 **Cortar pausas sem IA** funciona no aparelho, sem chave nem envio de dados: remove trechos de som baixo, sem escolher destaques ou criar legendas. Música contínua pode impedir a detecção de pausas.
 
 **Produto**
-- 8 modelos prontos (4 grátis e 4 Pro).
-- Versão grátis exporta com a marca "feito com Motion". O plano Pro tira a marca e libera os modelos exclusivos.
+- 8 modelos prontos.
 - Salvamento automático (arquivos no IndexedDB), desfazer/refazer, salvar e abrir `.motion.json`, funciona offline.
 
 ## Publicar (GitHub Pages)
 
 Settings → Pages → *Deploy from a branch* → branch **main**, pasta **/ (root)** → Save.
-
-## Plano Pro: como vender licenças
-
-As licenças são assinadas com uma chave privada que **só você tem** (`motion-licenca-privada.pem`). O app confere a assinatura com a chave pública em `pro-config.js`, então ninguém consegue inventar uma licença.
-
-1. Guarde `motion-licenca-privada.pem` num lugar seguro, fora do GitHub (o `.gitignore` já bloqueia `*.pem`).
-2. Edite `pro-config.js` com o preço, o texto e o link de compra (Telegram, WhatsApp ou página de pagamento).
-3. Quando alguém pagar, gere a chave e envie para a pessoa:
-
-```bash
-# Node
-node tools/licenca.mjs nova "cliente@email.com" 30     # 30 dias
-node tools/licenca.mjs nova "cliente@email.com" 0      # sem validade
-
-# Python (dá pra usar dentro do seu bot do Telegram)
-pip install cryptography
-python tools/licenca.py "cliente@email.com" 30
-```
-
-No bot: `from licenca import gerar_licenca` e depois `gerar_licenca("cliente", 30)`.
-
-O cliente cola a chave em **Seja Pro → Ativar**. Para trocar o par de chaves (invalida todas as licenças antigas): apague o `.pem` e rode `node tools/licenca.mjs iniciar`.
 
 ## Rodar no computador
 
@@ -141,19 +118,28 @@ O teste inicia seu próprio servidor e gera mídia temporária. Confere recorte,
 |---|---|
 | `index.html` | Estrutura da interface |
 | `style.css` | Visual e layout (desktop e celular) |
-| `app.js` | Editor completo: modelo, render, áudio/vídeo, timeline, painel, IA, Pro, modelos, exportação |
+| `app.js` | Editor completo: modelo, render, áudio/vídeo, timeline, painel, IA, modelos, exportação |
 | `ai-edit.js` | Validação do plano, detecção de silêncio e remapeamento de clipes/legendas |
 | `lottie.js` | Player vetorial sob demanda, leitura de JSON/dotLottie e render sincronizado com a timeline |
-| `pro-config.js` | Chave pública e textos do plano Pro |
-| `tools/` | Geradores de licença (Node e Python) |
 | `sw.js` | Cache offline. Mude `VERSION` a cada atualização |
 | `manifest.webmanifest`, `icons/` | Dados de instalação do app |
 
-## Licenças de terceiros
+## Código aberto e licenças de terceiros
 
-Lottie e dotLottie usam [@lottiefiles/dotlottie-web](https://github.com/LottieFiles/dotlottie-web), versão 0.81.0, licença **MIT**, carregado sob demanda.
+Motion Editor é 100% código aberto, sem plano pago e sem marca d'água.
 
-A remoção de fundo usa [@imgly/background-removal](https://github.com/imgly/background-removal-js), licença **AGPL-3.0**. Enquanto o código deste app for público, isso está coberto. Para fechar o código, troque essa função por uma alternativa com licença permissiva.
+Bibliotecas usadas, todas carregadas sob demanda de CDN com versão fixa:
+
+| Biblioteca | Para quê | Licença |
+|---|---|---|
+| [dotlottie-web](https://github.com/LottieFiles/dotlottie-web) 0.81.0 | Lottie e dotLottie | MIT |
+| [Lucide](https://lucide.dev) (ícones via @iconify-json/lucide 1.2.130) | Figurinhas de traço | ISC |
+| [wavesurfer.js](https://wavesurfer.xyz) 7.12.12 | Forma de onda do áudio | BSD-3-Clause |
+| [mp4box.js](https://github.com/gpac/mp4box.js) 2.4.1 | Metadados de MP4 e MOV | BSD-3-Clause |
+| [opentype.js](https://opentype.js.org) 1.3.4 | Leitura de fontes próprias (.ttf, .otf) | MIT |
+| [@imgly/background-removal](https://github.com/imgly/background-removal-js) | Remoção de fundo | AGPL-3.0 |
+
+Por causa da remoção de fundo (AGPL-3.0), a licença deste projeto precisa ser compatível com ela. A escolha da licença do projeto ainda está pendente.
 
 ## Atalhos
 

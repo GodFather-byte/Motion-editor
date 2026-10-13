@@ -147,8 +147,6 @@ textarea.code {
 .code-help { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }
 .code-help p { font-size: 12.5px; margin: 0; }
 .modal-card code { font: 12px var(--font-mono); background: var(--bg); border-radius: 4px; padding: 1px 4px; color: var(--fg); }
-.btn-pro { color: var(--fg); background: transparent; }
-.btn-pro.is-pro { background: var(--accent); color: var(--accent-ink); font: 800 12px/1 var(--font-display); letter-spacing: .06em; }
 .chip-accent { border-color: var(--accent-line); color: var(--accent); }
 .sw-tpl { background: none; border: 2px solid var(--accent); border-radius: 3px; box-shadow: 3px 3px 0 -1px var(--accent); }
 .tpl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); gap: 10px; }
@@ -158,9 +156,6 @@ textarea.code {
 .tpl-img img { max-height: 120px; max-width: 100%; display: block; }
 .tpl-name { font-weight: 600; font-size: 13px; line-height: 1.25; }
 .tpl-meta { color: var(--muted); font: 11px var(--font-mono); display: flex; align-items: center; gap: 6px; }
-.pro-badge { font: 800 10px/1 var(--font-display); font-style: normal; color: var(--accent-ink); background: var(--accent); border-radius: 4px; padding: 3px 5px; }
-.perks { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
-.pro-ok { color: var(--fg) !important; }
 .ai-item { display: grid; gap: 2px; text-align: left; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel-2); }
 .ai-item:hover:not(:disabled) { border-color: var(--select); }
 .ai-item:disabled { opacity: .5; cursor: default; }
@@ -437,7 +432,7 @@ input[type=color] { width: 100%; height: 34px; padding: 3px; background: var(--p
     padding: calc(8px + env(safe-area-inset-top, 0px)) 10px 8px 12px;
     border: 0; border-bottom: 1px solid var(--line); border-radius: 0; z-index: 36;
   }
-  .brand, .save-status, #btnMenu, #btnPro, #btnAI, #btnInstall, #btnFFmpeg { display: none; }
+  .brand, .save-status, #btnMenu, #btnAI, #btnInstall, #btnFFmpeg { display: none; }
   .project-meta { min-width: 0; max-width: none; padding-left: 0; border-left: 0; }
   .project-meta .eyebrow { display: none; }
   .project-name { font-size: 14px; font-weight: 700; }
@@ -662,3 +657,7 @@ input[type=color] { width: 100%; height: 34px; padding: 3px; background: var(--p
 .sw-whisper::after { content: 'W'; position: absolute; inset: 0; display: grid; place-items: center; font: 800 8.5px/1 var(--font-display); color: #fff; }
 .sw-mediapipe { width: 13px; height: 13px; border-radius: 3px; background: #4285f4; position: relative; flex-shrink: 0; }
 .sw-mediapipe::after { content: 'MP'; position: absolute; inset: 0; display: grid; place-items: center; font: 800 7px/1 var(--font-display); color: #fff; letter-spacing: -0.05em; }
+
+/* bibliotecas abertas: figurinhas de traço (Lucide) e forma de onda do áudio */
+.sticker.line svg { fill: none; stroke: currentColor; stroke-width: 2; }
+.wave-box { width: 100%; height: 72px; margin-top: 6px; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }

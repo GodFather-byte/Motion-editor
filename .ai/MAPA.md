@@ -6,10 +6,8 @@
 - `app.js`: o editor inteiro, num único IIFE, dividido em seções (abaixo).
 - `ai-edit.js`: helpers puros `normalizePlan`, `normalizeTranscript`, `findSilences`, `assemble` (navegador/Node).
 - `lottie.js`: `MotionLottie.load/render/sourceInfo`, runtime dotlottie-web 0.81.0 ESM/WASM sob demanda (JSON e dotLottie v1/v2).
-- `pro-config.js`: chave pública ECDSA e textos/preço do plano Pro.
 - `sw.js`: service worker (cache offline). Mude `VERSION` a cada release.
 - `manifest.webmanifest`, `icons/`: instalação como app.
-- `tools/licenca.mjs`, `tools/licenca.py`: geram chaves de licença Pro (precisam do `.pem`, que não fica no git).
 - `tests/mobile-sheets.cjs`: celular (360 e 390 px): tela fixa, abas, folhas, toque na prévia e na linha do tempo, Projeto, Play e largura.
 - `tests/video-editor.cjs`: testes funcionais com Playwright/Chromium, mídia gerada pelo FFmpeg e servidor Python temporário. Em 360 px usa `sheet()`/`closeSheet()` para abrir a folha certa antes de cada clique.
 - `tests/ai-edit-plan.cjs` e `tests/ai-edit.cjs`: plano, pausas e edição por pedido com Gemini simulado, mídia real, exportação e backup.
@@ -46,7 +44,7 @@
 | IA | `gemini()` (nuvem), legendas e transcrição local com Transformers.js / Whisper (`getWhisper`, `runCaptionsWhisper`), Google MediaPipe (`segmentPersonMediaPipe`, `mediaPipeCutPerson`, `mediaPipeFaceAutoFrame`), remoção de fundo (@imgly) |
 | edição de vídeo com IA | `editWithAIModal`, `beginAIEdit` (áudio/quadros em partes), `reviewAIEdit`, `applyAIEditAssembly`, `restoreAIEditOriginal`; `gemini(parts,json,{signal,temperature})` |
 | animação por código (GSAP) | `codeWorkerMain` (roda no worker isolado), `runCodeSandbox`, `simplifySeries`, `bakeCode`, `applyCode`, `codeModal`, `CODE_EXAMPLES`, `aiWriteCode` |
-| plano Pro | `verifyLicense`, `proModal`, `drawWatermark` |
+| bibliotecas abertas | `LIBS` e `lib()` carregam sob demanda: Lucide (`loadLucide`, `lucideD`, `lucideGridHtml`), wavesurfer (`mountPanelWave`, forma de onda no painel de áudio), mp4box (`videoInfo`, rotação e fps no `loadAsset` de vídeo), opentype (`pickFont`, `addCustomFont`, `registerFontFace` para fontes próprias) |
 | modelos prontos | `TEMPLATES` (cada um é uma função que cria camadas), miniaturas |
 | photopea | `openPhotopea`, `closePhotopea`, `photopeaChoiceModal`, `applyPhotopeaResult`, Live Messaging (`saveToOE`), integração de atalhos e arquivo |
 | FFmpeg | `getFFmpeg`, `ffmpegModal` (converter para MP4 H.264, extrair áudio WAV, comprimir CRF, gerar GIF animado, mudo, comandos livres) |
@@ -74,6 +72,6 @@ Lottie: `assets.kind='lottie'` guarda o blob original (JSON ou ZIP). `s` tem `an
 - Estado: só `app.dataset.sheet` (`add`, `ia`, `props`, `project`). CSS usa `#app[data-sheet=...]`. No celular o atributo `hidden` do `#menu` não controla mais a visibilidade.
 - Abrir: aba; toque no nome da camada (`.tl-label`); toque sem arraste sobre a camada no preview (`drag.tap` em `endDrag`, menos de 8 px). Não abre ao adicionar camada, ao desfazer nem ao usar IA.
 - Fechar: X (`[data-sheet-close]`), fundo, Esc (no teclado, Esc e atalhos ficam bloqueados com folha aberta), aba aberta, ou ação de chip ou item do Projeto (`closeSheet(false)` antes da ação).
-- Encaminhamentos: `button[data-forward="ID"]` chama `#ID.click()` sem duplicar IDs. Usados: `btnAI` (IA), `btnPro` e `btnInstall` (Projeto, copiados ao abrir) e `btnPlay` com `data-keep` (cabeçalho de Propriedades).
+- Encaminhamentos: `button[data-forward="ID"]` chama `#ID.click()` sem duplicar IDs. Usados: `btnAI` (IA), `btnInstall` (Projeto, copiados ao abrir) e `btnPlay` com `data-keep` (cabeçalho de Propriedades).
 - Inputs de arquivo (`#mediaInput`, `#photopeaFileInput`, `#ffmpegFileInput`, `#projectInput`) ficam no fim de `#app`, escondidos.
-- `#btnMenu`, `#btnPro`, `#btnAI`, `#btnInstall` e `#btnFFmpeg` ficam `display: none` no celular. A ação de FFmpeg está em Projeto > Ferramentas (`data-menu="ffmpeg"`).
+- `#btnMenu`, `#btnAI`, `#btnInstall` e `#btnFFmpeg` ficam `display: none` no celular. A ação de FFmpeg está em Projeto > Ferramentas (`data-menu="ffmpeg"`).
