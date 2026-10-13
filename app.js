@@ -364,6 +364,121 @@ async function mountPanelWave(L) {
   }
 }
 
+/* ======================= rastreio de movimento e cortes por cena (no navegador, sem nuvem) ======================= */
+const TRACK_FPS = 10, TRACK_MAX_S = 30, TRACK_K = 0.25;   // amostras por segundo, duração máxima e escala da análise
+/* luminância de 0 a 1 de um quadro pequeno */
+function grayOf(c, w, h) {
+  const d = c.getImageData(0, 0, w, h).data, g = new Float32Array(w * h);
+  for (let i = 0, j = 0; i < d.length; i += 4, j++) g[j] = (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) / 255;
+  return g;
+}
+/* recorte tw×th centrado em (cx, cy), sem sair da imagem */
+function patchOf(g, w, h, cx, cy, tw, th) {
+  const x0 = clamp(Math.round(cx - tw / 2), 0, w - tw), y0 = clamp(Math.round(cy - th / 2), 0, h - th);
+  const out = new Float32Array(tw * th);
+  for (let j = 0; j < th; j++) for (let i = 0; i < tw; i++) out[j * tw + i] = g[(y0 + j) * w + x0 + i];
+  return out;
+}
+/* correlação normalizada: melhor posição do modelo dentro de uma janela de raio r ao redor de (cx, cy) */
+function matchPatch(g, w, h, tpl, tw, th, cx, cy, r) {
+  let mt = 0; for (const v of tpl) mt += v; mt /= tpl.length;
+  let vt = 0; for (const v of tpl) vt += (v - mt) * (v - mt);
+  const st = Math.sqrt(vt) || 1e-6;
+  let best = { score: -Infinity, x: cx, y: cy };
+  for (let y = cy - r; y <= cy + r; y++) for (let x = cx - r; x <= cx + r; x++) {
+    const x0 = Math.round(x - tw / 2), y0 = Math.round(y - th / 2);
+    if (x0 < 0 || y0 < 0 || x0 + tw > w || y0 + th > h) continue;
+    let mg = 0;
+    for (let j = 0; j < th; j++) for (let i = 0; i < tw; i++) mg += g[(y0 + j) * w + x0 + i];
+    mg /= tw * th;
+    let num = 0, vg = 0;
+    for (let j = 0; j < th; j++) for (let i = 0; i < tw; i++) {
+      const a = g[(y0 + j) * w + x0 + i] - mg, b = tpl[j * tw + i] - mt;
+      num += a * b; vg += a * a;
+    }
+    const score = num / ((Math.sqrt(vg) * st) || 1e-6);
+    if (score > best.score) best = { score, x: x, y: y };
+  }
+  return best;
+}
+/* rastreio: procura, quadro a quadro, o ponto da camada no que está atrás dela e grava os keyframes de posição */
+async function trackLayer(L) {
+  if (!L || !L.visible) { toast('Selecione uma camada visível para rastrear.'); return; }
+  pause();
+  // para dois quadros antes do fim: o último quadro do vídeo costuma voltar atrasado ao buscar
+  const p = P(), t0 = clamp(S.time, L.start, L.end - 1 / p.fps), tEnd = Math.min(L.end - 2 / p.fps, t0 + TRACK_MAX_S);
+  const W = Math.max(8, Math.round(p.width * TRACK_K)), H = Math.max(8, Math.round(p.height * TRACK_K));
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const c = cv.getContext('2d', { willReadFrequently: true });
+  const tw = clamp(Math.round(Math.min(W, H) * 0.14), 8, 40), r = Math.max(6, Math.round(Math.min(W, H) * 0.15));
+  const steps = Math.max(1, Math.floor((tEnd - t0) * TRACK_FPS));
+  const x0 = val(L, 'x', t0), y0 = val(L, 'y', t0);
+  const wasVisible = L.visible, samples = [];
+  L.visible = false;   // o quadro de referência é o que está atrás da camada
+  try {
+    let cur = { x: x0 * TRACK_K, y: y0 * TRACK_K }, tpl = null;
+    for (let i = 0; i <= steps; i++) {
+      const t = t0 + i / TRACK_FPS;
+      await seekVideosExact(t);
+      renderFrame(c, t, { k: TRACK_K });
+      const g = grayOf(c, W, H);
+      // o modelo é o quadro inicial, sem atualizar: atualizar a cada quadro faz o erro acumular
+      if (!tpl) tpl = patchOf(g, W, H, cur.x, cur.y, tw, tw);
+      else {
+        const m = matchPatch(g, W, H, tpl, tw, tw, cur.x, cur.y, r);
+        cur = { x: m.x, y: m.y };
+      }
+      samples.push({ t, dx: cur.x / TRACK_K - x0, dy: cur.y / TRACK_K - y0 });
+      if (i % 10 === 0) toast(`Rastreando… ${Math.round(i / steps * 100)}%`);
+    }
+  } finally { L.visible = wasVisible; }
+  // média móvel de 5 amostras e keyframes de x e y no trecho rastreado
+  // janela centrada que encolhe nas pontas: a primeira amostra fica exatamente na posição inicial
+  const smooth = key => samples.map((_, i) => {
+    const h = Math.min(2, i, samples.length - 1 - i);
+    let sum = 0;
+    for (let j = i - h; j <= i + h; j++) sum += samples[j][key];
+    return sum / (2 * h + 1);
+  });
+  const sx = smooth('dx'), sy = smooth('dy');
+  for (const prop of ['x', 'y']) {
+    if (L.kf[prop]) L.kf[prop] = L.kf[prop].filter(k => k.t < t0 - 1e-6 || k.t > tEnd + 1e-6);
+  }
+  samples.forEach((s, i) => { upsertKf(L, 'x', s.t, x0 + sx[i], 'linear'); upsertKf(L, 'y', s.t, y0 + sy[i], 'linear'); });
+  commit(); renderPanel(); refreshTime();
+  toast(`Rastreio pronto: ${samples.length} pontos.`);
+}
+
+/* cortes por cena: compara quadros pequenos do vídeo e divide a camada onde a imagem muda de repente */
+async function cutByScenes(L) {
+  if (!L || L.type !== 'video') { toast('Selecione uma camada de vídeo para cortar por cena.'); return; }
+  pause();
+  const W = 64, H = 36, cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const c = cv.getContext('2d', { willReadFrequently: true });
+  const dur = Math.min(L.end - L.start, 600), cuts = [];
+  let prev = null, lastCut = -Infinity;
+  for (let k = 0; k * 0.25 < dur; k++) {   // 4 quadros por segundo
+    const t = L.start + k * 0.25;
+    await seekVideosExact(t);
+    const v = videoFor(L);
+    if (!v || v.readyState < 2) continue;
+    c.drawImage(v, 0, 0, W, H);
+    const d = c.getImageData(0, 0, W, H).data;
+    if (prev) {
+      // diferença média de cor: vermelho para azul conta como troca, mesmo com luminância parecida
+      let diff = 0;
+      for (let i = 0; i < d.length; i += 4) diff += Math.abs(d[i] - prev[i]) + Math.abs(d[i + 1] - prev[i + 1]) + Math.abs(d[i + 2] - prev[i + 2]);
+      diff /= (d.length / 4) * 3 * 255;
+      if (diff > 0.25 && t - lastCut > 0.5 && t > L.start + 0.05 && t < L.end - 0.05) { cuts.push(t); lastCut = t; }
+    }
+    prev = d;
+  }
+  if (!cuts.length) { toast('Nenhuma troca de cena encontrada.'); return; }
+  for (const t of cuts.reverse()) splitLayer(L, t);   // do fim para o começo: L fica sempre com a parte da esquerda
+  commit(); renderPanel(); refreshTime();
+  toast(`${cuts.length} corte(s) nas trocas de cena.`);
+}
+
 async function loadAllAssets() {
   const assets = P().assets || {};
   for (const [id, meta] of Object.entries(assets)) {
@@ -2447,6 +2562,7 @@ function layerPanel(L) {
       ${numRow('fadeOut', 'Saída (s)', 0, 10, 0.1)}
       ${numRow('trimIn', 'Começa em (s)', 0, Math.max(1, Math.floor(mediaSourceDur(L) === Infinity ? 60 : mediaSourceDur(L))), 0.1)}
       <p class="hint">${info}${fileInfo}</p>
+      ${L.type === 'video' ? '<div class="actions"><button class="btn btn-small" data-act="scene-cut">Cortar por cenas</button></div>' : ''}
       ${L.type === 'audio' && rec && rec.peaks ? '<div class="row plain"><label for="waveZoom">Zoom</label><input type="range" id="waveZoom" min="20" max="400" value="60" aria-label="Zoom da forma de onda"></div><div class="wave-box" id="waveBox"></div>' : ''}
       ${rec && rec.buffer ? '<div class="actions"><button class="btn btn-small btn-ai" data-act="captions"><i class="sw sw-whisper"></i> Legendas (Whisper / IA)</button></div>' : ''}
       ${rec && rec.buffer ? `<h4 class="subhead">Ritmo</h4>
@@ -2489,6 +2605,7 @@ function layerPanel(L) {
   ${visual && !special ? `<div class="sec"><h3>Transformação <button class="btn btn-small" data-act="kf-all" title="Keyframe em todas (tecla K)">◆ Todas</button></h3>${transformRows}
     ${hasCamera ? numRow('parallax', 'Acompanha a câmera %', 0, 200) : ''}
     <div class="row plain"><label>Espelhar</label><div class="actions"><button class="btn btn-small${s.flipH ? ' btn-primary' : ''}" data-act="flip-h" title="Inverter horizontalmente">⇄ Horizontal</button><button class="btn btn-small${s.flipV ? ' btn-primary' : ''}" data-act="flip-v" title="Inverter verticalmente">⇅ Vertical</button></div></div>
+    <div class="row plain"><label>Rastreio</label><div class="actions"><button class="btn btn-small btn-ai" data-act="track" title="Segue um ponto do que está atrás da camada e grava os keyframes">Rastrear movimento</button></div></div>
     <div class="row plain"><label for="s-parent">Seguir camada</label><select id="s-parent" data-parent><option value="">Nenhuma</option>${parents.map(o => `<option value="${o.id}"${L.parent === o.id ? ' selected' : ''}>${esc(o.name)}</option>`).join('')}</select></div></div>` : ''}
   ${look ? `<div class="sec"><h3>Efeitos</h3>${propRow('blur')}${propRow('glow')}${colorRow('glowColor', 'Cor do brilho')}
     ${selectRow('blend', 'Mistura', BLENDS)}
@@ -2753,6 +2870,8 @@ panel.addEventListener('click', e => {
     else if (act === 'replace-media' && L) pickMedia(L.type, L.id);
     else if (act === 'reload-lottie' && L) { toast('Carregando animação…'); loadAllAssets().then(() => toast(A.get(L.s.asset)?.player ? 'Animação carregada.' : 'Não consegui carregar. Confira a conexão e tente novamente.')); }
     else if (act === 'font-upload') pickFont();
+    else if (act === 'track' && L) trackLayer(L);
+    else if (act === 'scene-cut' && L) cutByScenes(L);
     else if (act === 'remove-bg' && L) removeBackground(L);
     else if (act === 'mediapipe-segment' && L) mediaPipeCutPerson(L);
     else if (act === 'mediapipe-face' && L) mediaPipeFaceAutoFrame(L);
