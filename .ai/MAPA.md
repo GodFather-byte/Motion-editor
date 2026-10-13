@@ -2,7 +2,7 @@
 
 ## Arquivos
 - `index.html`: estrutura da interface (barra de projeto, status de salvamento, cabeçalho de prévia com formato/fps, ferramentas de criação, linha do tempo, painel, modal).
-- `style.css`: visual. Variáveis no topo; bloco `@media (max-width: 860px)` é o layout de celular.
+- `style.css`: visual. Variáveis no topo; `@media (max-width: 860px)` é o layout de celular (tela cheia, sem molduras); `@media (pointer: coarse)` aumenta os alvos de toque em celular e tablet. PC usa o layout padrão, sem media query.
 - `app.js`: o editor inteiro, num único IIFE, dividido em seções (abaixo).
 - `ai-edit.js`: helpers puros `normalizePlan`, `normalizeTranscript`, `findSilences`, `assemble` (navegador/Node).
 - `lottie.js`: `MotionLottie.load/render/sourceInfo`, runtime dotlottie-web 0.81.0 ESM/WASM sob demanda (JSON e dotLottie v1/v2).
