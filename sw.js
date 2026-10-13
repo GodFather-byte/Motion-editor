@@ -1,6 +1,17 @@
 /* Service worker: guarda o app para abrir offline. Troque VERSION a cada release. */
-const VERSION = 'motion-v20';
-const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'ai-edit.js', 'lottie.js', 'pro-config.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png'];
+const VERSION = 'motion-v21';
+const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'ai-edit.js', 'lottie.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png'];
+
+const CDN_FILES = new Set([
+  'https://cdn.jsdelivr.net/npm/@lottiefiles/dotlottie-web@0.81.0/dist/index.js',
+  'https://cdn.jsdelivr.net/npm/@lottiefiles/dotlottie-web@0.81.0/dist/dotlottie-player.wasm',
+  'https://cdn.jsdelivr.net/npm/@iconify-json/lucide@1.2.130/icons.json',
+  'https://cdn.jsdelivr.net/npm/wavesurfer.js@7.12.12/dist/wavesurfer.esm.js',
+  'https://cdn.jsdelivr.net/npm/mp4box@2.4.1/dist/mp4box.all.mjs',
+  'https://cdn.jsdelivr.net/npm/mp4box@2.4.1/dist/rolldown-runtime-w6R9maHv.mjs',
+  'https://cdn.jsdelivr.net/npm/mp4box@2.4.1/dist/styp-9TIZZDLN.mjs',
+  'https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js',
+]);
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -14,10 +25,9 @@ self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
-  // Player vetorial: CDN com versão fixa, guardado após a primeira importação.
-  const lottieBase = 'https://cdn.jsdelivr.net/npm/@lottiefiles/dotlottie-web@0.81.0/dist/';
+  // Bibliotecas abertas em CDN com versão fixa: guardadas após o primeiro uso.
   const lottieResource = url.origin + url.pathname;
-  if (lottieResource === lottieBase + 'index.js' || lottieResource === lottieBase + 'dotlottie-player.wasm') {
+  if (CDN_FILES.has(lottieResource)) {
     e.respondWith(caches.open(VERSION).then(async c => {
       const hit = await c.match(lottieResource);
       if (hit) return hit;

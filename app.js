@@ -138,8 +138,7 @@ const SHEET_FOCUS = { add: '.add-bar', ia: '.add-bar', props: '#panel', project:
 const sheetOpen = () => phoneMQ.matches && !!app.dataset.sheet;
 function syncSheetTabs() { $$('[data-sheet-open]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.sheetOpen === app.dataset.sheet))); }
 function syncForwards() {
-  const pro = $('#menu [data-forward="btnPro"]'), inst = $('#menu [data-forward="btnInstall"]');
-  if (pro) pro.textContent = $('#btnPro').textContent;
+  const inst = $('#menu [data-forward="btnInstall"]');
   if (inst) inst.hidden = $('#btnInstall').hidden;
 }
 function openSheet(name, opener = null) {
@@ -234,7 +233,7 @@ async function decodeAudio(blob) {
   } catch { return null; }
 }
 
-async function loadAsset(id, blob, kind) {
+async function loadAsset(id, blob, kind, name) {
   if (A.has(id)) { const loaded = A.get(id); if (loaded.ready) await loaded.ready; return loaded; }
   const rec = { id, kind, blob, url: URL.createObjectURL(blob) };
   A.set(id, rec);
@@ -259,10 +258,13 @@ async function loadAsset(id, blob, kind) {
     rec.w = v.videoWidth || 1280; rec.h = v.videoHeight || 720; rec.duration = isFinite(v.duration) ? v.duration : 0;
     rec.buffer = await decodeAudio(blob);
     if (rec.buffer) rec.peaks = computePeaks(rec.buffer);
+    rec.info = await videoInfo(blob).catch(() => null);
   } else if (kind === 'audio') {
     rec.buffer = await decodeAudio(blob);
     rec.duration = rec.buffer ? rec.buffer.duration : 0;
     if (rec.buffer) rec.peaks = computePeaks(rec.buffer);
+  } else if (kind === 'font') {
+    await registerFontFace(name, blob);
   }
   return rec;
 }
@@ -288,7 +290,78 @@ async function registerAsset(blob, kind, name) {
   }
   P().assets[id] = { kind, name, mime: blob.type };
   try { await idb.put(id, { blob, kind, name, mime: blob.type }); } catch { /* sem IndexedDB: fica só na memória */ }
-  return loadAsset(id, blob, kind);
+  return loadAsset(id, blob, kind, name);
+}
+
+/* fontes próprias: o arquivo é validado com opentype.js e guardado como ativo do projeto */
+function pickFont() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.ttf,.otf,.woff';
+  input.onchange = () => { if (input.files[0]) addCustomFont(input.files[0]); };
+  input.click();
+}
+async function addCustomFont(file) {
+  if (file.size > 15 * 1048576) { toast('Essa fonte é grande demais. Use até 15 MB.'); return; }
+  try {
+    const opentype = await loadOpentype();
+    let font;
+    try { font = opentype.parse(await file.arrayBuffer()); }
+    catch { throw new Error('Esse arquivo não é uma fonte .ttf, .otf ou .woff válida.'); }
+    const family = font.names.fontFamily?.en || font.names.fullName?.en || file.name.replace(/\.[^.]+$/, '');
+    await registerAsset(file, 'font', family);
+    const L = selLayer();
+    if (L && L.type === 'text') { L.s.font = family; commit(); }
+    renderPanel(); refreshTime();
+    toast(`Fonte "${family}" adicionada.`);
+  } catch (err) { toast(err.message || 'Não consegui usar essa fonte.'); }
+}
+async function registerFontFace(family, blob) {
+  const face = new FontFace(family, await blob.arrayBuffer());
+  await face.load();
+  document.fonts.add(face);
+  if (!FONTS.includes(family)) FONTS.push(family);
+}
+
+/* metadados de MP4/MOV com mp4box.js: codec, quadros por segundo e rotação gravada no arquivo */
+async function videoInfo(blob) {
+  if (!/mp4|quicktime/.test(blob.type) || blob.size > 400 * 1048576) return null;
+  const { createFile } = await loadMp4Box();
+  return new Promise((resolve, reject) => {
+    const mp4 = createFile();
+    mp4.onError = reject;
+    mp4.onReady = info => {
+      const v = info.videoTracks[0];
+      if (!v) return resolve(null);
+      const trak = mp4.moov.traks.find(t => t.mdia?.hdlr?.handler === 'vide');
+      const m = trak?.tkhd?.matrix || [65536, 0, 0, 0, 65536, 0, 0, 0, 0];
+      const deg = Math.round(-Math.atan2(m[1], m[0]) * 180 / Math.PI);   // mesma convenção do ffprobe
+      resolve({ codec: v.codec, fps: v.nb_samples / (v.samples_duration / v.timescale), rotation: (deg + 360) % 360 });
+    };
+    blob.arrayBuffer().then(buf => { buf.fileStart = 0; mp4.appendBuffer(buf); mp4.flush(); }, reject);
+  });
+}
+
+/* forma de onda do áudio no painel (wavesurfer.js): zoom e clique para ir ao ponto da música */
+let panelWave = null;
+async function mountPanelWave(L) {
+  if (panelWave) { panelWave.destroy(); panelWave = null; }
+  const box = $('#waveBox', panel), rec = L && A.get(L.s.asset);
+  if (!box || !rec || !rec.peaks) return;
+  try {
+    const WaveSurfer = await loadWaveSurfer();
+    if (!$('#waveBox', panel)) return;          // o painel mudou enquanto carregava
+    const ws = WaveSurfer.create({
+      container: box, height: 72, waveColor: theme.audio, progressColor: theme.audio, cursorColor: theme.accent,
+      barWidth: 2, barGap: 1, normalize: true, minPxPerSec: Number($('#waveZoom', panel).value),
+    });
+    ws.load('', [rec.peaks], rec.duration).catch(() => {});
+    ws.on('interaction', t => setTime(L.start + (t - (L.s.trimIn || 0)) / (Number(L.s.speed) || 1)));
+    $('#waveZoom', panel).oninput = e => ws.zoom(Number(e.target.value));
+    panelWave = ws;
+  } catch {
+    if (box) box.textContent = 'Não consegui carregar a forma de onda. Confira a internet.';
+  }
 }
 
 async function loadAllAssets() {
@@ -305,10 +378,10 @@ async function loadAllAssets() {
         const blob = await (await fetch(meta.data)).blob();
         delete meta.data;
         idb.put(id, { blob, kind: meta.kind, name: meta.name, mime: meta.mime }).catch(() => {});
-        await loadAsset(id, blob, meta.kind);
+        await loadAsset(id, blob, meta.kind, meta.name);
       } else {
         const rec = await idb.get(id);
-        if (rec && rec.blob) await loadAsset(id, rec.blob, meta.kind || rec.kind);
+        if (rec && rec.blob) await loadAsset(id, rec.blob, meta.kind || rec.kind, meta.name);
       }
     } catch { /* arquivo perdido: a camada mostra um aviso */ }
   }
@@ -1547,6 +1620,72 @@ function recordVoiceModal() {
 }
 
 /* ---------- figurinhas: emojis e ícones vetoriais ---------- */
+/* ======================= bibliotecas abertas (carregadas sob demanda) ======================= */
+const LIBS = {
+  lucide: 'https://cdn.jsdelivr.net/npm/@iconify-json/lucide@1.2.130/icons.json',
+  wavesurfer: 'https://cdn.jsdelivr.net/npm/wavesurfer.js@7.12.12/dist/wavesurfer.esm.js',
+  mp4box: 'https://cdn.jsdelivr.net/npm/mp4box@2.4.1/dist/mp4box.all.mjs',
+  opentype: 'https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js',
+};
+const libCache = new Map();
+/* guarda a promessa: cada biblioteca baixa uma vez; se falhar, tenta de novo na próxima vez */
+function lib(key, load) {
+  if (!libCache.has(key)) libCache.set(key, load().catch(err => { libCache.delete(key); throw err; }));
+  return libCache.get(key);
+}
+const loadLucide = () => lib('lucide', () => fetch(LIBS.lucide)
+  .then(r => { if (!r.ok) throw new Error('Não consegui baixar os ícones. Confira a internet.'); return r.json(); })
+  .then(j => j.icons));
+const loadWaveSurfer = () => lib('wavesurfer', () => import(LIBS.wavesurfer).then(m => m.default));
+const loadMp4Box = () => lib('mp4box', () => import(LIBS.mp4box));
+const loadOpentype = () => lib('opentype', () => new Promise((resolve, reject) => {
+  if (window.opentype) return resolve(window.opentype);
+  const s = document.createElement('script');
+  s.src = LIBS.opentype;
+  s.onload = () => resolve(window.opentype);
+  s.onerror = () => reject(new Error('Não consegui baixar a leitura de fontes. Confira a internet.'));
+  document.head.append(s);
+}));
+
+/* Lucide (traço, licença ISC): o corpo SVG de cada ícone vira caminhos para o Path2D */
+const lucideCache = new Map();
+function lucideD(body) {
+  if (!lucideCache.has(body)) {
+    const doc = new DOMParser().parseFromString(`<svg xmlns="http://www.w3.org/2000/svg">${body}</svg>`, 'image/svg+xml');
+    const num = (el, name) => parseFloat(el.getAttribute(name)) || 0;
+    const poly = (el, close) => {
+      const v = (el.getAttribute('points') || '').trim().split(/[\s,]+/).map(Number);
+      let d = '';
+      for (let i = 0; i + 1 < v.length; i += 2) d += `${i ? 'L' : 'M'}${v[i]} ${v[i + 1]}`;
+      return close ? d + 'Z' : d;
+    };
+    const parts = [...doc.documentElement.children].map(el => {
+      switch (el.localName) {
+        case 'path': return el.getAttribute('d') || '';
+        case 'circle': { const cx = num(el, 'cx'), cy = num(el, 'cy'), r = num(el, 'r'); return `M${cx - r} ${cy}a${r} ${r} 0 1 0 ${2 * r} 0a${r} ${r} 0 1 0 ${-2 * r} 0`; }
+        case 'ellipse': { const cx = num(el, 'cx'), cy = num(el, 'cy'), rx = num(el, 'rx'), ry = num(el, 'ry'); return `M${cx - rx} ${cy}a${rx} ${ry} 0 1 0 ${2 * rx} 0a${rx} ${ry} 0 1 0 ${-2 * rx} 0`; }
+        case 'rect': {
+          const x = num(el, 'x'), y = num(el, 'y'), w = num(el, 'width'), h = num(el, 'height');
+          const r = Math.min(num(el, 'rx'), w / 2, h / 2);
+          return `M${x + r} ${y}H${x + w - r}a${r} ${r} 0 0 1 ${r} ${r}V${y + h - r}a${r} ${r} 0 0 1 ${-r} ${r}H${x + r}a${r} ${r} 0 0 1 ${-r} ${-r}V${y + r}a${r} ${r} 0 0 1 ${r} ${-r}Z`;
+        }
+        case 'line': return `M${num(el, 'x1')} ${num(el, 'y1')}L${num(el, 'x2')} ${num(el, 'y2')}`;
+        case 'polyline': return poly(el, false);
+        case 'polygon': return poly(el, true);
+        default: return '';
+      }
+    });
+    lucideCache.set(body, parts.filter(Boolean).join(' '));
+  }
+  return lucideCache.get(body);
+}
+/* botões da grade: no máximo 120 por vez, para a busca continuar rápida */
+function lucideGridHtml(icons, query) {
+  const q = query.trim().toLowerCase().replace(/\s+/g, '-');
+  return Object.keys(icons).filter(n => n.includes(q)).slice(0, 120)
+    .map(n => `<button class="sticker line" data-lucide="${esc(n)}" title="${esc(n)}" aria-label="${esc(n)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${esc(lucideD(icons[n].body))}"/></svg></button>`).join('');
+}
+
 const EMOJIS = {
   Rostos: '😀 😂 🥹 😍 😎 🤩 🥳 😱 🤯 😭 😡 🤔 😴 🤫 😇 🫠',
   Gestos: '👍 👏 🙌 🙏 💪 ✌️ 🤙 👉 👀 🫶 👋 🤝',
@@ -1585,6 +1724,13 @@ function drawIcon(c, L) {
   c.save();
   c.scale(k, k);
   const path = iconPath(s.d || ICONS[s.iconName] || ICONS.estrela);
+  if (s.line) {
+    // ícone de traço (Lucide): só contorno, com a espessura padrão de 2 unidades do grid de 24
+    c.lineWidth = 2; c.lineCap = 'round'; c.lineJoin = 'round';
+    c.strokeStyle = paint(c, s, 24, 24, s.fill); c.stroke(path);
+    c.restore();
+    return { w: s.size, h: s.size };
+  }
   if (s.stroke > 0) { c.lineWidth = s.stroke * 2 / k; c.lineJoin = 'round'; c.strokeStyle = s.strokeColor; c.stroke(path); }
   c.fillStyle = paint(c, s, 24, 24, s.fill);
   c.fill(path, 'evenodd');
@@ -1595,10 +1741,10 @@ function drawIcon(c, L) {
 function stickersModal() {
   const m = Math.min(P().width, P().height);
   showModal('Figurinhas', `
-    <div class="seg sticker-tabs"><button class="on" data-tab="emoji">Emojis</button><button data-tab="icon">Ícones</button></div>
+    <div class="seg sticker-tabs"><button class="on" data-tab="emoji">Emojis</button><button data-tab="icon">Ícones</button><button data-tab="lucide">Lucide</button></div>
     <div data-pane="emoji">${Object.entries(EMOJIS).map(([cat, list]) => `<h4 class="subhead">${cat}</h4><div class="sticker-grid">${list.split(' ').map(e => `<button class="sticker" data-emoji="${e}" aria-label="${e}">${e}</button>`).join('')}</div>`).join('')}</div>
     <div data-pane="icon" hidden><div class="sticker-grid icons">${Object.entries(ICONS).map(([name, d]) => `<button class="sticker" data-icon="${name}" title="${name}" aria-label="${name}"><svg viewBox="0 0 24 24"><path d="${d}" fill-rule="evenodd"/></svg></button>`).join('')}</div>
-      <p class="hint">Os ícones são vetoriais: aceitam cor, degradê, contorno e brilho.</p></div>`, [{ label: 'Fechar' }]);
+      <p class="hint">Os ícones são vetoriais: aceitam cor, degradê, contorno e brilho.</p></div><div data-pane="lucide" hidden><input class="field" id="lucideQ" type="search" placeholder="Buscar ícone, ex.: coração" aria-label="Buscar ícone Lucide" autocomplete="off"><p class="hint" id="lucideStatus">Toque em Lucide para carregar os ícones.</p><div class="sticker-grid icons" id="lucideGrid"></div><p class="hint">Ícones de traço da biblioteca Lucide (licença ISC). Aceitam cor e degradê.</p></div>`, [{ label: 'Fechar' }]);
   $$('[data-tab]').forEach(b => (b.onclick = () => {
     $$('[data-tab]').forEach(x => x.classList.toggle('on', x === b));
     $$('[data-pane]').forEach(x => (x.hidden = x.dataset.pane !== b.dataset.tab));
@@ -1611,6 +1757,26 @@ function stickersModal() {
     hideModal();
     addLayer(makeLayer('icon', { name: b.dataset.icon[0].toUpperCase() + b.dataset.icon.slice(1), s: { d: ICONS[b.dataset.icon], iconName: b.dataset.icon } }));
   }));
+  // Lucide: a lista carrega na primeira vez que a aba abre, e a busca filtra sem baixar de novo
+  let lucideData = null;
+  const paintLucide = () => {
+    $('#lucideGrid').innerHTML = lucideGridHtml(lucideData, $('#lucideQ').value);
+    $$('[data-lucide]').forEach(b => (b.onclick = () => {
+      hideModal();
+      const name = b.dataset.lucide;
+      addLayer(makeLayer('icon', { name: name.replace(/-/g, ' ').replace(/^./, c => c.toUpperCase()), s: { d: lucideD(lucideData[name].body), iconName: 'lucide-' + name, line: true } }));
+    }));
+  };
+  $('#lucideQ').oninput = () => { if (lucideData) paintLucide(); };
+  $('[data-tab="lucide"]').addEventListener('click', async () => {
+    if (lucideData) return;
+    $('#lucideStatus').textContent = 'Carregando ícones…';
+    try {
+      lucideData = await loadLucide();
+      $('#lucideStatus').textContent = `${Object.keys(lucideData).length} ícones de traço.`;
+      paintLucide();
+    } catch (err) { $('#lucideStatus').textContent = err.message; }
+  });
 }
 
 /* ======================= seleção no preview ======================= */
@@ -2113,6 +2279,7 @@ function renderPanel() {
   syncPanel(true);
   const cv = $('#curveCv', panel);
   if (cv && L) setupCurve(cv, L);
+  mountPanelWave(L);
 }
 
 const kfsAt = (L, t) => Object.values(L.kf).flat().filter(k => Math.abs(k.t - t) < 0.5 / P().fps);
@@ -2197,6 +2364,7 @@ function layerPanel(L) {
   if (L.type === 'text') {
     content = `<textarea data-s="text" id="s-text" aria-label="Texto" rows="2"></textarea>
       ${selectRow('font', 'Fonte', Object.fromEntries(FONTS.map(f => [f, f])))}
+      <div class="actions"><button class="btn btn-small" data-act="font-upload">Enviar fonte (.ttf ou .otf)</button></div>
       ${numRow('size', 'Tamanho', 10, 600)}
       ${selectRow('weight', 'Peso', { 400: 'Normal', 600: 'Médio', 700: 'Negrito', 900: 'Pesado' })}
       ${fillRows('color', 'Cor')}
@@ -2269,6 +2437,7 @@ function layerPanel(L) {
   if (MEDIA(L.type)) {
     const rec = A.get(s.asset);
     const info = rec ? (rec.buffer ? `Duração do arquivo: ${fmtTime(rec.duration || 0)}` : (L.type === 'video' ? 'Este vídeo não tem som (ou o navegador não conseguiu ler o áudio).' : 'Não consegui ler este áudio.')) : 'Arquivo não encontrado neste aparelho. Use "Trocar arquivo".';
+    const fileInfo = rec && rec.info ? ` Arquivo: ${esc(rec.info.codec)}${Number.isFinite(rec.info.fps) ? ` · ${Math.round(rec.info.fps)} fps` : ''}${rec.info.rotation ? ` · gravado girado ${rec.info.rotation}°` : ''}.` : '';
     const speeds = { '0.25': '0.25x (lento 4x)', '0.5': '0.5x (lento 2x)', '0.75': '0.75x', '1': '1x (normal)', '1.25': '1.25x', '1.5': '1.5x (rápido)', '2': '2x (acelerado)', '3': '3x', '4': '4x' };
     media = `<div class="sec"><h3>${L.type === 'video' ? 'Áudio e Velocidade' : 'Som'}</h3>
       ${checkRow('muted', 'Mudo (sem som)')}
@@ -2277,7 +2446,8 @@ function layerPanel(L) {
       ${numRow('fadeIn', 'Entrada (s)', 0, 10, 0.1)}
       ${numRow('fadeOut', 'Saída (s)', 0, 10, 0.1)}
       ${numRow('trimIn', 'Começa em (s)', 0, Math.max(1, Math.floor(mediaSourceDur(L) === Infinity ? 60 : mediaSourceDur(L))), 0.1)}
-      <p class="hint">${info}</p>
+      <p class="hint">${info}${fileInfo}</p>
+      ${L.type === 'audio' && rec && rec.peaks ? '<div class="row plain"><label for="waveZoom">Zoom</label><input type="range" id="waveZoom" min="20" max="400" value="60" aria-label="Zoom da forma de onda"></div><div class="wave-box" id="waveBox"></div>' : ''}
       ${rec && rec.buffer ? '<div class="actions"><button class="btn btn-small btn-ai" data-act="captions"><i class="sw sw-whisper"></i> Legendas (Whisper / IA)</button></div>' : ''}
       ${rec && rec.buffer ? `<h4 class="subhead">Ritmo</h4>
         ${s.beats && s.beats.length ? `<p class="hint">${s.bpm ? s.bpm + ' BPM · ' : ''}${beatsOf(L).length} batidas marcadas na linha do tempo. Os blocos grudam nelas ao arrastar.</p>` : '<p class="hint">Marque as batidas para cortar e animar no ritmo.</p>'}
@@ -2446,7 +2616,7 @@ panel.addEventListener('input', e => {
       if (L.end !== oldEnd) delete L.s.transitionEnd;
       commit(); renderPanel(); renderTimeline(); refreshTime(); return;
     }
-    if (key === 'iconName' && ICONS[v]) L.s.d = ICONS[v];
+    if (key === 'iconName' && ICONS[v]) { L.s.d = ICONS[v]; L.s.line = false; }
     if (key === 'speed') {
       v = clamp(parseFloat(v) || 1, 0.25, 4);
       const old = Number(L.s.speed) || 1;
@@ -2582,6 +2752,7 @@ panel.addEventListener('click', e => {
     else if (act === 'freeze-frame' && L) freezeFrame(L);
     else if (act === 'replace-media' && L) pickMedia(L.type, L.id);
     else if (act === 'reload-lottie' && L) { toast('Carregando animação…'); loadAllAssets().then(() => toast(A.get(L.s.asset)?.player ? 'Animação carregada.' : 'Não consegui carregar. Confira a conexão e tente novamente.')); }
+    else if (act === 'font-upload') pickFont();
     else if (act === 'remove-bg' && L) removeBackground(L);
     else if (act === 'mediapipe-segment' && L) mediaPipeCutPerson(L);
     else if (act === 'mediapipe-face' && L) mediaPipeFaceAutoFrame(L);
@@ -3075,7 +3246,7 @@ async function exportVideo(forceMime) {
 
   const keepTime = S.time;
   S.exporting = true; drawOverlay();
-  S.time = 0; syncMedia(); renderMain(0); drawWatermark(ctx);
+  S.time = 0; syncMedia(); renderMain(0);
   const vstream = canvas.captureStream(p.fps);
   let ac = null, adest = null, sources = [];
   const tracks = [...vstream.getVideoTracks()];
@@ -3098,8 +3269,8 @@ async function exportVideo(forceMime) {
     const step = () => {
       if (cancelled) return resolve();
       const t = (performance.now() - t0) / 1000;
-      if (t >= p.duration) { S.time = p.duration - 1e-4; renderMain(S.time); drawWatermark(ctx); return resolve(); }
-      S.time = t; syncMedia(); renderMain(t); drawWatermark(ctx);
+      if (t >= p.duration) { S.time = p.duration - 1e-4; renderMain(S.time); return resolve(); }
+      S.time = t; syncMedia(); renderMain(t);
       const bar = $('#expBar');
       if (bar) bar.style.width = (t / p.duration * 100).toFixed(1) + '%';
       requestAnimationFrame(step);
@@ -3131,13 +3302,11 @@ async function exportVideo(forceMime) {
   const file = new File([blob], name, { type: blob.type });
   const canShare = navigator.canShare && navigator.canShare({ files: [file] });
   const size = blob.size > 1048576 ? (blob.size / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(blob.size / 1024)) + ' KB';
-  showModal('Vídeo pronto', `<video src="${url}" controls playsinline loop></video><p>${ext.toUpperCase()} · ${size} · ${p.width}×${p.height}${ext === 'webm' ? '. Seu navegador gera WEBM; para MP4 use o Chrome recente ou o Safari.' : ''}</p>${S.pro ? '' : '<p>Versão grátis: o vídeo sai com a marca "feito com Motion". <a href="#" id="goPro">Tirar a marca d\'água</a></p>'}`, [
+  showModal('Vídeo pronto', `<video src="${url}" controls playsinline loop></video><p>${ext.toUpperCase()} · ${size} · ${p.width}×${p.height}${ext === 'webm' ? '. Seu navegador gera WEBM; para MP4 use o Chrome recente ou o Safari.' : ''}</p>`, [
     ...(canShare ? [{ label: 'Compartilhar', keepOpen: true, onClick: () => navigator.share({ files: [file], title: P().name }).catch(() => {}) }] : []),
     { label: 'Baixar vídeo', cls: 'btn-primary', keepOpen: true, onClick: () => download(blob, name) },
     { label: 'Fechar', onClick: () => URL.revokeObjectURL(url) },
   ]);
-  const gp = $('#goPro');
-  if (gp) gp.onclick = ev => { ev.preventDefault(); hideModal(); setTimeout(() => proModal(), 30); };
 }
 function exportModal() {
   const p = P();
@@ -3148,7 +3317,7 @@ function exportModal() {
   const sides = [[720, '720p'], [1080, '1080p'], [2160, '4K']];
   if (!sides.some(([v]) => v === short)) sides.unshift([short, 'Projeto']);
   const resOpts = sides.map(([side, label]) =>
-    `<option value="${side}"${side === short ? ' selected' : ''}>${label} (${dims(side)})${side === 2160 && !S.pro ? ' · Pro' : ''}</option>`).join('');
+    `<option value="${side}"${side === short ? ' selected' : ''}>${label} (${dims(side)})</option>`).join('');
   const fpsOpts = [[24, '24 (cinema)'], [30, '30 (padrão)'], [60, '60 (fluido)']].map(([v, l]) => `<option value="${v}"${p.fps === v ? ' selected' : ''}>${l}</option>`).join('');
   const hints = {
     mp4: fast ? 'Monta o vídeo quadro a quadro, com som: não pula quadros, mesmo com efeitos pesados, e continua mesmo se você trocar de aba.' : 'Este navegador não tem o codificador rápido: o vídeo será gravado em tempo real, com a aba aberta.',
@@ -3179,7 +3348,6 @@ function exportModal() {
       if (fmt === 'png') { hideModal(); exportPng(alpha); return; }
       if (fmt === 'gif') { hideModal(); exportGif({ shortSide: gifSide, transparent: alpha }); return; }
       if (fmt === 'live' || !fast) { hideModal(); exportVideo(); return; }
-      if (side > 1080 && !S.pro) { hideModal(); setTimeout(() => proModal('Exportar em 4K é do Motion Pro.'), 30); return; }
       hideModal();
       fastExport({ k: side / short, fps });
     } },
@@ -3311,14 +3479,11 @@ function fileReady(blob, name, info) {
   const canShare = navigator.canShare && navigator.canShare({ files: [file] });
   const size = blob.size > 1048576 ? (blob.size / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(blob.size / 1024)) + ' KB';
   showModal(isVideo ? 'Vídeo pronto' : 'Arquivo pronto', `${isVideo ? `<video src="${url}" controls playsinline loop></video>` : `<img class="export-preview" src="${url}" alt="Prévia do arquivo exportado">`}
-    <p>${esc(info)} · ${size}</p>
-    ${S.pro ? '' : '<p>Versão grátis: sai com a marca "feito com Motion". <a href="#" id="goPro">Tirar a marca d\'água</a></p>'}`, [
+    <p>${esc(info)} · ${size}</p>`, [
     ...(canShare ? [{ label: 'Compartilhar', keepOpen: true, onClick: () => navigator.share({ files: [file], title: P().name }).catch(() => {}) }] : []),
     { label: 'Baixar', cls: 'btn-primary', keepOpen: true, onClick: () => download(blob, name) },
     { label: 'Fechar', onClick: () => URL.revokeObjectURL(url) },
   ]);
-  const gp = $('#goPro');
-  if (gp) gp.onclick = ev => { ev.preventDefault(); hideModal(); setTimeout(() => proModal(), 30); };
 }
 
 async function fastExport({ k = 1, fps = P().fps } = {}) {
@@ -3362,7 +3527,6 @@ async function fastExport({ k = 1, fps = P().fps } = {}) {
       S.time = t;
       await seekVideosExact(t);
       renderFrame(ectx, t, { k: kRender });
-      drawWatermark(ectx);
       const vf = new VideoFrame(ec, { timestamp: Math.round(i * 1e6 / fps), duration: Math.round(1e6 / fps) });
       venc.encode(vf, { keyFrame: i % Math.round(fps * 2) === 0 });
       vf.close();
@@ -3422,7 +3586,6 @@ async function exportGif({ shortSide = 480, fps = 15, transparent = false } = {}
       S.time = t;
       await seekVideosExact(t);
       renderFrame(ectx, t, { k, transparent });
-      drawWatermark(ectx);
       const { data } = ectx.getImageData(0, 0, W, H);
       const palette = quantize(data, 256, { format, oneBitAlpha: transparent });
       const index = applyPalette(data, palette, format);
@@ -3454,7 +3617,6 @@ function exportPng(transparent) {
   c.width = p.width; c.height = p.height;
   const cc = c.getContext('2d');
   renderFrame(cc, S.time, { transparent });
-  drawWatermark(cc);
   c.toBlob(b => { if (b) download(b, `${fileBase()}-${S.time.toFixed(2)}s.png`); }, 'image/png');
 }
 
@@ -4453,82 +4615,6 @@ function aiMenu() {
 }
 $('#btnAI').onclick = aiMenu;
 
-/* ======================= plano Pro e marca d'água ======================= */
-const LIC_KEY = 'motion-editor:license';
-S.pro = null;  // { n: cliente, u: validade } quando a licença é válida
-const b64uDecode = s => { s = s.replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '='; return Uint8Array.from(atob(s), c => c.charCodeAt(0)); };
-
-async function verifyLicense(text) {
-  const cfg = window.MOTION_PRO;
-  if (!cfg || !cfg.publicKey || !crypto.subtle) return null;
-  const m = String(text).trim().match(/^MOTION-([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/);
-  if (!m) return null;
-  try {
-    const key = await crypto.subtle.importKey('jwk', cfg.publicKey, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
-    const ok = await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, b64uDecode(m[2]), new TextEncoder().encode(m[1]));
-    if (!ok) return null;
-    const info = JSON.parse(new TextDecoder().decode(b64uDecode(m[1])));
-    if (info.u && info.u < new Date().toISOString().slice(0, 10)) return { ...info, expired: true };
-    return info;
-  } catch { return null; }
-}
-
-async function loadLicense() {
-  let saved = null;
-  try { saved = localStorage.getItem(LIC_KEY); } catch { /* sem armazenamento */ }
-  const info = saved ? await verifyLicense(saved) : null;
-  S.pro = info && !info.expired ? info : null;
-  $('#btnPro').classList.toggle('is-pro', !!S.pro);
-  $('#btnPro').textContent = S.pro ? 'PRO' : 'Seja Pro';
-  if (info && info.expired) toast('Sua licença Pro venceu. Renove para tirar a marca d\'água.');
-}
-
-function proModal(reason) {
-  const cfg = window.MOTION_PRO || {};
-  const status = S.pro
-    ? `<p class="pro-ok">Motion Pro ativo para <b>${esc(S.pro.n)}</b>${S.pro.u ? `, válido até ${esc(S.pro.u.split('-').reverse().join('/'))}` : ''}.</p>`
-    : (reason ? `<p>${esc(reason)}</p>` : '');
-  showModal('Motion Pro', `${status}
-    <ul class="perks">
-      <li>Vídeos e imagens sem marca d'água</li>
-      <li>Todos os modelos prontos, incluindo os exclusivos</li>
-      <li>Novos modelos todo mês</li>
-    </ul>
-    ${S.pro ? '' : `<p><b>${esc(cfg.price || '')}</b>. ${esc(cfg.buyText || '')}${cfg.buyLink ? ` <a href="${esc(cfg.buyLink)}" target="_blank" rel="noopener">Assinar agora</a>` : ''}</p>`}
-    <label class="hint" for="licIn">${S.pro ? 'Trocar chave de licença' : 'Já tem uma chave? Cole aqui'}<input class="field" id="licIn" spellcheck="false" autocomplete="off" placeholder="MOTION-..."></label>`, [
-    ...(S.pro ? [{ label: 'Remover licença', onClick: () => { try { localStorage.removeItem(LIC_KEY); } catch {} loadLicense(); } }] : []),
-    { label: 'Fechar' },
-    { label: 'Ativar', cls: 'btn-primary', keepOpen: true, onClick: async () => {
-      const v = $('#licIn').value.trim();
-      const info = await verifyLicense(v);
-      if (!info) { toast('Chave inválida. Confira se copiou ela inteira.'); return; }
-      if (info.expired) { toast('Essa chave já venceu.'); return; }
-      try { localStorage.setItem(LIC_KEY, v); } catch { /* sem armazenamento */ }
-      await loadLicense();
-      hideModal();
-      toast('Motion Pro ativado. Obrigado!');
-    } },
-  ]);
-}
-$('#btnPro').onclick = () => proModal();
-
-function drawWatermark(c) {
-  if (S.pro) return;
-  const p = { width: c.canvas.width, height: c.canvas.height }, m = Math.min(p.width, p.height);
-  const size = Math.round(m * 0.028), pad = Math.round(m * 0.03);
-  c.save();
-  c.setTransform(1, 0, 0, 1, 0, 0);
-  c.globalAlpha = 0.8; c.filter = 'none'; c.globalCompositeOperation = 'source-over';
-  c.font = `800 ${size}px Unbounded, Figtree, sans-serif`;
-  c.textAlign = 'right'; c.textBaseline = 'bottom';
-  const text = 'feito com Motion';
-  const w = c.measureText(text).width;
-  c.fillStyle = 'rgba(0,0,0,.45)';
-  if (c.roundRect) { c.beginPath(); c.roundRect(p.width - pad - w - size * 0.9, p.height - pad - size * 1.6, w + size * 1.3, size * 2, size * 0.5); c.fill(); }
-  c.fillStyle = '#ffffff';
-  c.fillText(text, p.width - pad - size * 0.2, p.height - pad - size * 0.15);
-  c.restore();
-}
 
 /* ======================= modelos prontos ======================= */
 const K = (...pairs) => pairs.map(([t, v, e]) => ({ t, v, e: e || 'easeInOut' }));
@@ -4573,7 +4659,7 @@ const TEMPLATES = [
     ],
   },
   {
-    id: 'promo', name: 'Promoção relâmpago', aspect: '1:1', dur: 5, bg: '#ff3b30', pro: true, thumbAt: 1.8,
+    id: 'promo', name: 'Promoção relâmpago', aspect: '1:1', dur: 5, bg: '#ff3b30', thumbAt: 1.8,
     layers: p => [
       makeLayer('text', { name: 'Desconto', p: { y: 470 }, s: { text: '50% OFF', font: 'Anton', size: 250, weight: 400, color: '#ffffff', stroke: 10, strokeColor: '#7a0d0d', anim: 'pop', shadowY: 14, shadowBlur: 0, shadowColor: '#7a0d0d', shadowOpacity: 100 } }),
       makeLayer('text', { name: 'Produto', start: 0.6, p: { y: 660 }, s: { text: 'em toda a loja', font: 'Montserrat', size: 70, weight: 900, color: '#ffe14d', anim: 'words' } }),
@@ -4583,7 +4669,7 @@ const TEMPLATES = [
     ],
   },
   {
-    id: 'quote', name: 'Citação', aspect: '4:5', dur: 6, bg: '#1d1a17', pro: true, thumbAt: 3,
+    id: 'quote', name: 'Citação', aspect: '4:5', dur: 6, bg: '#1d1a17', thumbAt: 3,
     layers: p => [
       makeLayer('text', { name: 'Aspas', p: { y: 330 }, s: { text: '“', font: 'Playfair Display', size: 320, weight: 900, color: '#ffb547' }, kf: { opacity: K([0, 0], [0.6, 100]), y: K([0, 280, 'easeOut'], [0.8, 330]) } }),
       makeLayer('text', { name: 'Frase', start: 0.5, p: { y: 640 }, s: { text: 'A simplicidade é o\núltimo grau da\nsofisticação.', font: 'Playfair Display', size: 84, weight: 700, color: '#f4efe6', anim: 'words' } }),
@@ -4592,7 +4678,7 @@ const TEMPLATES = [
     ],
   },
   {
-    id: 'subscribe', name: 'Inscreva-se', aspect: '16:9', dur: 4, bg: '#00ff00', pro: true, thumbAt: 1.9,
+    id: 'subscribe', name: 'Inscreva-se', aspect: '16:9', dur: 4, bg: '#00ff00', thumbAt: 1.9,
     layers: p => [
       makeLayer('text', { name: 'Texto', p: { x: 960, y: 540 }, s: { text: 'INSCREVA-SE', font: 'Montserrat', size: 64, weight: 900, color: '#ffffff' }, kf: { scale: K([0, 0, 'back'], [0.5, 100], [3.4, 100, 'easeIn'], [3.8, 0]) } }),
       makeLayer('rect', { name: 'Botão', p: { x: 960, y: 540 }, s: { w: 560, h: 130, radius: 24, fill: '#ff0033' }, kf: { scale: K([0, 0, 'back'], [0.5, 100], [1.8, 100], [1.9, 92], [2.05, 100], [3.4, 100, 'easeIn'], [3.8, 0]), saturate: K([1.85, 100, 'hold'], [1.9, 0]), brightness: K([1.85, 100, 'hold'], [1.9, 60]) } }),
@@ -4600,7 +4686,7 @@ const TEMPLATES = [
     ],
   },
   {
-    id: 'event', name: 'Story de evento', aspect: '9:16', dur: 6, bg: '#101528', pro: true, thumbAt: 2.6,
+    id: 'event', name: 'Story de evento', aspect: '9:16', dur: 6, bg: '#101528', thumbAt: 2.6,
     layers: p => [
       makeLayer('text', { name: 'Data', p: { y: 560 }, s: { text: '28 NOV', font: 'Bebas Neue', size: 300, weight: 400, color: '#ffffff', fillType: 'linear', fill2: '#7c8cff', gradAngle: 90 }, kf: { y: K([0, 640, 'easeOut'], [0.8, 560]), opacity: K([0, 0], [0.6, 100]) } }),
       makeLayer('text', { name: 'Evento', start: 0.8, p: { y: 860 }, s: { text: 'FESTA DE\nLANÇAMENTO', font: 'Unbounded', size: 92, weight: 900, color: '#ffffff', anim: 'scramble' } }),
@@ -4645,11 +4731,10 @@ function templatesModal() {
       <button class="tpl" data-tpl="${t.id}">
         <span class="tpl-img"><img src="${templateThumb(t)}" alt=""></span>
         <span class="tpl-name">${esc(t.name)}</span>
-        <span class="tpl-meta">${t.aspect} · ${t.dur}s${t.pro ? ' <i class="pro-badge">PRO</i>' : ''}</span>
+        <span class="tpl-meta">${t.aspect} · ${t.dur}s</span>
       </button>`).join('')}</div>`, [{ label: 'Fechar' }]);
   $$('[data-tpl]').forEach(b => (b.onclick = () => {
     const t = TEMPLATES.find(x => x.id === b.dataset.tpl);
-    if (t.pro && !S.pro) { hideModal(); setTimeout(() => proModal(`O modelo "${t.name}" é exclusivo do Motion Pro.`), 30); return; }
     const use = () => { setProject(buildTemplate(t), true); toast('Modelo aberto. Toque nos textos para trocar.'); };
     hideModal();
     if (P().layers.length) setTimeout(() => showModal('Usar este modelo?', '<p>O projeto atual será substituído. Se quiser guardar, use Salvar projeto antes.</p>', [{ label: 'Cancelar' }, { label: 'Usar modelo', cls: 'btn-primary', onClick: use }]), 30);
@@ -5747,7 +5832,6 @@ menu.addEventListener('click', async e => {
     $('#projectInput').click();
   } else if (act === 'png') {
     pause();
-    drawWatermark(ctx);
     canvas.toBlob(b => { renderMain(); if (b) download(b, `${fileBase()}-${S.time.toFixed(2)}s.png`); }, 'image/png');
   } else if (act === 'photopea-frame') {
     openPhotopea({ mode: 'frame' });
@@ -5863,7 +5947,6 @@ if ('serviceWorker' in navigator && !inFrame && (location.protocol === 'https:' 
 
 /* ======================= início ======================= */
 setProject(loadSaved() || demoProject());
-loadLicense();
 new ResizeObserver(() => fitStage()).observe($('#stage'));
 window.addEventListener('resize', () => renderTimeline());
 if (document.fonts) {

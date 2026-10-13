@@ -2,38 +2,39 @@
 Atualizado por: Claude em 13/10/2026
 
 ## Objetivo atual
-Modo celular como app: barra superior compacta, prévia grande, barra inferior com 4 abas e ferramentas em folhas agrupadas. PC (≥ 861 px) não muda.
+Motion Editor 100% código aberto: sem plano Pro, sem marca d'água e sem licença. As bibliotecas abertas entram só quando o usuário usa a função.
 
 ## Feito nas últimas sessões
-- Celular (≤ 860 px): tela fixa, sem rolagem da página. Abas inferiores: Adicionar, IA, Propriedades, Projeto.
-- Ferramentas (.add-bar) viram folha com grupos (Mídia, Texto e formas, Efeitos e grupos). Propriedades (#panel) viram folha. Projeto reúne o menu ⋮ e Seja Pro.
-- Toque (pointer: coarse): alvos maiores.
-- Testes: video-editor, ai-edit, photopea e mobile-sheets passaram (25 de 25). Testes atualizados só para abrir a folha antes de clicar; nenhuma asserção removida.
-- PC comparado com a captura de antes: diferença só de 2 px na borda dos botões (ruído de renderização).
-- Cache PWA motion-v20.
+- Plano Pro removido: licença, modal, marca d'água, bloqueio de 4K, modelos exclusivos, pro-config.js e tools/licenca.*.
+- Figurinhas: aba Lucide com busca (ícones de traço, Lucide 1.2.130, licença ISC).
+- Áudio: forma de onda no painel com wavesurfer.js 7.12.12 (zoom e clique para ir ao ponto).
+- Vídeo MP4/MOV: mp4box.js 2.4.1 mostra codec, fps e rotação gravada no arquivo.
+- Texto: fonte própria (.ttf, .otf, .woff), validada com opentype.js 1.3.4 e guardada como ativo do projeto.
+- sw.js: motion-v21, com as bibliotecas em cache depois do primeiro uso.
+- Testes: tests/libs.cjs (4 novos) e regressão em video-editor, ai-edit, ai-edit-plan, photopea, mobile-sheets, export, effects e music: 49 de 49 passaram.
 
 ## Próximo passo
-Testar no celular real, instalado e no navegador. Ver se a folha Projeto e a folha Propriedades ficam claras ao usar.
+Escolher a licença do projeto (MIT ou AGPL-3.0) e adicionar o arquivo LICENSE. Testar fonte própria e forma de onda no celular real.
 
 ## Arquivos relevantes
-- index.html: barra inferior (nav.tabbar), folhas e cabeçalho.
-- style.css: bloco @media (max-width: 860px) e @media (pointer: coarse).
-- app.js: abrir e fechar folhas (data-sheet / data-sheet-open), Esc, eventos das abas.
-- tests/mobile-sheets.cjs: teste das folhas. Os outros testes têm helper sheet() que abre a folha antes de clicar.
-- .ai/MAPA.md: atualizado com a estrutura nova.
+- app.js: seção "bibliotecas abertas" (LIBS, lib(), loadLucide, lucideD), videoInfo, pickFont, addCustomFont e mountPanelWave.
+- style.css: .sticker.line e .wave-box, no fim do arquivo.
+- sw.js: CDN_FILES, lista das bibliotecas guardadas no cache.
+- tests/libs.cjs: um teste por biblioteca.
 
 ## Decisões tomadas e motivo
-- Uma só estrutura de DOM, duas apresentações: no celular o CSS reagrupa; no PC nada muda.
-- Folhas são overlays fixos: abrir uma folha não redimensiona a prévia.
-- Botões que aparecem em dois lugares usam encaminhamento sem id, nunca ids duplicados.
+- Bibliotecas em CDN com versão fixa, carregadas sob demanda, para não pesar a abertura.
+- wavesurfer só no painel de áudio. Os clipes da linha do tempo continuam com a forma de onda própria, mais leve.
+- mp4box só lê metadados. O navegador já aplica a rotação na prévia, então o valor é informativo.
+- Rotação segue a convenção do ffprobe: 90 quer dizer girado 90°.
 
 ## Pendências e armadilhas
-- Não há commit nem PR desta reformulação até este handoff ser commitado. Verifique git status antes de começar.
-- Lottie (teste lottie.cjs) precisa de internet para o CDN; não foi rodado nesta sessão.
-- Janela de PC com menos de 861 px recebe o layout de celular (comportamento antigo).
-- Para mudar o celular, editar dentro de @media (max-width: 860px) e manter os ids.
-- Sempre aumentar VERSION em sw.js quando mudar arquivos do app.
+- A licença do projeto ainda não foi escolhida. @imgly/background-removal é AGPL-3.0, então a licença precisa ser compatível.
+- O primeiro uso de cada biblioteca precisa de internet. Depois ela fica no cache do sw.
+- mp4box lê o arquivo inteiro na memória: vídeos acima de 400 MB não são analisados.
+- Fonte própria com o mesmo nome de uma fonte do Google sobrescreve a exibição daquele nome.
+- Não testei se a fonte própria sobrevive ao salvar e reabrir um .motion.json.
 
 ## Como rodar e testar
 `python3 -m http.server 8000`, `node --check app.js`.
-`CHROMIUM_PATH=/usr/bin/chromium node --test --test-concurrency=2 tests/video-editor.cjs tests/ai-edit.cjs tests/photopea.cjs tests/mobile-sheets.cjs` (Playwright, FFmpeg). Se não houver /usr/bin/chromium, aponte CHROMIUM_PATH para o Chromium do Playwright.
+`CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chrome NODE_PATH=/opt/node22/lib/node_modules node --test --test-concurrency=2 tests/*.cjs`. Precisa de FFmpeg e de internet para as bibliotecas.

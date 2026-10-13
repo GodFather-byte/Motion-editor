@@ -125,14 +125,14 @@ test('adicionar não abre Propriedades; toque na prévia e no nome abrem; arrast
   assert.equal(await sheetOf(page), null, 'modo caneta não abre');
 });
 
-test('Projeto e encaminhamentos: Seja Pro abre o modal, Play mantém a folha, Esc não desseleciona', async t => {
+test('Projeto e encaminhamentos: Ajuda abre o modal, Play mantém a folha, Esc não desseleciona', async t => {
   const page = await editor(t);
   await page.locator('[data-sheet-open="project"]').click();
   const groups = await page.evaluate(() => [...document.querySelectorAll('#menu .menu-group-title')].map(h => h.textContent));
-  assert.deepEqual(groups, ['Arquivo', 'Exportar', 'Ferramentas', 'Conta e ajuda']);
-  await page.locator('.fwd[data-forward="btnPro"]').click();
-  assert.equal(await sheetOf(page), null, 'Seja Pro fecha a folha');
-  assert.equal(await page.locator('#modal').isVisible(), true, 'Seja Pro abre o modal');
+  assert.deepEqual(groups, ['Arquivo', 'Exportar', 'Ferramentas', 'Ajuda']);
+  await page.locator('#menu [data-menu="help"]').click();
+  assert.equal(await sheetOf(page), null, 'Ajuda fecha a folha');
+  assert.equal(await page.locator('#modal').isVisible(), true, 'Ajuda abre o modal');
   await page.evaluate(() => { document.getElementById('modal').hidden = true; });
   await page.locator('[data-sheet-open="props"]').click();
   await page.locator('#panel .fwd-play').click();
