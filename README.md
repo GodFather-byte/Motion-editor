@@ -139,7 +139,7 @@ Bibliotecas usadas, todas carregadas sob demanda de CDN com versão fixa:
 | [opentype.js](https://opentype.js.org) 1.3.4 | Leitura de fontes próprias (.ttf, .otf) | MIT |
 | [@imgly/background-removal](https://github.com/imgly/background-removal-js) | Remoção de fundo | AGPL-3.0 |
 
-Por causa da remoção de fundo (AGPL-3.0), a licença deste projeto precisa ser compatível com ela. A escolha da licença do projeto ainda está pendente.
+Este projeto é licenciado sob **AGPL-3.0** (arquivo [LICENSE](LICENSE)). Ela é necessária por causa da remoção de fundo, que também é AGPL-3.0.
 
 ## Atalhos
 
