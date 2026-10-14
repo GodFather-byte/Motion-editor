@@ -6880,7 +6880,7 @@ window.__motion = {
 };
 // câmera lenta (testes)
 Object.assign(window.__motion, { avcLevel, pickVideoCodec });   // 4K (testes)
-Object.assign(window.__motion, { RAMPS, speedAt, srcTime, timeAtSrc, applyRamp, blendInfo, setProject, renderAudioMix, renderFrame, seekVideosExact, VIDS, VIDS2 });
+Object.assign(window.__motion, { RAMPS, rampCum, speedAt, srcTime, timeAtSrc, applyRamp, blendInfo, setProject, renderAudioMix, renderFrame, seekVideosExact, VIDS, VIDS2 });
 Object.assign(window.__motion, {
   flushSave, goHome, startProject, openProjectById, cleanupAssets, renderHome,
   libAll: () => libQueue(libAll), isHome: () => homeOpen && !home.hidden,

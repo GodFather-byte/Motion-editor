@@ -2,14 +2,16 @@
 Atualizado por: Copilot em 14/10/2026
 
 ## Objetivo atual
-Renovar a prévia do editor e adicionar controles úteis sem alterar o formato dos projetos.
+Renovar os controles da prévia e manter os testes das rampas de velocidade.
 
 ## Estado agora
 - Controles de zoom da prévia no cabeçalho: diminuir/aumentar de 50% a 200%; tocar na porcentagem ajusta à área.
 - Zoom visual fica em `S.stageZoom`; não entra no projeto. Em ampliação, a rolagem fica dentro da prévia.
 - `Ctrl/Cmd+S` exporta `.motion.json` pelo mesmo fluxo do menu. Atalhos não atuam em campos de texto.
-- `sw.js` está em `motion-v28`.
-- Testes: `tests/preview-controls.cjs` (2/2) e `tests/mobile-sheets.cjs` (6/6); `node --check` e `git diff --check` passaram.
+- `rampCum` está exposta em `window.__motion`; `tests/slowmo.cjs` cobre sua integral.
+- `sw.js` está em `motion-v29`.
+- Testes adicionados: `tests/preview-controls.cjs`, `tests/res4k.cjs` e o caso `rampCum` em `tests/slowmo.cjs`.
+- `node --check` e `git diff --check` devem ser executados após alterações.
 
 ## Como retomar
 1. Rode `git pull` e confira `git status`.
