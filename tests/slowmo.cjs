@@ -108,6 +108,53 @@ test('cleanRamp filtra pontos inválidos, ignora os que não são arrays, limita
   assert.deepEqual(results.invalidNumbers, []);
 });
 
+test('Rampa: rampCum calcula a integral do multiplicador com precisão', async t => {
+  const page = await editor(t);
+  const r = await page.evaluate(() => {
+    const rampCum = window.__motion.rampCum;
+    const pts = [[1, 2], [3, 2], [5, 4]]; // t0=1, v0=2; t1=3, v1=2; t2=5, v2=4
+
+    // Test cases
+    const results = [
+      rampCum(pts, 0),    // t < t0. expected: (0 - 1) * 2 = -2
+      rampCum(pts, 1),    // t = t0. expected: 0
+      rampCum(pts, 2),    // between t0 and t1. flat. expected: (2 - 1) * 2 = 2
+      rampCum(pts, 3),    // at t1. expected: (3 - 1) * 2 = 4
+      rampCum(pts, 4),    // between t1 and t2. slope: v goes from 2 to 4 over 2s.
+                          // At t=4, v=3. Integral from 3 to 4 is (2+3)*1/2 = 2.5
+                          // Total: 4 + 2.5 = 6.5
+      rampCum(pts, 5),    // at t2. Integral from 3 to 5 is (2+4)*2/2 = 6.
+                          // Total: 4 + 6 = 10
+      rampCum(pts, 6),    // t > t2. expected: 10 + (6 - 5) * 4 = 14
+    ];
+
+    const flatPts = [[1, 2], [3, 2]];
+    const flatResults = [
+      rampCum(flatPts, 0), // expected: -2
+      rampCum(flatPts, 1), // expected: 0
+      rampCum(flatPts, 2), // expected: 2
+      rampCum(flatPts, 3), // expected: 4
+      rampCum(flatPts, 4), // expected: 4 + 1 * 2 = 6
+    ];
+
+    return { results, flatResults };
+  });
+
+  assert.ok(Math.abs(r.results[0] - (-2)) < 1e-6, `t < t0: expected -2, got ${r.results[0]}`);
+  assert.ok(Math.abs(r.results[1] - 0) < 1e-6, `t = t0: expected 0, got ${r.results[1]}`);
+  assert.ok(Math.abs(r.results[2] - 2) < 1e-6, `t=2: expected 2, got ${r.results[2]}`);
+  assert.ok(Math.abs(r.results[3] - 4) < 1e-6, `t = t1: expected 4, got ${r.results[3]}`);
+  assert.ok(Math.abs(r.results[4] - 6.5) < 1e-6, `t=4: expected 6.5, got ${r.results[4]}`);
+  assert.ok(Math.abs(r.results[5] - 10) < 1e-6, `t = t2: expected 10, got ${r.results[5]}`);
+  assert.ok(Math.abs(r.results[6] - 14) < 1e-6, `t > t2: expected 14, got ${r.results[6]}`);
+
+  assert.ok(Math.abs(r.flatResults[0] - (-2)) < 1e-6, `flat t < t0: expected -2, got ${r.flatResults[0]}`);
+  assert.ok(Math.abs(r.flatResults[1] - 0) < 1e-6, `flat t = t0: expected 0, got ${r.flatResults[1]}`);
+  assert.ok(Math.abs(r.flatResults[2] - 2) < 1e-6, `flat t=2: expected 2, got ${r.flatResults[2]}`);
+  assert.ok(Math.abs(r.flatResults[3] - 4) < 1e-6, `flat t = t1: expected 4, got ${r.flatResults[3]}`);
+  assert.ok(Math.abs(r.flatResults[4] - 6) < 1e-6, `flat t > t1: expected 6, got ${r.flatResults[4]}`);
+});
+
 test('Rampa: srcTime e timeAtSrc são inversas exatas e a divisão não quebra a continuidade', async t => {
   const page = await editor(t);
   const r = await page.evaluate(() => {

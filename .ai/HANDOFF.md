@@ -1,22 +1,27 @@
 # Handoff
-Atualizado por: Jules em (data de hoje)
+Atualizado por: Copilot em 14/10/2026
 
 ## Objetivo atual
-Adicionar cobertura de testes para a função `cleanRamp` e corrigir a ausência desse teste de unidade em `app.js`.
+Manter a cobertura de testes das rampas e dos controles de prévia.
 
 ## Estado agora
-- Testes cobrem a função `cleanRamp` em `tests/slowmo.cjs`.
-- Exposta a função `cleanRamp` dentro do objecto de testes `window.__motion` em `app.js`.
-- Testes: Todos os testes nativos do node passarem sem problemas, sendo que agora o teste para a função `cleanRamp` aborda formatos não-array, nulos, e também limites de rampa ou ordenação.
-- O linter / parser de código não apontou erros de sintaxe (node --check app.js).
+- `cleanRamp` e `rampCum` estão expostas em `window.__motion`; `tests/slowmo.cjs` cobre ambas.
+- Controles de zoom da prévia: de 50% a 200%; tocar na porcentagem ajusta à área.
+- `Ctrl/Cmd+S` exporta `.motion.json`; atalhos não atuam em campos de texto.
+- `sw.js` está em `motion-v29`.
+- Testes adicionais: `tests/preview-controls.cjs` e `tests/res4k.cjs`.
+- Executar `node --check app.js` e `git diff --check` após alterações.
 
 ## Como retomar
-1. O repositório está limpo (sem dependências como `node_modules` nem artifacts).
-2. Pode retomar o desenvolvimento natural ou revisão das features.
+1. Rode `git pull` e confira `git status`.
+2. Consulte `README.md` e `.ai/MAPA.md` para localizar recursos e testes.
+3. Teste com `python3 -m http.server 8000`, `node --check app.js` e os testes de navegador.
 
-## Decisões tomadas e motivo
-- Expor `cleanRamp` junto a funções relativas a camera lenta ("slowmo") para garantir que o seu ambiente fosse testado em conjunto.
-- O teste do `cleanRamp` usa o ambiente da página, via Playwright.
+## Arquivos relevantes
+- `index.html`, `style.css`: controles de zoom da prévia e cabeçalho compacto.
+- `app.js`: zoom, salvamento por atalho e lógica do editor.
+- `tests/slowmo.cjs`: integração das rampas e teste de `cleanRamp`.
 
-## Pendências e armadilhas
-- N/A. Tudo em ordem.
+## Pendências e limitações
+- Não houve teste em celular físico.
+- O zoom muda só a visualização, não a dimensão ou os dados da composição.
