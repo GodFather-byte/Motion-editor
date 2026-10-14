@@ -366,7 +366,7 @@ async function mountPanelWave(L) {
       barWidth: 2, barGap: 1, normalize: true, minPxPerSec: Number($('#waveZoom', panel).value),
     });
     ws.load('', [rec.peaks], rec.duration).catch(() => {});
-    ws.on('interaction', t => setTime(L.start + (t - (L.s.trimIn || 0)) / (Number(L.s.speed) || 1)));
+    ws.on('interaction', t => setTime(timeAtSrc(L, t)));
     $('#waveZoom', panel).oninput = e => ws.zoom(Number(e.target.value));
     panelWave = ws;
   } catch {
@@ -522,6 +522,207 @@ async function cleanupAssets() {
   for (const [id, rec] of A) if (!P().assets[id]) { rec.player?.destroy(); URL.revokeObjectURL(rec.url); A.delete(id); }
 }
 
+/* ======================= câmera lenta (velocidade e rampas) ======================= */
+/* Vídeo e áudio tocam a L.s.speed vezes um multiplicador opcional m(t), guardado em L.s.rampPts como [[t, m], ...].
+   t usa segundos ABSOLUTOS da linha do tempo, como os keyframes: dividir deixa os mesmos pontos nas duas partes
+   e mover o bloco desloca os pontos junto. m é linear entre os pontos e constante (primeiro/último) fora deles.
+   Tempo no arquivo = trimIn + integral da velocidade de L.start até t, em fórmula fechada por trecho.
+   Sem pontos, a conta é exatamente a antiga: (t − start) · speed + trimIn. Lottie fica sempre constante. */
+const SPEED_MIN = 0.1, RAMP_MIN = 0.01, PROJECT_MAX = 600;
+/* multiplicadores ao longo do bloco: u vai de 0 (início) a 1 (fim) */
+const RAMPS = {
+  hero: { label: 'Herói (lento no meio)', pts: [[0, 1], [0.3, 1], [0.42, 0.25], [0.62, 0.25], [0.74, 1], [1, 1]] },
+  bullet: { label: 'Bala (quase parado no meio)', pts: [[0, 1.6], [0.38, 1.6], [0.48, 0.12], [0.58, 0.12], [0.68, 1.6], [1, 1.6]] },
+  montage: { label: 'Montagem (rápido e lento)', pts: [[0, 1.8], [0.2, 1.8], [0.3, 0.35], [0.45, 0.35], [0.55, 1.8], [0.7, 1.8], [0.8, 0.35], [1, 0.35]] },
+  slowEnd: { label: 'Câmera lenta no fim', pts: [[0, 1], [0.55, 1], [0.7, 0.25], [1, 0.25]] },
+  slowStart: { label: 'Câmera lenta no começo', pts: [[0, 0.25], [0.3, 0.25], [0.45, 1], [1, 1]] },
+  flashIn: { label: 'Entrada rápida', pts: [[0, 3], [0.25, 3], [0.4, 1], [1, 1]] },
+  flashOut: { label: 'Saída rápida', pts: [[0, 1], [0.6, 1], [0.75, 3], [1, 3]] },
+};
+const VIDS2 = new Map(); // id da camada -> segundo <video>, parado no quadro seguinte (quadros suaves)
+let liveSync = false;   // true enquanto os vídeos tocam de verdade (prévia em reprodução ou gravação em tempo real)
+
+const rampOf = L => (MEDIA(L.type) && L.s && Array.isArray(L.s.rampPts) && L.s.rampPts.length ? L.s.rampPts : null);
+const baseSpeed = L => Number(L.s && L.s.speed) || 1;
+/* pontos válidos, em ordem, com multiplicador positivo (projetos antigos ou arquivos editados à mão) */
+function cleanRamp(pts) {
+  if (!Array.isArray(pts)) return [];
+  return pts.filter(q => Array.isArray(q) && Number.isFinite(+q[0]) && Number.isFinite(+q[1]))
+    .map(([t, m]) => [+t, Math.max(RAMP_MIN, +m)]).sort((a, b) => a[0] - b[0]);
+}
+/* multiplicador no instante t */
+function rampMul(pts, t) {
+  const n = pts.length;
+  if (t <= pts[0][0]) return pts[0][1];
+  for (let i = 0; i < n - 1; i++) {
+    const [a, ma] = pts[i], [b, mb] = pts[i + 1];
+    if (t <= b) return b > a ? ma + (mb - ma) * (t - a) / (b - a) : mb;
+  }
+  return pts[n - 1][1];
+}
+/* integral do multiplicador desde o primeiro ponto até t (negativa antes dele) */
+function rampCum(pts, t) {
+  const n = pts.length, t0 = pts[0][0];
+  if (t <= t0) return (t - t0) * pts[0][1];
+  let acc = 0;
+  for (let i = 0; i < n - 1; i++) {
+    const [a, ma] = pts[i], [b, mb] = pts[i + 1];
+    if (t <= b) { const x = t - a, mx = b > a ? ma + (mb - ma) * x / (b - a) : mb; return acc + (ma + mx) * x / 2; }
+    acc += (ma + mb) * (b - a) / 2;
+  }
+  return acc + (t - pts[n - 1][0]) * pts[n - 1][1];
+}
+/* inversa de rampCum: resolve a equação do 2º grau do trecho (m > 0, então sempre há uma única saída) */
+function rampInv(pts, y) {
+  const n = pts.length;
+  if (y <= 0) return pts[0][0] + y / pts[0][1];
+  let acc = 0;
+  for (let i = 0; i < n - 1; i++) {
+    const [a, ma] = pts[i], [b, mb] = pts[i + 1], h = b - a, seg = (ma + mb) * h / 2;
+    if (h > 0 && y <= acc + seg) {
+      // ma·x + (mb − ma)·x²/(2h) = d  →  m(x)² = ma² + 2(mb − ma)·d/h  e  x = 2d / (ma + m(x)), forma estável
+      const d = y - acc, mx = Math.sqrt(Math.max(0, ma * ma + 2 * (mb - ma) * d / h));
+      return a + 2 * d / (ma + mx);
+    }
+    acc += seg;
+  }
+  return pts[n - 1][0] + (y - acc) / pts[n - 1][1];
+}
+/* velocidade real no instante t da linha do tempo */
+function speedAt(L, t) {
+  const pts = rampOf(L);
+  return pts ? baseSpeed(L) * rampMul(pts, t) : baseSpeed(L);
+}
+/* segundo do arquivo mostrado no instante t; start/trim permitem simular outra borda (arrastar) */
+function srcTime(L, t, start = L.start, trim = L.s.trimIn || 0) {
+  const pts = rampOf(L), sp = baseSpeed(L);
+  if (!pts) return (t - start) * sp + trim;
+  return trim + sp * (rampCum(pts, t) - rampCum(pts, start));
+}
+/* inversa exata de srcTime: em que instante da linha do tempo aparece o segundo s do arquivo */
+function timeAtSrc(L, s, start = L.start, trim = L.s.trimIn || 0) {
+  const pts = rampOf(L), sp = baseSpeed(L);
+  if (!pts) return start + (s - trim) / sp;
+  return rampInv(pts, rampCum(pts, start) + (s - trim) / sp);
+}
+/* quantos segundos do arquivo o bloco mostra */
+const srcSpan = L => (rampOf(L) ? srcTime(L, L.end) - (L.s.trimIn || 0) : (L.end - L.start) * baseSpeed(L));
+/* trechos com tempo de arquivo (contado a partir de "from") viram tempo do bloco, com velocidade e rampa */
+function srcSegsToClip(L, from, segs) {
+  if (!rampOf(L) && baseSpeed(L) === 1) return segs;
+  return segs.map(s => ({ ...s, start: timeAtSrc(L, from + s.start) - L.start, end: timeAtSrc(L, from + s.end) - L.start }));
+}
+/* curva de playbackRate do som (~60 amostras por segundo) para o trecho tocado, em qualquer AudioContext */
+function automateRate(param, L, t0, when, dur) {
+  const n = Math.min(60 * PROJECT_MAX, Math.max(2, Math.ceil(dur * 60) + 1));
+  const curve = new Float32Array(n);
+  for (let i = 0; i < n; i++) curve[i] = speedAt(L, t0 + dur * i / (n - 1));
+  try { param.setValueCurveAtTime(curve, when, dur); }
+  catch { try { param.setValueAtTime(curve[0], when); } catch {} }
+}
+
+/* aumenta o projeto até "end" (limite de PROJECT_MAX), como ao importar mídia longa */
+function growProjectTo(end) {
+  const p = P(), old = p.duration;
+  const need = Math.min(PROJECT_MAX, Math.ceil(end * 10 - 1e-6) / 10);
+  if (need <= old) return;
+  p.duration = need;
+  for (const l of p.layers) if (Math.abs(l.end - old) < 1e-6 && (!TIMED_MEDIA(l.type) || l.type === 'lottie' && l.s.loop)) l.end = need;
+}
+/* aplica uma rampa pronta (ou nenhuma) mantendo o MESMO trecho do arquivo: o bloco alonga ou encurta.
+   Devolve true se o projeto chegou ao limite e o fim do trecho ficou de fora. */
+function applyRamp(L, id) {
+  if (!MEDIA(L.type)) return false;
+  const preset = RAMPS[id] || null, span = srcSpan(L);
+  if (!(span > 0)) return false;
+  const mean = preset ? rampCum(preset.pts, 1) - rampCum(preset.pts, 0) : 1;   // média do multiplicador de 0 a 1
+  const D = span / (baseSpeed(L) * mean), oldEnd = L.end;
+  if (L.start + D > P().duration) growProjectTo(L.start + D);
+  L.s.ramp = preset ? id : '';
+  L.s.rampPts = preset ? preset.pts.map(([u, m]) => [L.start + u * D, m]) : [];
+  L.end = Math.min(P().duration, L.start + D);
+  if (L.end !== oldEnd) delete L.s.transitionEnd;
+  return L.start + D > P().duration + 1e-6;
+}
+
+/* quadros suaves: com velocidade < 1, mistura o quadro a do arquivo com o a+1 (alfa = parte fracionária).
+   Vale para a prévia PAUSADA e para a exportação quadro a quadro. Na reprodução em tempo real o vídeo
+   está tocando e não há como manter o segundo elemento no quadro seguinte: desenha só o principal. */
+const srcFps = L => { const f = A.get(L.s.asset)?.info?.fps; return Number.isFinite(f) && f > 0 ? f : 30; };
+function blendInfo(L, t) {
+  if (L.type !== 'video' || !L.s.smoothSlow || speedAt(L, t) >= 1) return null;
+  const f = srcFps(L), x = Math.max(0, srcTime(L, t)) * f, a = Math.floor(x + 1e-6);
+  return { f, frac: Math.max(0, x - a), t1: (a + 0.5) / f, t2: (a + 1.5) / f };
+}
+function video2For(L) {
+  const rec = A.get(L.s.asset);
+  if (!rec) return null;
+  let v = VIDS2.get(L.id);
+  if (!v || v.dataset.asset !== L.s.asset) {
+    v = document.createElement('video');
+    v.muted = true; v.playsInline = true; v.preload = 'auto';
+    v.dataset.asset = L.s.asset;
+    v.src = rec.url;
+    // antes dos metadados o Chromium ignora currentTime e para no 0: a busca só acontece depois deles
+    v.addEventListener('loadedmetadata', () => { if (!S.playing && !S.exporting) syncMedia(); });
+    v.addEventListener('seeked', () => { if (!S.playing && !S.exporting) { renderMain(); drawOverlay(); } });
+    VIDS2.set(L.id, v);
+  }
+  return v;
+}
+function dropVideo2(id) {
+  const v = VIDS2.get(id);
+  if (!v) return;
+  v.pause(); v.removeAttribute('src'); v.load();
+  VIDS2.delete(id);
+}
+/* segundo quadro a desenhar por cima, só quando os dois vídeos estão parados nos quadros certos */
+function nextFrameOf(L, t, v) {
+  if (liveSync || S.playing || !v.paused) return null;
+  const b = blendInfo(L, t), v2 = VIDS2.get(L.id);
+  if (!b || b.frac < 0.002 || !v2 || v2.readyState < 2) return null;
+  if (Math.abs(v.currentTime - b.t1) > 0.25 / b.f || Math.abs(v2.currentTime - b.t2) > 0.25 / b.f) return null;
+  return { v: v2, frac: b.frac };
+}
+
+/* painel: rampas prontas, quadros suaves e a curva de velocidade do bloco */
+function rampPoints(L) {
+  const pts = rampOf(L), a = L.start, b = L.end;
+  if (!pts || !(b > a)) return null;
+  const ts = [a, ...pts.map(q => q[0]).filter(t => t > a && t < b), b];
+  return ts.map(t => [(t - a) / (b - a), speedAt(L, t)]);
+}
+function rampSvg(L) {
+  const q = rampPoints(L);
+  if (!q) return '';
+  const sp = q.map(p => p[1]), lo = Math.min(...sp), hi = Math.max(...sp), top = Math.max(1.2, hi) * 1.12;
+  const W = 240, H = 60, Y = v => (H - 4 - v / top * (H - 8)).toFixed(1);
+  return `<svg class="ramp-curve" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Velocidade ao longo do bloco">
+    <line class="ramp-one" x1="0" x2="${W}" y1="${Y(1)}" y2="${Y(1)}"/>
+    <polyline points="${q.map(([u, v]) => `${(u * W).toFixed(1)},${Y(v)}`).join(' ')}"/></svg>
+    <div class="ramp-scale"><span>Mais lento ${round(lo, 2)}x</span><span>Tracejado = 1x</span><span>Mais rápido ${round(hi, 2)}x</span></div>`;
+}
+/* linha fina na parte de baixo do bloco da linha do tempo (o nome do bloco fica no meio) */
+function rampLine(L) {
+  const q = rampPoints(L);
+  if (!q) return '';
+  const top = Math.max(1.2, ...q.map(p => p[1]));
+  return `<svg class="ramp-line" viewBox="0 0 100 20" preserveAspectRatio="none" aria-hidden="true"><polyline points="${q.map(([u, v]) => `${(u * 100).toFixed(2)},${(19.5 - v / top * 7).toFixed(2)}`).join(' ')}"/></svg>`;
+}
+function rampPanelRows(L) {
+  return `<h4 class="subhead">Câmera lenta</h4>
+    ${selectRow('ramp', 'Rampa', { '': 'Nenhuma (velocidade constante)', ...Object.fromEntries(Object.entries(RAMPS).map(([k, r]) => [k, r.label])) })}
+    <div class="ramp-box" id="rampBox"${rampOf(L) ? '' : ' hidden'}>${rampSvg(L)}</div>
+    ${checkRow('smoothSlow', 'Quadros suaves (mistura de quadros)')}
+    <p class="hint">A rampa mantém o mesmo trecho do vídeo. Quadros suaves aparecem com o vídeo pausado e na exportação.</p>`;
+}
+function syncRampBox(L) {
+  const box = $('#rampBox', panel);
+  if (!box) return;
+  box.innerHTML = rampSvg(L);
+  box.hidden = !rampOf(L);
+}
+
 function videoFor(L) {
   const rec = A.get(L.s.asset);
   if (!rec) return null;
@@ -542,25 +743,40 @@ function videoFor(L) {
 /* mantém os vídeos no tempo certo (preview e exportação) */
 function syncMedia() {
   const running = S.playing || S.exporting;
+  liveSync = running;
   for (const L of P().layers) {
     if (L.type !== 'video') continue;
     const v = videoFor(L);
     if (!v) continue;
+    if (!L.s.smoothSlow && VIDS2.has(L.id)) dropVideo2(L.id);
     const rec = A.get(L.s.asset);
-    const sp = L.s.speed || 1;
-    const local = (S.time - L.start) * sp + (L.s.trimIn || 0);
+    const local = srcTime(L, S.time);
     const active = L.visible && S.time >= L.start && (S.time < L.end || S.time === P().duration && L.end === P().duration) && local <= (rec.duration || Infinity);
     if (!active) { if (!v.paused) v.pause(); continue; }
-    if (Math.abs(v.playbackRate - sp) > 1e-4) { try { v.playbackRate = sp; } catch {} }
+    // velocidade do instante (constante ou rampa); o navegador só toca entre ~0.06x e 16x
+    const sp = speedAt(L, S.time), rate = clamp(sp, SPEED_MIN, 8);
+    if (Math.abs(v.playbackRate - rate) > 1e-4) { try { v.playbackRate = rate; } catch {} }
     if (running) {
-      if (v.paused) { try { v.currentTime = local; } catch {} v.play().catch(() => {}); }
+      if (sp < SPEED_MIN) {
+        // mais lento do que o vídeo consegue tocar: segura o quadro e avança por busca
+        if (!v.paused) v.pause();
+        if (Math.abs(v.currentTime - local) > 0.5 / srcFps(L)) { try { v.currentTime = local; } catch {} }
+      } else if (v.paused) { try { v.currentTime = local; } catch {} v.play().catch(() => {}); }
       else if (Math.abs(v.currentTime - local) > 0.25) v.currentTime = local;
     } else {
       if (!v.paused) v.pause();
-      if (Math.abs(v.currentTime - local) > 0.5 / P().fps) { try { v.currentTime = local; } catch {} }
+      const bl = blendInfo(L, S.time);
+      if (bl) {
+        // quadros suaves: principal no centro do quadro a, segundo vídeo no centro do quadro a+1
+        const last = Math.max(0, (rec.duration || 1e9) - 0.001), t1 = Math.min(bl.t1, last), t2 = Math.min(bl.t2, last);
+        if (Math.abs(v.currentTime - t1) > 1e-3) { try { v.currentTime = t1; } catch {} }
+        const v2 = video2For(L);
+        if (v2 && v2.readyState >= 1 && Math.abs(v2.currentTime - t2) > 1e-3) { try { v2.currentTime = t2; } catch {} }
+      } else if (Math.abs(v.currentTime - local) > 0.5 / P().fps) { try { v.currentTime = local; } catch {} }
     }
   }
   for (const [id, v] of VIDS) if (!byId(id)) { v.pause(); VIDS.delete(id); }
+  for (const id of [...VIDS2.keys()]) if (!byId(id)) dropVideo2(id);
 }
 const pauseAllVideos = () => VIDS.forEach(v => v.pause());
 
@@ -573,20 +789,23 @@ function scheduleAudio(ac, dest, from, lead = 0.03) {
     if (!rec || !rec.buffer) continue;
     const vol = (L.s.volume ?? 100) / 100;
     if (vol <= 0) continue;
-    const sp = L.s.speed || 1;
+    const sp = L.s.speed || 1, ramp = rampOf(L);
     const len = L.end - L.start;
     const into = Math.max(0, from - L.start);
-    const offset = (L.s.trimIn || 0) + into * sp;
+    const t0 = Math.max(from, L.start);   // primeiro instante tocado, na linha do tempo
+    const offset = srcTime(L, t0);
     if (offset >= rec.buffer.duration) continue;
     const when = ac.currentTime + Math.max(0, L.start - from) + lead;
     const src = ac.createBufferSource();
     src.buffer = rec.buffer;
-    if (src.playbackRate) { try { src.playbackRate.setValueAtTime(sp, when); } catch {} }
+    if (src.playbackRate && !ramp) { try { src.playbackRate.setValueAtTime(sp, when); } catch {} }
     const g = ac.createGain();
     src.connect(g); g.connect(dest);
-    const rem = (rec.buffer.duration - offset) / sp;
+    const rem = ramp ? timeAtSrc(L, rec.buffer.duration) - t0 : (rec.buffer.duration - offset) / sp;
     const duration = Math.min(len - into, rem);
     if (duration <= 0) continue;
+    // rampa: a velocidade do som segue a mesma curva do vídeo
+    if (ramp && src.playbackRate) automateRate(src.playbackRate, L, t0, when, duration);
     let fi = Math.max(0, L.s.fadeIn || 0), fo = Math.max(0, L.s.fadeOut || 0);
     // Fades longos dividem o clipe proporcionalmente, sem eventos no passado.
     const fadeScale = Math.min(1, len / (fi + fo || 1));
@@ -606,7 +825,7 @@ function scheduleAudio(ac, dest, from, lead = 0.03) {
       }
     }
     // start() usa segundos da fonte; stop() usa segundos de reprodução.
-    src.start(when, offset, duration * sp);
+    src.start(when, offset, ramp ? Math.max(0, srcTime(L, t0 + duration) - offset) : duration * sp);
     src.stop(when + duration);
     out.push(src);
   }
@@ -626,7 +845,7 @@ function defaultS(type) {
   const chroma = { chromaOn: false, chromaColor: '#00ff00', chromaTol: 30, chromaSoft: 10 };
   const look = { blend: 'source-over', clip: false, shadowX: 0, shadowY: 0, shadowBlur: 0, shadowColor: '#000000', shadowOpacity: 60, fillType: 'solid', gradAngle: 90, flipH: false, flipV: false, colorLook: 'none', lookIntensity: 100, transitionIn: 'none', transitionOut: 'none', transitionInDuration: 0.5, transitionOutDuration: 0.5, parallax: 100 };
   const framing = { mediaFit: 'stretch', focalX: 50, focalY: 50 };
-  const media = { asset: null, trimIn: 0, volume: 100, fadeIn: 0, fadeOut: 0, speed: 1, muted: false };
+  const media = { asset: null, trimIn: 0, volume: 100, fadeIn: 0, fadeOut: 0, speed: 1, muted: false, rampPts: [], ramp: '', smoothSlow: false };
   switch (type) {
     case 'text': return { ...look, text: 'Seu texto', font: 'Montserrat', size: Math.round(m * 0.11), weight: 900, color: '#ffffff', fill2: '#ffb547', align: 'center', stroke: 0, strokeColor: '#000000', glowColor: '#ffb547', anim: 'none', curve: 0, onPath: '', pathStart: 0 };
     case 'rect': return { ...look, w: Math.round(m * 0.4), h: Math.round(m * 0.4), radius: 28, fill: '#ff8f6b', fill2: '#b89cff', glowColor: '#ff8f6b' };
@@ -672,6 +891,11 @@ function normalize(p) {
     if (TIMED_MEDIA(L.type)) {
       L.s.speed = Number(L.s.speed) || 1;
       if (L.s.muted == null) L.s.muted = false;
+    }
+    if (MEDIA(L.type)) {   // câmera lenta: sem rampa, a velocidade continua constante como antes
+      L.s.rampPts = cleanRamp(L.s.rampPts);
+      if (typeof L.s.ramp !== 'string') L.s.ramp = '';
+      L.s.smoothSlow = !!L.s.smoothSlow;
     }
     if (L.s.flipH == null) L.s.flipH = false;
     if (L.s.flipV == null) L.s.flipV = false;
@@ -1014,8 +1238,12 @@ function drawShape(c, L, local) {
     }
     case 'video': {
       const v = VIDS.get(L.id) || videoFor(L);
-      if (v && v.readyState >= 2) drawFramedMedia(c, v, v.videoWidth, v.videoHeight, s);
-      else drawMissing(c, s.w, s.h, A.get(s.asset) ? 'Carregando…' : 'Vídeo');
+      if (v && v.readyState >= 2) {
+        drawFramedMedia(c, v, v.videoWidth, v.videoHeight, s);
+        // quadros suaves (câmera lenta): o quadro seguinte por cima, com a parte fracionária como alfa
+        const nx = s.smoothSlow ? nextFrameOf(L, L.start + local, v) : null;
+        if (nx) { const a0 = c.globalAlpha; c.globalAlpha = a0 * nx.frac; drawFramedMedia(c, nx.v, nx.v.videoWidth, nx.v.videoHeight, s); c.globalAlpha = a0; }
+      } else drawMissing(c, s.w, s.h, A.get(s.asset) ? 'Carregando…' : 'Vídeo');
       return { w: s.w, h: s.h };
     }
     case 'lottie': {
@@ -1489,8 +1717,7 @@ async function detectBeats(buffer) {
 /* batidas na linha do tempo, vindas da primeira música (ou vídeo) analisada */
 function beatsOf(L) {
   if (!L.s.beats || !L.s.beats.length) return [];
-  const sp = L.s.speed || 1, ti = L.s.trimIn || 0;
-  return L.s.beats.map(b => round(L.start + (b - ti) / sp, 4)).filter(t => t >= L.start - 1e-6 && t <= L.end + 1e-6);
+  return L.s.beats.map(b => round(timeAtSrc(L, b), 4)).filter(t => t >= L.start - 1e-6 && t <= L.end + 1e-6);
 }
 function beatSource() {
   const ls = P().layers.filter(L => MEDIA(L.type) && L.visible && L.s.beats && L.s.beats.length);
@@ -1563,6 +1790,8 @@ function beatMontage(every) {
     }
     const shift = a - L.start;
     for (const prop of Object.keys(L.kf)) L.kf[prop].forEach(k => (k.t = round(k.t + shift, 4)));
+    // a rampa de velocidade anda junto com o início do bloco, como os keyframes
+    if (rampOf(L)) { const ds = snap(a) - L.start; L.s.rampPts = L.s.rampPts.map(([t, m]) => [t + ds, m]); }
     L.start = snap(a); L.end = Math.max(L.start + 0.1, snap(b));
     if (L.type === 'video') L.end = Math.min(L.end, L.start + mediaRemaining(L));
     used.push(L);
@@ -2209,8 +2438,9 @@ $('#btnSplit').onclick = () => splitLayer();
 const labelW = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--label-w')) || 112;
 const tx = t => TL_PAD + t * S.pps;
 const mediaSourceDur = L => { const r = A.get(L.s.asset); return (L.type === 'lottie' ? window.MotionLottie.sourceInfo(r, L.s)?.duration : r?.duration) || Infinity; };
-const mediaDur = L => mediaSourceDur(L) / (L.s && L.s.speed ? L.s.speed : 1);
-const mediaRemaining = L => L.type === 'lottie' && L.s.loop ? Infinity : Math.max(0, (mediaSourceDur(L) - (L.s.trimIn || 0)) / (L.s && L.s.speed ? L.s.speed : 1));
+// com rampa de velocidade, a duração na linha do tempo vem da inversa exata (timeAtSrc)
+const mediaDur = L => (rampOf(L) ? timeAtSrc(L, mediaSourceDur(L)) - timeAtSrc(L, 0) : mediaSourceDur(L) / (L.s && L.s.speed ? L.s.speed : 1));
+const mediaRemaining = L => L.type === 'lottie' && L.s.loop ? Infinity : rampOf(L) ? Math.max(0, timeAtSrc(L, mediaSourceDur(L)) - L.start) : Math.max(0, (mediaSourceDur(L) - (L.s.trimIn || 0)) / (L.s && L.s.speed ? L.s.speed : 1));
 
 function renderTimeline() {
   const p = P();
@@ -2250,7 +2480,7 @@ function renderTimeline() {
     return `<div class="tl-row${L.id === S.sel ? ' sel' : ''}${L.visible ? '' : ' off'}" data-id="${L.id}">
       <div class="tl-label" style="padding-left:${8 + d * 10}px"><button class="eye" data-eye aria-label="${L.visible ? 'Ocultar' : 'Mostrar'} camada">${L.visible ? eyeOn : eyeOff}</button>${muteBtn}<i class="type-dot ${L.type}"></i>${tag}<span class="name">${esc(L.name)}</span></div>
       <div class="tl-track" style="width:${trackW}px">
-        <div class="clip ${L.type}" style="left:${tx(L.start)}px;width:${(L.end - L.start) * S.pps}px">${MEDIA(L.type) ? `<canvas class="wave" data-wave="${L.id}"></canvas>` : ''}<span class="clip-label">${esc(L.name)}</span><span class="h l"></span><span class="h r"></span></div>
+        <div class="clip ${L.type}" style="left:${tx(L.start)}px;width:${(L.end - L.start) * S.pps}px">${MEDIA(L.type) ? `<canvas class="wave" data-wave="${L.id}"></canvas>${rampLine(L)}` : ''}<span class="clip-label">${esc(L.name)}</span><span class="h l"></span><span class="h r"></span></div>
         ${kfs}
       </div></div>`;
   }).join('') || `<div class="tl-row"><div class="tl-label" style="color:var(--muted)">Vazio</div><div class="tl-track" style="width:${trackW}px"></div></div>`;
@@ -2271,9 +2501,9 @@ function drawWaves() {
     c.scale(dpr, dpr);
     c.fillStyle = hexA(L.type === 'audio' ? theme.audio : theme.white, L.type === 'audio' ? 0.55 : 0.25);
     const mid = h / 2;
-    const sp = L.s && L.s.speed ? L.s.speed : 1;
+    const sp = L.s && L.s.speed ? L.s.speed : 1, ramp = rampOf(L);
     for (let x = 0; x < w; x += 2) {
-      const src = (L.s.trimIn || 0) + (x / S.pps) * sp;
+      const src = ramp ? srcTime(L, L.start + x / S.pps) : (L.s.trimIn || 0) + (x / S.pps) * sp;
       const amp = rec.peaks[Math.floor(src * PEAKS_PER_SEC)] || 0;
       const bh = Math.max(1, amp * (h - 6));
       c.fillRect(x, mid - bh / 2, 1.2, bh);
@@ -2353,7 +2583,7 @@ rows.addEventListener('pointerdown', e => {
   const mode = e.target.classList.contains('l') ? 'l' : e.target.classList.contains('r') ? 'r' : 'move';
   const s0 = L.start, e0 = L.end, dur = P().duration, trim0 = L.s.trimIn || 0, isMedia = TIMED_MEDIA(L.type);
   const trStart0 = L.s.transitionStart, trEnd0 = L.s.transitionEnd;
-  const sp = L.s.speed || 1;
+  const ramp0 = rampOf(L) ? L.s.rampPts.map(q => q.slice()) : null;   // a rampa anda junto com o bloco
   if (L.id !== S.sel) select(L.id);
   const clip = row.querySelector('.clip');
   const kfEls = $$('.kf', row).map(el => ({ el, t: +el.dataset.kfT }));
@@ -2369,15 +2599,17 @@ rows.addEventListener('pointerdown', e => {
       L.start = ns; L.end = ne;
       if (trStart0 != null) L.s.transitionStart = trStart0 + dt;
       if (trEnd0 != null) L.s.transitionEnd = trEnd0 + dt;
+      if (ramp0) L.s.rampPts = ramp0.map(([t, m]) => [t + dt, m]);
       kfEls.forEach(k => (k.el.style.left = tx(k.t + dt) + 'px'));
     } else if (mode === 'l') {
-      const minStart = isMedia ? Math.max(0, s0 - trim0 / sp) : 0;
+      // o início não passa do começo do arquivo (segundo 0), mesmo com rampa
+      const minStart = isMedia ? Math.max(0, timeAtSrc(L, 0, s0, trim0)) : 0;
       let ns = clamp(snap(s0 + dt), minStart, L.end - 0.1);
       { const mg = magnet(ns); if (mg != null && mg >= minStart && mg <= L.end - 0.1) ns = snap(mg); }
       L.start = ns;
       if (ns !== s0) delete L.s.transitionStart;
       else if (trStart0 != null) L.s.transitionStart = trStart0;
-      if (isMedia) L.s.trimIn = round(trim0 + (L.start - s0) * sp, 4);
+      if (isMedia) L.s.trimIn = round(srcTime(L, L.start, s0, trim0), 4);
     } else {
       const maxEnd = isMedia ? Math.min(dur, L.start + mediaRemaining(L)) : dur;
       let ne = clamp(snap(e0 + dt), L.start + 0.1, maxEnd);
@@ -2593,7 +2825,7 @@ function layerPanel(L) {
     const rec = A.get(s.asset);
     const info = rec ? (rec.buffer ? `Duração do arquivo: ${fmtTime(rec.duration || 0)}` : (L.type === 'video' ? 'Este vídeo não tem som (ou o navegador não conseguiu ler o áudio).' : 'Não consegui ler este áudio.')) : 'Arquivo não encontrado neste aparelho. Use "Trocar arquivo".';
     const fileInfo = rec && rec.info ? ` Arquivo: ${esc(rec.info.codec)}${Number.isFinite(rec.info.fps) ? ` · ${Math.round(rec.info.fps)} fps` : ''}${rec.info.rotation ? ` · gravado girado ${rec.info.rotation}°` : ''}.` : '';
-    const speeds = { '0.25': '0.25x (lento 4x)', '0.5': '0.5x (lento 2x)', '0.75': '0.75x', '1': '1x (normal)', '1.25': '1.25x', '1.5': '1.5x (rápido)', '2': '2x (acelerado)', '3': '3x', '4': '4x' };
+    const speeds = { '0.1': '0.1x (lento 10x)', '0.2': '0.2x (lento 5x)', '0.25': '0.25x (lento 4x)', '0.5': '0.5x (lento 2x)', '0.75': '0.75x', '1': '1x (normal)', '1.25': '1.25x', '1.5': '1.5x (rápido)', '2': '2x (acelerado)', '3': '3x', '4': '4x' };
     media = `<div class="sec"><h3>${L.type === 'video' ? 'Áudio e Velocidade' : 'Som'}</h3>
       ${checkRow('muted', 'Mudo (sem som)')}
       ${selectRow('speed', 'Velocidade', speeds)}
@@ -2603,6 +2835,7 @@ function layerPanel(L) {
       ${numRow('trimIn', 'Começa em (s)', 0, Math.max(1, Math.floor(mediaSourceDur(L) === Infinity ? 60 : mediaSourceDur(L))), 0.1)}
       <p class="hint">${info}${fileInfo}</p>
       ${L.type === 'video' ? '<div class="actions"><button class="btn btn-small" data-act="scene-cut">Cortar por cenas</button></div>' : ''}
+      ${L.type === 'video' ? rampPanelRows(L) : ''}
       ${L.type === 'audio' && rec && rec.peaks ? '<div class="row plain"><label for="waveZoom">Zoom</label><input type="range" id="waveZoom" min="20" max="400" value="60" aria-label="Zoom da forma de onda"></div><div class="wave-box" id="waveBox"></div>' : ''}
       ${rec && rec.buffer ? '<div class="actions"><button class="btn btn-small btn-ai" data-act="captions"><i class="sw sw-whisper"></i> Legendas (Whisper / IA)</button></div>' : ''}
       ${rec && rec.buffer ? `<h4 class="subhead">Ritmo</h4>
@@ -2775,14 +3008,29 @@ panel.addEventListener('input', e => {
     }
     if (key === 'iconName' && ICONS[v]) { L.s.d = ICONS[v]; L.s.line = false; }
     if (key === 'speed') {
-      v = clamp(parseFloat(v) || 1, 0.25, 4);
+      v = clamp(parseFloat(v) || 1, L.type === 'lottie' ? 0.25 : SPEED_MIN, 4);
       const old = Number(L.s.speed) || 1;
       const oldEnd = L.end;
-      L.s.speed = v;
-      // mantém o mesmo trecho do arquivo: mais rápido encurta o bloco, mais lento alonga
-      L.end = clamp(snap(L.start + (L.end - L.start) * old / v), L.start + 0.1, Math.min(P().duration, L.start + mediaRemaining(L)));
+      if (rampOf(L)) {
+        // com rampa: a curva escala em torno do início e o fim sai da inversa, sem perder o trecho do arquivo
+        const srcEnd = srcTime(L, L.end), k = old / v;
+        L.s.rampPts = L.s.rampPts.map(([t, m]) => [L.start + (t - L.start) * k, m]);
+        L.s.speed = v;
+        L.end = clamp(timeAtSrc(L, srcEnd), L.start + 0.1, Math.min(P().duration, L.start + mediaRemaining(L)));
+      } else {
+        L.s.speed = v;
+        // mantém o mesmo trecho do arquivo: mais rápido encurta o bloco, mais lento alonga
+        L.end = clamp(snap(L.start + (L.end - L.start) * old / v), L.start + 0.1, Math.min(P().duration, L.start + mediaRemaining(L)));
+      }
       if (L.end !== oldEnd) delete L.s.transitionEnd;
-      renderTimeline(); refreshTime(); syncPanel(true);
+      renderTimeline(); refreshTime(); syncPanel(true); syncRampBox(L);
+      return;
+    }
+    if (key === 'ramp') {
+      if (!MEDIA(L.type)) return;
+      const cut = applyRamp(L, v);
+      commit(); renderTimeline(); refreshTime(); syncPanel(true); syncRampBox(L);
+      toast(cut ? `O projeto tem no máximo ${PROJECT_MAX} s. O fim do trecho ficou de fora.` : v ? 'Rampa aplicada. Dê play para ver.' : 'Velocidade constante de novo.');
       return;
     }
     if (['lookIntensity', 'focalX', 'focalY'].includes(key)) v = clamp(v, 0, 100);
@@ -3092,12 +3340,12 @@ function splitLayer(L, t = S.time) {
   L2.end = origEnd;
 
   if (TIMED_MEDIA(L.type)) {
-    const sp = L.s.speed || 1;
-    L2.s.trimIn = round((L.s.trimIn || 0) + (cut - L.start) * sp, 4);
+    // L ainda começa no início original aqui (só o fim mudou), então srcTime vê o bloco inteiro
+    L2.s.trimIn = round(srcTime(L, cut), 4);
   }
 
-  // os keyframes usam tempo absoluto: as duas partes mantêm todos eles,
-  // então a animação continua idêntica dos dois lados do corte
+  // os keyframes e a rampa de velocidade usam tempo absoluto: as duas partes mantêm todos eles,
+  // então a animação e a câmera lenta continuam idênticas dos dois lados do corte
   const p = P();
   const idx = p.layers.indexOf(L);
   p.layers.splice(idx, 0, L2);
@@ -3221,7 +3469,7 @@ mediaInput.addEventListener('change', async e => {
       if (rec.w) existing.s.h = Math.round(existing.s.w * rec.h / rec.w);
       existing.s.trimIn = 0;
       if (kind === 'lottie') existing.s.animationId = rec.defaultId;
-      if (TIMED_MEDIA(kind)) existing.end = Math.min(p.duration, existing.start + (rec.duration || p.duration) / (existing.s.speed || 1));
+      if (TIMED_MEDIA(kind)) existing.end = Math.min(p.duration, rampOf(existing) && rec.duration ? timeAtSrc(existing, rec.duration) : existing.start + (rec.duration || p.duration) / (existing.s.speed || 1));
       commit(); renderPanel(); renderTimeline(); refreshTime();
       return;
     }
@@ -3325,6 +3573,7 @@ function loadSaved() {
 function setProject(p, fresh) {
   if (S.project) pause();
   VIDS.forEach(v => v.pause()); VIDS.clear();
+  [...VIDS2.keys()].forEach(dropVideo2);
   S.project = normalize(p); S.sel = null; S.selKf = null; S.time = 0;
   S.undo = [snapshot()]; S.redo = [];
   $('#projectName').value = P().name;
@@ -3597,20 +3846,30 @@ async function encodeAudio(buf, acfg, muxer) {
 /* posiciona cada vídeo exatamente no quadro pedido e espera ele aparecer */
 async function seekVideosExact(t) {
   const waits = [];
+  liveSync = false;   // os vídeos ficam parados em quadros exatos (vale para os quadros suaves)
+  const seek = (v, local, tol) => {
+    if (Math.abs(v.currentTime - local) < tol && v.readyState >= 2) return;
+    waits.push(new Promise(res => {
+      const done = () => { clearTimeout(to); v.removeEventListener('seeked', done); v.removeEventListener('loadedmetadata', go); res(); };
+      // antes dos metadados o Chromium ignora a busca e para no 0: espera os metadados e só então busca
+      const go = () => { v.removeEventListener('loadedmetadata', go); v.addEventListener('seeked', done); try { v.currentTime = local; } catch { done(); } };
+      const to = setTimeout(done, 3000);
+      if (v.readyState < 1) v.addEventListener('loadedmetadata', go); else go();
+    }));
+  };
   for (const L of P().layers) {
     if (L.type !== 'video' || !L.visible || t < L.start || t > L.end) continue;
     const v = videoFor(L);
     if (!v) continue;
     if (!v.paused) v.pause();
-    const rec = A.get(L.s.asset);
-    const local = clamp((t - L.start) * (L.s.speed || 1) + (L.s.trimIn || 0), 0, Math.max(0, ((rec && rec.duration) || 1e9) - 0.001));
-    if (Math.abs(v.currentTime - local) < 0.25 / P().fps && v.readyState >= 2) continue;
-    waits.push(new Promise(res => {
-      const done = () => { clearTimeout(to); v.removeEventListener('seeked', done); res(); };
-      const to = setTimeout(done, 3000);
-      v.addEventListener('seeked', done);
-      try { v.currentTime = local; } catch { done(); }
-    }));
+    const rec = A.get(L.s.asset), last = Math.max(0, ((rec && rec.duration) || 1e9) - 0.001);
+    const bl = blendInfo(L, t);
+    if (bl) {
+      // quadros suaves: os dois vídeos nos centros dos quadros a e a+1
+      seek(v, clamp(bl.t1, 0, last), 1e-3);
+      const v2 = video2For(L);
+      if (v2) seek(v2, clamp(bl.t2, 0, last), 1e-3);
+    } else seek(v, clamp(srcTime(L, t), 0, last), 0.25 / P().fps);
   }
   await Promise.all(waits);
 }
@@ -3881,7 +4140,7 @@ function editWithAIModal(previous = {}, error = '') {
   const chosen = videos.find(L => L.id === previous.layerId) || videos.find(L => L.id === S.sel) || videos[0];
   const rec = A.get(chosen.s.asset), speed = clamp(Number(chosen.s.speed) || 1, 0.25, 4);
   const from = previous.sourceFrom ?? chosen.s.trimIn ?? 0;
-  const to = previous.sourceTo ?? Math.min(rec.duration, from + Math.min(AI_EDIT_MAX, (chosen.end - chosen.start) * speed));
+  const to = previous.sourceTo ?? Math.min(rec.duration, from + Math.min(AI_EDIT_MAX, srcSpan(chosen)));
   showModal('Editar com IA', `
     <p>Transforme seu vídeo em uma montagem com cortes, legendas e destaques. Você revisa o plano antes de aplicar.</p>
     <div class="row plain"><label for="editVideo">Vídeo</label><select id="editVideo">${videos.map(L => `<option value="${L.id}"${L === chosen ? ' selected' : ''}>${esc(L.name)}</option>`).join('')}</select></div>
@@ -3911,7 +4170,7 @@ function editWithAIModal(previous = {}, error = '') {
   $('#editFit').value = previous.fit || 'cover';
   $('#editVideo').onchange = () => {
     const L = byId($('#editVideo').value), r = A.get(L.s.asset), sp = clamp(Number(L.s.speed) || 1, 0.25, 4);
-    const a = L.s.trimIn || 0, b = Math.min(r.duration, a + Math.min(AI_EDIT_MAX, (L.end - L.start) * sp));
+    const a = L.s.trimIn || 0, b = Math.min(r.duration, a + Math.min(AI_EDIT_MAX, srcSpan(L)));
     $('#editFrom').value = round(a, 3); $('#editTo').value = round(b, 3);
     $('#editTarget').value = Math.max(0.5, round(Math.min(30, (b - a) / sp), 2));
   };
@@ -4097,7 +4356,7 @@ function wrapAIEditCaption(text, width, size) {
 }
 
 function switchAIEditProject(next, selectId = null) {
-  pause(); setPen(false); pauseAllVideos(); VIDS.clear();
+  pause(); setPen(false); pauseAllVideos(); VIDS.clear(); [...VIDS2.keys()].forEach(dropVideo2);
   S.project = normalize(next); S.sel = selectId; S.selKf = null; S.time = 0;
   commit(); $('#projectName').value = next.name;
   fitStage(); renderTimeline(); renderPanel(); refreshTime();
@@ -4373,7 +4632,7 @@ async function runCaptionsWhisper(L, { style = 'pop', lang = 'portuguese', actio
     const rec = A.get(L.s.asset);
     if (!rec || !rec.buffer) throw new Error('Áudio da camada não encontrado.');
     const from = L.s.trimIn || 0;
-    const len = Math.min(L.end - L.start, rec.buffer.duration - from);
+    const len = Math.min(srcSpan(L), rec.buffer.duration - from);   // segundos do arquivo que o bloco mostra
     if (len <= 0.1) throw new Error('Duração do áudio muito curta.');
 
     const result = await transcribeAudioWhisper(rec.buffer, {
@@ -4411,6 +4670,8 @@ async function runCaptionsWhisper(L, { style = 'pop', lang = 'portuguese', actio
         segs.push({ start: i * step, end: Math.min((i + 1) * step, len), text: slice });
       }
     }
+
+    segs = srcSegsToClip(L, from, segs);   // tempo do arquivo vira tempo do bloco (velocidade e rampa)
 
     if (action === 'text') {
       hideModal();
@@ -4509,7 +4770,7 @@ async function runCaptions(L, style) {
   try {
     const rec = A.get(L.s.asset);
     const from = L.s.trimIn || 0;
-    const len = Math.min(L.end - L.start, rec.buffer.duration - from);
+    const len = Math.min(srcSpan(L), rec.buffer.duration - from);   // segundos do arquivo que o bloco mostra
     const CHUNK = 240;
     const segs = [];
     for (let off = 0; off < len - 0.05; off += CHUNK) {
@@ -4527,7 +4788,7 @@ async function runCaptions(L, style) {
       }
     }
     if (!segs.length) throw new Error('Não encontrei fala nesse áudio.');
-    createCaptionLayers(L, segs, style, 'Legendas (Gemini)');
+    createCaptionLayers(L, srcSegsToClip(L, from, segs), style, 'Legendas (Gemini)');
   } catch (err) {
     aiError(err, () => runCaptions(L, style));
   }
@@ -6141,4 +6402,6 @@ window.__motion = {
   getWhisper, transcribeAudioWhisper, runCaptionsWhisper, aiCaptionsPicker,
   getMediaPipeVision, getMediaPipeSegmenter, segmentPersonMediaPipe, mediaPipeCutPerson, getMediaPipeFaceDetector, mediaPipeFaceAutoFrame
 };
+// câmera lenta (testes)
+Object.assign(window.__motion, { RAMPS, speedAt, srcTime, timeAtSrc, applyRamp, blendInfo, setProject, renderAudioMix, renderFrame, seekVideosExact, VIDS, VIDS2 });
 })();

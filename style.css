@@ -652,6 +652,16 @@ input[type=color] { width: 100%; height: 34px; padding: 3px; background: var(--p
   object-fit: contain; display: block; margin: 6px 0;
 }
 
+/* câmera lenta: curva de velocidade no painel e linha fina no bloco da linha do tempo */
+.ramp-box { padding: 6px 8px 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); min-width: 0; }
+.ramp-box[hidden] { display: none; }
+.ramp-curve { display: block; width: 100%; height: 56px; }
+.ramp-curve polyline { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.ramp-curve .ramp-one { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 4 4; vector-effect: non-scaling-stroke; }
+.ramp-scale { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 8px; margin-top: 2px; font-size: 11px; color: var(--muted); }
+.clip .ramp-line { position: absolute; inset: 3px 0; width: 100%; height: calc(100% - 6px); pointer-events: none; overflow: visible; }
+.clip .ramp-line polyline { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linejoin: round; vector-effect: non-scaling-stroke; opacity: .85; }
+
 /* whisper e mediapipe */
 .sw-whisper { width: 13px; height: 13px; border-radius: 3px; background: #e07a5f; position: relative; flex-shrink: 0; }
 .sw-whisper::after { content: 'W'; position: absolute; inset: 0; display: grid; place-items: center; font: 800 8.5px/1 var(--font-display); color: #fff; }
