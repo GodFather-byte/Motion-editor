@@ -9,9 +9,10 @@ Integrar IA nativa do Chrome, cortes de silêncio, recursos PWA e gestos de time
 - ChromeAIService adapta APIs modernas/legadas; progresso, frame JPEG, metadados, cortes e legendas.
 - SmartSilenceCutter usa RMS de 20 ms; chip "Cortar silêncios" na IA para vídeo/áudio selecionado.
 - Ripple mantém trim/speed, rampas, keyframes e histórico por conversores injetados.
+- Camadas-pai cortadas deixam grupo-âncora para preservar transformações dos filhos.
 - MobilePWAIntegration oferece OPFS, Wake Lock durante exportVideo/fastExport e vibração.
 - Share Target POST guarda File em shared-media; boot importa e limpa somente entregas concluídas.
-- TimelineTouchEngine controla só toque: pinça, scroll, toque longo, snap e trim de 44 px.
+- TimelineTouchEngine: pinça, scroll nos dois eixos, seleção por toque, toque longo, snap e trim de 44 px.
 - Mouse e keyframes mantêm handlers existentes; cancelamento de gesto restaura a camada.
 - `sw.js` está em `motion-v30`; shell inclui os quatro módulos.
 - Testes novos: native-services, silence-cutter, share-target e media-modules.

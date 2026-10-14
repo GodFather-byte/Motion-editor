@@ -78,7 +78,18 @@
     if (index < 0) return null;
     const parts = applyRippleDelete(S.layers[index], speechIntervals, opts);
     if (!parts) return null;
-    S.layers.splice(index, 1, ...parts);
+    const original = S.layers[index], children = S.layers.filter(layer => layer.parent === layerId);
+    const anchors = [];
+    if (children.length) {
+      const anchor = JSON.parse(JSON.stringify(original));
+      anchor.id = opts.uid ? opts.uid() : root.crypto?.randomUUID?.() || `silence-parent-${Date.now()}-${++serial}`;
+      anchor.type = 'group';
+      anchor.name = `${original.name || 'Camada'} (vínculos)`;
+      delete anchor.s.asset;
+      for (const child of children) child.parent = anchor.id;
+      anchors.push(anchor);
+    }
+    S.layers.splice(index, 1, ...parts, ...anchors);
     opts.commit?.();
     return parts;
   }

@@ -182,3 +182,22 @@ test('exportação em tempo real libera Wake Lock ao cancelar', async t => {
   await page.waitForFunction(() => wakeCalls.includes('release') && !window.__motion.S.exporting);
   assert.deepEqual(await page.evaluate(() => wakeCalls), ['enable', 'release']);
 });
+
+test('toque breve seleciona; rolagem vertical alcança camadas inferiores, inclusive pelos rótulos', async t => {
+  const page = await editor(t);
+  await page.evaluate(() => {
+    const m = window.__motion;
+    m.P().layers = Array.from({ length: 20 }, () => m.makeLayer('rect', { start: 1, end: 3 }));
+    m.setProject(m.P()); m.S.sel = null;
+  });
+  const first = await page.evaluate(() => window.__motion.P().layers[0].id);
+  await pointer(page, '.clip >> nth=0', 'pointerdown', 1, 200);
+  await pointer(page, '#tlScroll', 'pointerup', 1, 200);
+  assert.equal(await page.evaluate(() => window.__motion.S.sel), first);
+  await pointer(page, '.tl-label >> nth=0', 'pointerdown', 2, 70, 150);
+  await pointer(page, '#tlScroll', 'pointermove', 2, 70, 50);
+  await page.waitForTimeout(40);
+  await pointer(page, '#tlScroll', 'pointerup', 2, 70, 50);
+  assert.ok(await page.locator('#tlScroll').evaluate(el => el.scrollTop) >= 90);
+  assert.equal(await page.locator('#app').getAttribute('data-sheet'), null);
+});

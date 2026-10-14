@@ -55,3 +55,18 @@ test('integração registra uma alteração e permite excluir um clipe totalment
   assert.equal(commits, 1);
   assert.deepEqual(project.layers, []);
 });
+
+test('substituição preserva o pai animado dos filhos, mesmo quando toda mídia é removida', () => {
+  for (const intervals of [[], [{ start: 2, end: 4 }]]) {
+    const parent = clip(), child = { id: 'child', type: 'text', parent: parent.id };
+    const project = { layers: [parent, child] };
+    const parts = cutter.integrateIntoProject(project, parent.id, intervals);
+    const anchor = project.layers.find(L => L.id === child.parent);
+    assert.equal(anchor.type, 'group');
+    assert.notEqual(anchor.id, parent.id);
+    assert.deepEqual(anchor.kf, parent.kf);
+    assert.equal(anchor.s.asset, undefined);
+    assert.equal(project.layers.includes(child), true);
+    assert.ok(parts.every(L => L.type === 'audio'));
+  }
+});

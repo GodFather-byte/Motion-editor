@@ -6,9 +6,9 @@
 - `app.js`: o editor inteiro, num único IIFE, dividido em seções (abaixo).
 - `ai-edit.js`: helpers puros `normalizePlan`, `normalizeTranscript`, `findSilences`, `assemble` (navegador/Node).
 - `chrome-ai.js`: `ChromeAIService` (IIFE/global/Node), adaptador Chrome AI moderno/legado, progresso, análise JPEG, metadados JSON, cortes e tradução local. Falhas retornam null com `reason`; `destroy` cancela sessões.
-- `silence-cutter.js`: `SmartSilenceCutter` (IIFE/global/Node), RMS de 20 ms, partição silêncio/fala e ripple. Intervalos são segundos absolutos da fonte; `integrateIntoProject(project, id, intervals, {srcTime,timeAtSrc,uid,commit})` preserva rampas/keyframes.
+- `silence-cutter.js`: `SmartSilenceCutter` (IIFE/global/Node), RMS de 20 ms, partição silêncio/fala e ripple. Intervalos são segundos absolutos da fonte; `integrateIntoProject(project, id, intervals, {srcTime,timeAtSrc,uid,commit})` preserva rampas/keyframes. Quando há filhos, cria grupo-âncora com a transformação original para manter vínculos.
 - `mobile-pwa.js`: `MobilePWAIntegration`, Wake Lock, OPFS em `media`, vibração e consumo do cache `shared-media`. URLs de OPFS devem ser revogadas pelo chamador. Importação compartilhada reutiliza `importMediaFile` em app.js.
-- `timeline-touch.js`: `TimelineTouchEngine`, Pointer Events/rAF com callbacks injetados; pinça, scroll, toque longo de 250 ms, trim e snap. Captura no `#tlScroll`; mouse/keyframes continuam na lógica antiga. Integração `timelineTouch` junto à seção linha do tempo.
+- `timeline-touch.js`: `TimelineTouchEngine`, Pointer Events/rAF com callbacks injetados; pinça, scroll nos dois eixos, seleção por toque, toque longo de 250 ms, trim e snap. Captura no `#tlScroll`; mouse/keyframes continuam na lógica antiga. Integração `timelineTouch` junto à seção linha do tempo.
 - `lottie.js`: `MotionLottie.load/render/sourceInfo`, runtime dotlottie-web 0.81.0 ESM/WASM sob demanda (JSON e dotLottie v1/v2).
 - `sw.js`: service worker (cache offline). Mude `VERSION` a cada release.
 - `manifest.webmanifest`, `icons/`: instalação como app.

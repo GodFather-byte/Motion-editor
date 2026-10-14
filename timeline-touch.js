@@ -44,7 +44,7 @@
     down(e) {
       if (!this.pointers.size) this.suppressClick = false;
       if (e.pointerType === 'mouse' || this.options.disabled?.() ||
-          e.target.closest('.tl-label, .kf, button, input')) return;
+          e.target.closest('.kf, button, input')) return;
       e.preventDefault(); e.stopImmediatePropagation();
       try { this.element.setPointerCapture?.(e.pointerId); } catch {}
       this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -61,10 +61,12 @@
         this.suppressClick = true;
       } else if (this.pointers.size === 1) {
         const clip = e.target.closest('.clip'), handle = e.target.closest('.tl-trim');
-        const id = clip?.closest('[data-id]')?.dataset.id;
+        const label = e.target.closest('.tl-label');
+        const id = e.target.closest('[data-id]')?.dataset.id;
         const info = id && this.options.getClip?.(id);
         this.gesture = { mode: handle ? 'trim' : e.target.closest('#tlTicks, #playhead') ? 'playhead' : 'scroll',
-          x: e.clientX, y: e.clientY, scroll: this.options.getScroll(), id, info,
+          x: e.clientX, y: e.clientY, scroll: this.options.getScroll(),
+          scrollY: this.options.getVerticalScroll?.() || 0, id, info, label: !!label, selectable: !!(clip || label),
           side: handle?.classList.contains('left') ? 'left' : 'right' };
         if (handle) { this.options.onBegin?.(id); this.suppressClick = true; }
         else if (clip && info) this.timer = setTimeout(() => {
@@ -84,7 +86,7 @@
       e.preventDefault(); e.stopImmediatePropagation();
       this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (this.gesture?.mode !== 'pinch' && Math.hypot(e.clientX - this.gesture.x, e.clientY - this.gesture.y) > 8) {
-        clearTimeout(this.timer); this.suppressClick = true;
+        clearTimeout(this.timer); this.suppressClick = true; this.gesture.moved = true;
       }
       this.schedule();
     }
@@ -115,7 +117,10 @@
       const p = [...this.pointers.values()][0], scale = o.getScale();
       const delta = (p.x - g.x + o.getScroll() - g.scroll) / scale;
       const points = o.snapPoints?.(g.id) || [];
-      if (g.mode === 'scroll') o.setScroll(g.scroll + g.x - p.x);
+      if (g.mode === 'scroll') {
+        o.setScroll(g.scroll + g.x - p.x);
+        o.setVerticalScroll?.(g.scrollY + g.y - p.y);
+      }
       else if (g.mode === 'drag') o.onClipMove?.(g.id, this.calculateSnap(g.info.start + delta, points).time);
       else if (g.mode === 'trim') o.onTrim?.(g.id, g.side,
         this.calculateSnap((g.side === 'left' ? g.info.start : g.info.end) + delta, points).time);
@@ -133,12 +138,18 @@
       if (!cancelled) { this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY }); this.flush(); }
       else if (this.frame) { root.cancelAnimationFrame(this.frame); this.frame = 0; }
       if (this.isDraggingClip || this.gesture?.mode === 'trim') this.options.onEnd?.(cancelled);
+      if (!cancelled && this.gesture?.mode === 'scroll' && this.gesture.selectable && !this.gesture.moved &&
+          Math.hypot(e.clientX - this.gesture.x, e.clientY - this.gesture.y) <= 8) {
+        this.options.onTap?.(this.gesture.id, this.gesture.label);
+        this.suppressClick = true;
+      }
       this.pointers.delete(e.pointerId);
       if (this.element.hasPointerCapture?.(e.pointerId)) this.element.releasePointerCapture(e.pointerId);
       this.isDraggingClip = false; this.snapped = false;
       if (this.pointers.size) {
         const p = [...this.pointers.values()][0];
-        this.gesture = { mode: 'scroll', x: p.x, y: p.y, scroll: this.options.getScroll() };
+        this.gesture = { mode: 'scroll', x: p.x, y: p.y, scroll: this.options.getScroll(),
+          scrollY: this.options.getVerticalScroll?.() || 0 };
       } else this.gesture = null;
     }
 

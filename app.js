@@ -2719,8 +2719,11 @@ const timelineTouch = window.TimelineTouchEngine && new window.TimelineTouchEngi
   setScale: scale => { S.pps = scale; $('#tlZoom').value = scale; renderTimeline(); },
   getScroll: () => $('#tlScroll').scrollLeft,
   setScroll: scroll => { $('#tlScroll').scrollLeft = Math.max(0, scroll); },
+  getVerticalScroll: () => $('#tlScroll').scrollTop,
+  setVerticalScroll: scroll => { $('#tlScroll').scrollTop = Math.max(0, scroll); },
   getOrigin: () => labelW() + TL_PAD,
   getClip: id => { const L = byId(id); return L && { start: L.start, end: L.end }; },
+  onTap: (id, label) => { select(id); if (label) openSheet('props'); },
   snapPoints: id => [0, S.time, ...projectBeats(), ...P().layers.filter(L => L.id !== id).flatMap(L => [L.start, L.end])],
   onBegin: id => {
     pause();
