@@ -452,12 +452,20 @@ async function trackLayer(L) {
   } finally { L.visible = wasVisible; }
   // média móvel de 5 amostras e keyframes de x e y no trecho rastreado
   // janela centrada que encolhe nas pontas: a primeira amostra fica exatamente na posição inicial
-  const smooth = key => samples.map((_, i) => {
-    const h = Math.min(2, i, samples.length - 1 - i);
-    let sum = 0;
-    for (let j = i - h; j <= i + h; j++) sum += samples[j][key];
-    return sum / (2 * h + 1);
-  });
+  const smooth = key => {
+    const n = samples.length;
+    const res = new Array(n);
+    if (n === 0) return res;
+    let sum = 0, L = 0, R = -1;
+    for (let i = 0; i < n; i++) {
+      const h = Math.min(2, i, n - 1 - i);
+      const tL = i - h, tR = i + h;
+      while (R < tR) sum += samples[++R][key];
+      while (L < tL) sum -= samples[L++][key];
+      res[i] = sum / (2 * h + 1);
+    }
+    return res;
+  };
   const sx = smooth('dx'), sy = smooth('dy');
   for (const prop of ['x', 'y']) {
     if (L.kf[prop]) L.kf[prop] = L.kf[prop].filter(k => k.t < t0 - 1e-6 || k.t > tEnd + 1e-6);
