@@ -5,6 +5,10 @@
 - `style.css`: visual. Variáveis no topo; `@media (max-width: 860px)` é o celular como app (tela de trabalho fixa, barra de abas e folhas, veja a seção abaixo); `@media (pointer: coarse)` aumenta os alvos de toque em celular e tablet. As peças novas do celular ficam `display: none` no PC, fora de media.
 - `app.js`: o editor inteiro, num único IIFE, dividido em seções (abaixo).
 - `ai-edit.js`: helpers puros `normalizePlan`, `normalizeTranscript`, `findSilences`, `assemble` (navegador/Node).
+- `chrome-ai.js`: `ChromeAIService` (IIFE/global/Node), adaptador Chrome AI moderno/legado, progresso, análise JPEG, metadados JSON, cortes e tradução local. Falhas retornam null com `reason`; `destroy` cancela sessões.
+- `silence-cutter.js`: `SmartSilenceCutter` (IIFE/global/Node), RMS de 20 ms, partição silêncio/fala e ripple. Intervalos são segundos absolutos da fonte; `integrateIntoProject(project, id, intervals, {srcTime,timeAtSrc,uid,commit})` preserva rampas/keyframes.
+- `mobile-pwa.js`: `MobilePWAIntegration`, Wake Lock, OPFS em `media`, vibração e consumo do cache `shared-media`. URLs de OPFS devem ser revogadas pelo chamador. Importação compartilhada reutiliza `importMediaFile` em app.js.
+- `timeline-touch.js`: `TimelineTouchEngine`, Pointer Events/rAF com callbacks injetados; pinça, scroll, toque longo de 250 ms, trim e snap. Captura no `#tlScroll`; mouse/keyframes continuam na lógica antiga. Integração `timelineTouch` junto à seção linha do tempo.
 - `lottie.js`: `MotionLottie.load/render/sourceInfo`, runtime dotlottie-web 0.81.0 ESM/WASM sob demanda (JSON e dotLottie v1/v2).
 - `sw.js`: service worker (cache offline). Mude `VERSION` a cada release.
 - `manifest.webmanifest`, `icons/`: instalação como app.
@@ -15,6 +19,8 @@
 - `tests/preview-controls.cjs`: zoom da prévia, ajuste à área, layout de 360 px e salvar com Ctrl/Cmd+S.
 - `tests/video-editor.cjs`: testes funcionais com Playwright/Chromium, mídia gerada pelo FFmpeg e servidor Python temporário. Em 360 px usa `sheet()`/`closeSheet()` para abrir a folha certa antes de cada clique.
 - `tests/ai-edit-plan.cjs` e `tests/ai-edit.cjs`: plano, pausas e edição por pedido com Gemini simulado, mídia real, exportação e backup.
+- `tests/native-services.cjs`, `tests/silence-cutter.cjs`, `tests/share-target.cjs`: mocks das APIs nativas, RMS/ripple e service worker no escopo GitHub Pages.
+- `tests/media-modules.cjs`: Chromium em 360 px, pinça/scroll/trim/cancelamento/undo, áudio WAV real, OPFS e compartilhamento.
 - `tests/lottie.cjs`: runtime real, pacotes v1/v2 com imagens, frames/trim/speed/loop/reverso, clones, portabilidade, MP4/GIF, falhas e troca de projeto.
 - `tests/effects.cjs`: câmera, efeitos WebGL, chroma key, partículas, texto curvo/no traço.
 - `tests/export.cjs`: exportação rápida, GIF e preview leve.
