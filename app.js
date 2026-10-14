@@ -2506,18 +2506,33 @@ function renderTimeline() {
         ${kfs}
       </div></div>`;
   }).join('') || `<div class="tl-row"><div class="tl-label" style="color:var(--muted)">Vazio</div><div class="tl-track" style="width:${trackW}px"></div></div>`;
+
+  cachedWavesArray = null;
   drawWaves();
   updatePlayhead();
 }
 
+let cachedWavesArray = null;
 function drawWaves() {
   const dpr = window.devicePixelRatio || 1;
-  $$('canvas.wave').forEach(cv => {
+  if (!cachedWavesArray) {
+    cachedWavesArray = $$('canvas.wave');
+  }
+
+  // To prevent layout thrashing (reading clientHeight and writing width/height interleaved),
+  // we first read all required heights from the DOM, then write in a second pass.
+  const heights = [];
+  cachedWavesArray.forEach(cv => {
+    heights.push(cv.parentElement.clientHeight || 22);
+  });
+
+  cachedWavesArray.forEach((cv, i) => {
     const L = byId(cv.dataset.wave);
     const rec = L && A.get(L.s.asset);
     if (!rec || !rec.peaks) return;
+
+    const h = heights[i];
     const w = Math.min(4000, Math.max(1, Math.round((L.end - L.start) * S.pps)));
-    const h = cv.parentElement.clientHeight || 22;
     cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
     const c = cv.getContext('2d');
     c.scale(dpr, dpr);
