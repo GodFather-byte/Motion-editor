@@ -17,6 +17,7 @@
 - Todos os testes abrem `origin + '/#editor'`: sem o hash o app mostra a tela inicial.
 - `tests/mobile-sheets.cjs`: celular (360 e 390 px): tela fixa, abas, folhas, toque na prévia e na linha do tempo, Projeto, Play e largura.
 - `tests/preview-controls.cjs`: zoom da prévia, ajuste à área, layout de 360 px e salvar com Ctrl/Cmd+S.
+- `tests/short-form.cjs`: Estúdio de Legendas, marcadores de roteiro, guia seguro e layout de 360 px.
 - `tests/video-editor.cjs`: testes funcionais com Playwright/Chromium, mídia gerada pelo FFmpeg e servidor Python temporário. Em 360 px usa `sheet()`/`closeSheet()` para abrir a folha certa antes de cada clique.
 - `tests/ai-edit-plan.cjs` e `tests/ai-edit.cjs`: plano, pausas e edição por pedido com Gemini simulado, mídia real, exportação e backup.
 - `tests/native-services.cjs`, `tests/silence-cutter.cjs`, `tests/share-target.cjs`: mocks das APIs nativas, RMS/ripple e service worker no escopo GitHub Pages.
@@ -38,22 +39,22 @@
 | estado | objeto `S`, mapas `A` (arquivos carregados) e `VIDS` (vídeos por camada) |
 | arquivos (IndexedDB) | `idb`, `loadAsset`, `registerAsset`, `syncMedia` (vídeo), `scheduleAudio` (som) |
 | Lottie / dotLottie | tipo `lottie` no modelo/painel/importação; `MotionLottie` valida arquivos e renderiza o quadro síncrono em `drawShape`; `freezeFrame` também captura Lottie |
-| modelo | `newProject`, `defaultS` (campos de cada tipo), `makeLayer`, `normalize`, `val` (valor no tempo), keyframes, `transitionState` (envelope de entrada/saída), `worldMatrix`, `setParent` |
-| render | `drawText` (animações de texto), `drawPath`, `drawFramedMedia` (contain/cover/stretch e foco), `drawShape`, `drawLayer` (filtros, looks, transições, sombra, brilho), `renderFrame` (máscara de recorte) |
+| modelo | `newProject`, `defaultS` (campos de cada tipo), `makeLayer`, `normalize`, `val` (valor no tempo), keyframes, `transitionState` (envelope de entrada/saída), `worldMatrix`, `setParent`; projeto também normaliza `markers` e `safeArea` |
+| render | `drawText` (animações e fundo do texto), `drawPath`, `drawFramedMedia` (contain/cover/stretch e foco), `drawShape`, `drawLayer` (filtros, looks, transições, sombra, brilho), `renderFrame` (máscara de recorte), `drawSafeAreaGuide` (somente prévia) |
 | efeitos, partículas e câmera | `GL` (WebGL compartilhado, `GL_FRAG` com os shaders), `chromaSource`, `applyFx` (camada fx em `renderFrame`), `PARTICLES`/`drawParticles` (sem estado), `activeCamera`/`cameraMatrix` (entra no `parentMatrix` das camadas raiz), `textPathPoints`/`pointOnPath` |
-| batida, narração, batidas prontas e figurinhas | `detectBeats` (BPM por autocorrelação), `beatsOf`/`projectBeats` (batidas no tempo da timeline), `magnet` (gruda nas batidas), `analyzeBeats`, `applyBeatPreset` (beatPulse/beatFlash/beatShake), `beatMontage`, `BEAT_STYLES`/`synthBeat`/`beatMakerModal`, `recordVoiceModal` (MediaRecorder), `EMOJIS`, `ICONS` (path SVG 24x24), `iconPath`, `drawIcon`, `stickersModal` |
+| batida, roteiro, narração, batidas prontas e figurinhas | `detectBeats` (BPM por autocorrelação), `beatsOf`/`projectBeats` (batidas no tempo da timeline), `projectMarkers`/`addMarker`/`editMarker`, `magnet` (gruda em batidas e marcadores), `analyzeBeats`, `applyBeatPreset` (beatPulse/beatFlash/beatShake), `beatMontage`, `BEAT_STYLES`/`synthBeat`/`beatMakerModal`, `recordVoiceModal` (MediaRecorder), `EMOJIS`, `ICONS` (path SVG 24x24), `iconPath`, `drawIcon`, `stickersModal` |
 | câmera lenta (velocidade e rampas) | `RAMPS`, `speedAt`, `srcTime` (tempo da linha → tempo do arquivo, integral exata), `timeAtSrc` (inversa), `applyRamp` (mantém o mesmo trecho e aumenta o projeto até 600 s), `automateRate` (som segue a curva), quadros suaves: `blendInfo`, `video2For`/`VIDS2`, `nextFrameOf`, `blendCanvas`; `exactSeeks` impede o `syncMedia` de mexer nos vídeos durante uma busca exata |
 | seleção no preview | caminho de movimento, caneta, alças, `fitStage` com zoom visual (`S.stageZoom`, 50–200%), arrastar no canvas |
 | tempo e reprodução | `refreshTime`, `play`, `pause` |
-| linha do tempo | `renderTimeline`, forma de onda, arrastar keyframes e blocos, botão de mudo, snap magnético |
-| painel de propriedades | `renderPanel` (cabeçalho fixo e cartões), `layerPanel`, `projectPanel`, `syncPanel`, editor de curva `setupCurve`, eventos do painel |
+| linha do tempo | `renderTimeline`, forma de onda, marcadores, arrastar keyframes e blocos, botão de mudo, snap magnético |
+| painel de propriedades | `renderPanel` (cabeçalho fixo e cartões), `layerPanel` (inclui Estúdio de Legendas), `projectPanel` (guia seguro e roteiro), `syncPanel`, editor de curva `setupCurve`, eventos do painel |
 | animações prontas | `applyPreset` (fade, zoom, slide, flash, shake, bounce, etc.) |
 | camadas | adicionar, duplicar, dividir (`splitLayer`), congelar quadro (`freezeFrame`), excluir, `setAspect`, importação de mídia |
 | desfazer / salvar | `commit` (sempre chame após uma mudança), `scheduleSave` (status real em #saveStatus), localStorage, `setProject` |
 | exemplo inicial | `demoProject` |
 | exportação | `exportModal`, `exportVideo` (MediaRecorder + Web Audio, fallback MP4 → WEBM) |
 | exportação rápida | `fastExport` (WebCodecs + mp4-muxer), `pickVideoCodec` (cache por tamanho e fps; H.264 com nível de `avcLevel`, depois H.265, VP9 e AV1; 4K a 30 e 60 fps), `videoBitrate` (até 80 Mbps), `renderAudioMix` (OfflineAudioContext), `seekVideosExact`, `exportGif` (gifenc), `exportPng`, `fileReady`. `renderFrame(c, t, {k, transparent})` desenha em qualquer escala (`RK`) |
-| IA | `gemini()` (nuvem), legendas e transcrição local com Transformers.js / Whisper (`getWhisper`, `runCaptionsWhisper`), Google MediaPipe (`segmentPersonMediaPipe`, `mediaPipeCutPerson`, `mediaPipeFaceAutoFrame`), remoção de fundo (@imgly) |
+| IA | `gemini()` (nuvem), legendas e transcrição local com Transformers.js / Whisper (`getWhisper`, `runCaptionsWhisper`), `CAPTION_STYLES`/`createCaptionLayers`/`applyCaptionStyle`, Google MediaPipe (`segmentPersonMediaPipe`, `mediaPipeCutPerson`, `mediaPipeFaceAutoFrame`), remoção de fundo (@imgly) |
 | edição de vídeo com IA | `editWithAIModal`, `beginAIEdit` (áudio/quadros em partes), `reviewAIEdit`, `applyAIEditAssembly`, `restoreAIEditOriginal`; `gemini(parts,json,{signal,temperature})` |
 | animação por código (GSAP) | `codeWorkerMain` (roda no worker isolado), `runCodeSandbox`, `simplifySeries`, `bakeCode`, `applyCode`, `codeModal`, `CODE_EXAMPLES`, `aiWriteCode` |
 | bibliotecas abertas | `LIBS` e `lib()` carregam sob demanda: Lucide (`loadLucide`, `lucideD`, `lucideGridHtml`), wavesurfer (`mountPanelWave`, forma de onda no painel de áudio), mp4box (`videoInfo`, rotação e fps no `loadAsset` de vídeo), opentype (`pickFont`, `addCustomFont`, `registerFontFace` para fontes próprias) |
@@ -67,13 +68,15 @@
 | menu, modal, teclado, PWA, início | atalhos, inclusive Ctrl/Cmd+S para exportar `.motion.json`, resto da interface e inicialização |
 
 ## Modelo de dados (resumo)
-Projeto: `{ name, aspect, width, height, fps, duration, background, layers[], assets{} }`.
+Projeto: `{ name, aspect, width, height, fps, duration, background, layers[], assets{}, markers[], safeArea }`.
 Camada: `{ id, type, name, start, end, visible, parent, p{valores fixos}, kf{prop:[{t,v,e,bz?}]}, s{campos do tipo, flipH, flipV, speed, muted}, codeKf?[props geradas por código], fromCode? }`. Projeto também guarda `code` (último código aplicado) e `id` (registro na biblioteca).
 Velocidade: `s.speed` (0.1–4 em vídeo/áudio), `s.rampPts` ([[t, multiplicador]] em tempo absoluto, como keyframes; vazio = constante), `s.ramp` (id do modelo), `s.smoothSlow` (quadros suaves). Use sempre `srcTime`/`timeAtSrc`, nunca `trimIn + (t - start) * speed`.
 Armazenamento: IndexedDB `motion-editor` v2 com `assets` e `projects` (um registro por projeto: json, miniatura, data). `STORE_KEY` guarda a cópia rápida do projeto aberto e `LAST_KEY` o id dele. `cleanupAssets` só apaga mídia que nenhum projeto da biblioteca usa.
 `layers[0]` fica na frente. Arquivos (imagem, vídeo, áudio) ficam no IndexedDB; `assets` guarda só nome e tipo.
 
 Novos campos em `s`: `colorLook`, `lookIntensity`, `transitionIn/Out`, `transitionInDuration/OutDuration`, `mediaFit`, `focalX/Y`. `transitionStart/End` são âncoras opcionais preservadas pelo split, deslocadas ao mover o clipe e removidas ao editar a borda ou a transição correspondente. Projetos antigos usam look Original, sem transição e enquadramento livre.
+
+Texto: `s.backplate`, `backColor`, `backOpacity`, `backPadX/Y` e `backRadius` controlam o cartão atrás do texto. Grupos de legenda usam `s.captionGroup` e `s.captionStyle`; seus filhos recebem o preset de `CAPTION_STYLES` em lote.
 
 Música: camada de áudio guarda `s.beats` (segundos do arquivo, antes de corte e velocidade) e `s.bpm`. A régua e o painel Código usam `projectBeats()`. Tipo `icon`: `s.iconName`, `s.d` (path SVG), `s.size`, mais preenchimento/degradê/contorno/brilho das formas.
 

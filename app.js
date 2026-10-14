@@ -110,6 +110,38 @@ const TEXT_ANIMS = {
   scramble: 'Embaralhar e revelar', wave: 'Onda (contínua)', bounce: 'Letras pulando (contínuo)',
   glitch: 'Glitch (contínuo)', neon: 'Neon piscando',
 };
+/* Presets próprios para legendas: a aparência segue o Motion e pode ser reaplicada ao grupo inteiro. */
+const CAPTION_STYLES = {
+  destaque: { label: 'Destaque', note: 'Forte e palavra por palavra', size: 0.075, stroke: 0.008, shadowY: 0.01, shadowBlur: 0.02,
+    s: { font: 'Montserrat', weight: 900, color: '#ffffff', strokeColor: '#000000', anim: 'words', backplate: false } },
+  faixa: { label: 'Faixa Motion', note: 'Cartão luminoso e direto', size: 0.066, stroke: 0, shadowY: 0.006, shadowBlur: 0.014, padX: 0.03, padY: 0.014, radius: 0.012,
+    s: { font: 'Figtree', weight: 900, color: '#1b290d', strokeColor: '#000000', anim: 'words', backplate: true, backColor: '#d3f88a', backOpacity: 100 } },
+  impacto: { label: 'Impacto', note: 'Entrada rápida para cortes curtos', size: 0.09, stroke: 0.01, shadowY: 0.012, shadowBlur: 0.022,
+    s: { font: 'Anton', weight: 400, color: '#ffffff', strokeColor: '#000000', anim: 'pop', backplate: false } },
+  conversa: { label: 'Conversa', note: 'Cartão suave para falas longas', size: 0.062, stroke: 0, shadowY: 0.006, shadowBlur: 0.016, padX: 0.025, padY: 0.014, radius: 0.014,
+    s: { font: 'Figtree', weight: 700, color: '#ffffff', strokeColor: '#000000', anim: 'rise', backplate: true, backColor: '#0c0f11', backOpacity: 84 } },
+  limpo: { label: 'Limpo', note: 'Leve, discreto e sem placa', size: 0.058, stroke: 0, shadowY: 0.008, shadowBlur: 0.018,
+    s: { font: 'Figtree', weight: 700, color: '#ffffff', strokeColor: '#000000', anim: 'fade', backplate: false } },
+};
+const captionStyleId = id => CAPTION_STYLES[id] ? id : 'destaque';
+function captionStyleValues(id, m = Math.min(P().width, P().height)) {
+  const style = CAPTION_STYLES[captionStyleId(id)];
+  return {
+    ...style.s,
+    size: Math.max(14, Math.round(m * style.size)),
+    stroke: Math.max(0, Math.round(m * style.stroke)),
+    shadowX: 0,
+    shadowY: Math.round(m * style.shadowY),
+    shadowBlur: Math.round(m * style.shadowBlur),
+    shadowColor: '#000000',
+    shadowOpacity: 55,
+    backPadX: Math.round(m * (style.padX || 0.018)),
+    backPadY: Math.round(m * (style.padY || 0.01)),
+    backRadius: Math.round(m * (style.radius || 0.01)),
+  };
+}
+const captionStyleOptions = current => Object.entries(CAPTION_STYLES).map(([id, style]) => `<option value="${id}"${id === captionStyleId(current) ? ' selected' : ''}>${style.label}</option>`).join('');
+const captionStyleCards = current => `<div class="caption-style-grid">${Object.entries(CAPTION_STYLES).map(([id, style]) => `<button class="caption-style-card${id === captionStyleId(current) ? ' on' : ''}" type="button" data-caption-style="${id}"><span class="caption-style-sample" aria-hidden="true">Aa</span><span><b>${style.label}</b><small>${style.note}</small></span></button>`).join('')}</div>`;
 const GLYPHS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#$%&@*+=?';
 const BLENDS = {
   'source-over': 'Normal', screen: 'Tela (clarear)', multiply: 'Multiplicar', overlay: 'Sobrepor',
@@ -878,7 +910,7 @@ const stopAudio = () => { liveAudio.forEach(s => { try { s.stop(); } catch {} })
 /* ======================= modelo ======================= */
 function newProject(aspect = '9:16') {
   const [w, h] = ASPECTS[aspect];
-  return { v: 2, name: 'Projeto sem título', aspect, width: w, height: h, fps: 30, duration: 5, background: '#14122a', layers: [], assets: {} };
+  return { v: 2, name: 'Projeto sem título', aspect, width: w, height: h, fps: 30, duration: 5, background: '#14122a', layers: [], assets: {}, markers: [], safeArea: false };
 }
 
 function defaultS(type) {
@@ -888,7 +920,7 @@ function defaultS(type) {
   const framing = { mediaFit: 'stretch', focalX: 50, focalY: 50 };
   const media = { asset: null, trimIn: 0, volume: 100, fadeIn: 0, fadeOut: 0, speed: 1, muted: false, rampPts: [], ramp: '', smoothSlow: false };
   switch (type) {
-    case 'text': return { ...look, text: 'Seu texto', font: 'Montserrat', size: Math.round(m * 0.11), weight: 900, color: '#ffffff', fill2: '#ffb547', align: 'center', stroke: 0, strokeColor: '#000000', glowColor: '#ffb547', anim: 'none', curve: 0, onPath: '', pathStart: 0 };
+    case 'text': return { ...look, text: 'Seu texto', font: 'Montserrat', size: Math.round(m * 0.11), weight: 900, color: '#ffffff', fill2: '#ffb547', align: 'center', stroke: 0, strokeColor: '#000000', glowColor: '#ffb547', anim: 'none', curve: 0, onPath: '', pathStart: 0, backplate: false, backColor: '#000000', backOpacity: 80, backPadX: Math.round(m * 0.02), backPadY: Math.round(m * 0.01), backRadius: Math.round(m * 0.012) };
     case 'rect': return { ...look, w: Math.round(m * 0.4), h: Math.round(m * 0.4), radius: 28, fill: '#ff8f6b', fill2: '#b89cff', glowColor: '#ff8f6b' };
     case 'ellipse': return { ...look, w: Math.round(m * 0.36), h: Math.round(m * 0.36), fill: '#b89cff', fill2: '#6fd8ff', glowColor: '#b89cff' };
     case 'star': return { ...look, w: Math.round(m * 0.4), points: 5, inner: 0.45, fill: '#ffb547', fill2: '#ff6b4a', glowColor: '#ffb547' };
@@ -925,6 +957,12 @@ function makeLayer(type, extra = {}) {
 /* completa campos que projetos antigos não tinham */
 function normalize(p) {
   p.assets = p.assets || {};
+  p.safeArea = !!p.safeArea;
+  p.markers = Array.isArray(p.markers) ? p.markers.filter(m => m && Number.isFinite(+m.t)).slice(0, 120).map((m, i) => ({
+    id: typeof m.id === 'string' && m.id ? m.id.slice(0, 40) : uid(),
+    t: round(clamp(+m.t, 0, p.duration), 3),
+    label: String(m.label || `Marcador ${i + 1}`).trim().slice(0, 60) || `Marcador ${i + 1}`,
+  })).sort((a, b) => a.t - b.t) : [];
   S.project = p;
   for (const L of p.layers) {
     L.p = { ...defaultP(), ...L.p };
@@ -1100,6 +1138,20 @@ function drawText(c, L, local) {
   const lh = s.size * 1.15;
   const widths = lines.map(l => c.measureText(l).width);
   const bw = Math.max(s.size * 0.5, ...widths), bh = lh * lines.length;
+  const plate = !!s.backplate && !pathPts && !arc;
+  const padX = plate ? Math.max(0, Number(s.backPadX) || 0) : 0;
+  const padY = plate ? Math.max(0, Number(s.backPadY) || 0) : 0;
+  if (plate) {
+    const w = bw + padX * 2, h = bh + padY * 2;
+    c.save();
+    c.globalAlpha *= clamp((Number(s.backOpacity) || 0) / 100, 0, 1);
+    c.fillStyle = s.backColor || '#000000';
+    c.beginPath();
+    const r = clamp(Number(s.backRadius) || 0, 0, Math.min(w, h) / 2);
+    if (c.roundRect) c.roundRect(-w / 2, -h / 2, w, h, r); else c.rect(-w / 2, -h / 2, w, h);
+    c.fill();
+    c.restore();
+  }
   c.fillStyle = paint(c, s, bw, bh, s.color);
   const str = (t, x, y) => {
     if (s.stroke > 0) { c.lineWidth = s.stroke * 2; c.lineJoin = 'round'; c.strokeStyle = s.strokeColor; c.strokeText(t, x, y); }
@@ -1184,7 +1236,7 @@ function drawText(c, L, local) {
     const sag = R - R * Math.cos(Math.min(Math.PI, bw / 2 / R));
     return { w: bw + s.size, h: bh + sag * 2 + s.size };
   }
-  return { w: bw, h: bh };
+  return { w: bw + padX * 2, h: bh + padY * 2 };
 }
 
 function pathPartial(pts, f) {
@@ -1773,10 +1825,43 @@ function beatSource() {
   return ls.find(L => L.type === 'audio') || ls[0] || null;
 }
 const projectBeats = () => { const L = beatSource(); return L ? beatsOf(L) : []; };
-/* ímã da linha do tempo: cursor e batidas */
+const projectMarkers = () => P().markers || [];
+const markerById = id => projectMarkers().find(m => m.id === id);
+const markerAt = (t, tol = 0.5 / P().fps) => projectMarkers().find(m => Math.abs(m.t - t) <= tol);
+function addMarker(t = S.time) {
+  const p = P(); p.markers ||= [];
+  const at = round(clamp(snap(t), 0, p.duration), 3), existing = markerAt(at);
+  if (existing) { editMarker(existing); return; }
+  const marker = { id: uid(), t: at, label: `Marcador ${p.markers.length + 1}` };
+  p.markers.push(marker); p.markers.sort((a, b) => a.t - b.t);
+  commit(); renderTimeline(); renderPanel();
+  toast(`Marcador adicionado em ${fmtTime(at)}. Clique nele para dar um nome.`);
+}
+function editMarker(marker) {
+  if (!marker) return;
+  showModal('Marcador de roteiro', `
+    <div class="row plain"><label for="markerLabel">Nome</label><input class="field" id="markerLabel" maxlength="60" value="${esc(marker.label)}" aria-label="Nome do marcador"></div>
+    <div class="row plain"><label for="markerTime">Tempo (s)</label><input class="field" id="markerTime" type="number" min="0" max="${P().duration}" step="0.01" value="${round(marker.t, 3)}" aria-label="Tempo do marcador"></div>
+    <p class="hint">Use marcadores para preparar cortes, mudanças de assunto e revisões. Eles não entram na exportação.</p>`, [
+    { label: 'Excluir', cls: 'btn-danger', onClick: () => {
+      const p = P(); p.markers = p.markers.filter(m => m.id !== marker.id);
+      commit(); renderTimeline(); renderPanel(); hideModal(); toast('Marcador excluído.');
+    } },
+    { label: 'Cancelar' },
+    { label: 'Salvar', cls: 'btn-primary', onClick: () => {
+      const live = markerById(marker.id);
+      if (!live) return;
+      live.label = ($('#markerLabel').value || 'Marcador').trim().slice(0, 60) || 'Marcador';
+      live.t = round(clamp(parseFloat($('#markerTime').value) || 0, 0, P().duration), 3);
+      P().markers.sort((a, b) => a.t - b.t);
+      commit(); renderTimeline(); renderPanel(); setTime(live.t); hideModal();
+    } },
+  ]);
+}
+/* ímã da linha do tempo: cursor, batidas e marcadores */
 function magnet(t) {
   let best = null, bd = 8 / S.pps;
-  for (const c of [S.time, ...projectBeats()]) { const d = Math.abs(t - c); if (d < bd) { bd = d; best = c; } }
+  for (const c of [S.time, ...projectBeats(), ...projectMarkers().map(m => m.t)]) { const d = Math.abs(t - c); if (d < bd) { bd = d; best = c; } }
   return best;
 }
 
@@ -2252,6 +2337,31 @@ function drawMotionPath(L, k, dpr) {
 }
 
 let penPts = null;
+function drawSafeAreaGuide(dpr) {
+  const p = P();
+  if (!p.safeArea || S.exporting) return;
+  const w = overlay.width, h = overlay.height;
+  const inset = Math.max(8 * dpr, Math.min(w, h) * 0.055);
+  const vertical = p.height > p.width * 1.08;
+  octx.save();
+  octx.lineWidth = Math.max(1, dpr);
+  octx.strokeStyle = hexA(theme.accent, 0.82);
+  octx.fillStyle = hexA(theme.accent, 0.055);
+  octx.setLineDash([5 * dpr, 4 * dpr]);
+  octx.strokeRect(inset, inset, w - inset * 2, h - inset * 2);
+  if (vertical) {
+    const top = h * 0.13, bottom = h * 0.80;
+    octx.fillRect(0, 0, w, top);
+    octx.fillRect(0, bottom, w, h - bottom);
+    octx.beginPath(); octx.moveTo(inset, top); octx.lineTo(w - inset, top); octx.moveTo(inset, bottom); octx.lineTo(w - inset, bottom); octx.stroke();
+    octx.setLineDash([]);
+    octx.fillStyle = hexA(theme.accent, 0.92);
+    octx.font = `700 ${Math.max(9, 10 * dpr)}px Figtree, sans-serif`;
+    octx.textAlign = 'left'; octx.textBaseline = 'top';
+    octx.fillText('ÁREA SEGURA', inset + 4 * dpr, top + 4 * dpr);
+  }
+  octx.restore();
+}
 function drawOverlay() {
   const dpr = window.devicePixelRatio || 1;
   octx.setTransform(1, 0, 0, 1, 0, 0);
@@ -2262,6 +2372,7 @@ function drawOverlay() {
     octx.beginPath(); penPts.forEach((q, i) => (i ? octx.lineTo(q.x * k, q.y * k) : octx.moveTo(q.x * k, q.y * k))); octx.stroke();
     return;
   }
+  drawSafeAreaGuide(dpr);
   const L = selLayer();
   if (!L || S.exporting || !L.visible || !VISUAL(L.type)) return;
   const h = handlesOf(L);
@@ -2499,6 +2610,7 @@ function pause() {
 $('#btnPlay').onclick = () => (S.playing ? pause() : play());
 $('#btnStart').onclick = () => { pause(); setTime(0); $('#tlScroll').scrollLeft = 0; };
 $('#btnSplit').onclick = () => splitLayer();
+$('#btnMarker').onclick = () => addMarker();
 
 /* ======================= linha do tempo ======================= */
 const labelW = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--label-w')) || 112;
@@ -2526,6 +2638,7 @@ function renderTimeline() {
     html += `<div class="tick${isMajor ? ' major' : ''}" style="left:${tx(t)}px">${isMajor ? `<span>${t}s</span>` : ''}</div>`;
   }
   html += projectBeats().map(t => `<div class="beat-mark" style="left:${tx(t)}px"></div>`).join('');
+  html += projectMarkers().map(m => `<button class="marker" type="button" data-marker-id="${esc(m.id)}" style="left:${tx(m.t)}px" title="${esc(m.label)} · ${fmtTime(m.t)}" aria-label="Marcador ${esc(m.label)} em ${fmtTime(m.t)}"><i></i><span>${esc(m.label)}</span></button>`).join('');
   ticks.innerHTML = html;
 
   const eyeOn = '<svg viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
@@ -2607,12 +2720,21 @@ function followPlayhead() {
 const ticksEl = $('#tlTicks');
 ticksEl.style.touchAction = 'none';
 ticksEl.addEventListener('pointerdown', e => {
+  if (e.target.closest('[data-marker-id]')) return;
   if (S.playing) pause();
   const move = ev => setTime((ev.clientX - ticksEl.getBoundingClientRect().left - TL_PAD) / S.pps);
   move(e);
   ticksEl.setPointerCapture(e.pointerId);
   ticksEl.onpointermove = move;
   ticksEl.onpointerup = ticksEl.onpointercancel = () => { ticksEl.onpointermove = null; };
+});
+ticksEl.addEventListener('click', e => {
+  const marker = e.target.closest('[data-marker-id]');
+  if (!marker) return;
+  const item = markerById(marker.dataset.markerId);
+  if (!item) return;
+  e.preventDefault();
+  setTime(item.t); editMarker(item);
 });
 $('#tlZoom').addEventListener('input', e => { S.pps = +e.target.value; renderTimeline(); });
 
@@ -2724,7 +2846,7 @@ const timelineTouch = window.TimelineTouchEngine && new window.TimelineTouchEngi
   getOrigin: () => labelW() + TL_PAD,
   getClip: id => { const L = byId(id); return L && { start: L.start, end: L.end }; },
   onTap: (id, label) => { select(id); if (label) openSheet('props'); },
-  snapPoints: id => [0, S.time, ...projectBeats(), ...P().layers.filter(L => L.id !== id).flatMap(L => [L.start, L.end])],
+  snapPoints: id => [0, S.time, ...projectBeats(), ...projectMarkers().map(m => m.t), ...P().layers.filter(L => L.id !== id).flatMap(L => [L.start, L.end])],
   onBegin: id => {
     pause();
     const L = byId(id);
@@ -2869,6 +2991,7 @@ function setupCurve(cv, L) {
 
 function projectPanel() {
   const p = P();
+  const markers = projectMarkers();
   return `
   <div class="sec"><h3>Projeto</h3>
     <div class="row plain"><label>Formato</label><div class="seg">${Object.keys(ASPECTS).map(a => `<button data-aspect="${a}" class="${p.aspect === a ? 'on' : ''}">${a}</button>`).join('')}</div></div>
@@ -2876,6 +2999,12 @@ function projectPanel() {
     <div class="row plain"><label for="pj-fps">Quadros/s</label><select class="field" id="pj-fps" data-proj="fps"><option>24</option><option>30</option><option>60</option></select></div>
     <div class="row plain"><label for="pj-bg">Fundo</label><input type="color" id="pj-bg" data-proj="background"></div>
     <div class="row plain"><label for="pj-blur">Desfoque de movimento %</label><input class="field" type="number" id="pj-blur" data-proj="motionBlur" min="0" max="100" step="5" value="${p.motionBlur || 0}" title="0 desliga. Valores altos deixam a prévia mais lenta."></div>
+    <label class="check"><input type="checkbox" data-proj-check="safeArea"${p.safeArea ? ' checked' : ''}> Mostrar área segura na prévia</label>
+    <p class="hint">As guias ajudam a manter texto fora das áreas de interface em vídeos verticais. Elas não saem na exportação.</p>
+  </div>
+  <div class="sec"><h3>Roteiro <button class="btn btn-small" data-act="marker-add">+ Marcador</button></h3>
+    <p class="hint">Marque entradas, cortes e pontos para revisar. Os blocos grudam nos marcadores ao arrastar.</p>
+    ${markers.length ? `<div class="marker-list">${markers.map(m => `<button class="marker-list-item" data-marker-go="${esc(m.id)}"><span>${esc(m.label)}</span><small>${fmtTime(m.t)}</small></button>`).join('')}</div>` : '<p class="hint">Nenhum marcador ainda. Posicione a agulha e adicione o primeiro.</p>'}
   </div>
   <div class="sec"><h3>Como usar</h3>
     <p class="hint">Adicione texto, formas, imagens, vídeos e música com os botões abaixo do preview. Toque numa camada para editar e arraste no preview para mover. A alça azul do canto muda o tamanho e a bolinha de cima gira.</p>
@@ -2897,6 +3026,8 @@ function layerPanel(L) {
       <div class="row plain"><label>Alinhar</label><div class="seg">${['left', 'center', 'right'].map(a => `<button data-align="${a}" class="${s.align === a ? 'on' : ''}">${{ left: 'Esq.', center: 'Centro', right: 'Dir.' }[a]}</button>`).join('')}</div></div>
       ${numRow('stroke', 'Contorno', 0, 40)}
       ${colorRow('strokeColor', 'Cor contorno')}
+      ${checkRow('backplate', 'Fundo atrás do texto')}
+      <div data-show="backplate">${colorRow('backColor', 'Cor do fundo')}${numRow('backOpacity', 'Opacidade %', 0, 100)}${numRow('backPadX', 'Margem lateral', 0, 300)}${numRow('backPadY', 'Margem vertical', 0, 300)}${numRow('backRadius', 'Cantos', 0, 300)}</div>
       ${selectRow('anim', 'Animação', TEXT_ANIMS)}
       ${numRow('curve', 'Curvar', -100, 100)}
       ${P().layers.some(o => o.type === 'path') ? `${selectRow('onPath', 'Seguir traço', { '': 'Nenhum', ...Object.fromEntries(P().layers.filter(o => o.type === 'path').map(o => [o.id, o.name])) })}
@@ -3007,6 +3138,12 @@ function layerPanel(L) {
   const special = L.type === 'fx' || L.type === 'camera';
   const look = visual && L.type !== 'group' && !special;
   const hasCamera = P().layers.some(o => o.type === 'camera');
+  const captionGroup = captionGroupOf(L);
+  const captionCount = captionGroup ? P().layers.filter(o => o.type === 'text' && o.parent === captionGroup.id).length : 0;
+  const captionStudio = captionGroup ? `<div class="sec caption-studio"><h3>Estúdio de legendas</h3>
+    <p class="hint">Escolha um estilo para as ${captionCount} legenda${captionCount === 1 ? '' : 's'} deste grupo. Você ainda pode ajustar cada texto abaixo.</p>
+    ${captionStyleCards(captionGroup.s.captionStyle)}
+  </div>` : '';
   const transformRows = L.type === 'fx' ? propRow('opacity') : (L.type === 'camera' ? TRANSFORM.filter(k => k !== 'opacity') : TRANSFORM).map(propRow).join('');
 
   return `
@@ -3014,6 +3151,7 @@ function layerPanel(L) {
     ${L.codeKf && L.codeKf.length ? `<p class="hint code-note">${L.fromCode ? 'Criada' : 'Animada'} pelo código (${L.codeKf.map(k => CODE_UNITS[k][0]).join(', ')}). Para mudar o movimento, edite em <button class="linkish" data-act="open-code">Código</button>.</p>` : ''}</div>
   ${kfBox}
   ${content ? `<div class="sec"><h3>${TYPE_NAMES[L.type]}</h3>${content}</div>` : ''}
+  ${captionStudio}
   ${media}
   ${special ? `<div class="sec"><h3>${L.type === 'fx' ? 'Mistura' : 'Movimento da câmera'}</h3>${L.type === 'fx' ? propRow('opacity') : transformRows}</div>` : ''}
   ${visual && !special ? `<div class="sec"><h3>Transformação <button class="btn btn-small" data-act="kf-all" title="Keyframe em todas (tecla K)">◆ Todas</button></h3>${transformRows}
@@ -3115,6 +3253,7 @@ function syncPanel(full) {
       else if (show === 'fillOn') el.hidden = !L.s.fillOn;
       else if (show === 'chroma') el.hidden = !L.s.chromaOn;
       else if (show === 'onPath') el.hidden = !L.s.onPath;
+      else if (show === 'backplate') el.hidden = !L.s.backplate;
       else if (show === 'customColors') el.hidden = L.s.colorMode !== 'custom';
       else if (show === 'focal') el.hidden = L.s.mediaFit !== 'cover';
     });
@@ -3198,6 +3337,7 @@ panel.addEventListener('input', e => {
     if (key === 'fillOn') $$('[data-show="fillOn"]', panel).forEach(x => (x.hidden = !v));
     if (key === 'chromaOn') $$('[data-show="chroma"]', panel).forEach(x => (x.hidden = !v));
     if (key === 'onPath') $$('[data-show="onPath"]', panel).forEach(x => (x.hidden = !v));
+    if (key === 'backplate') $$('[data-show="backplate"]', panel).forEach(x => (x.hidden = !v));
     if (key === 'colorMode') $$('[data-show="customColors"]', panel).forEach(x => (x.hidden = v !== 'custom'));
     if (key === 'preset' && PARTICLES[v]) {
       // trocar o tipo de partícula traz os valores típicos dele
@@ -3222,6 +3362,7 @@ panel.addEventListener('change', e => {
   if (el.dataset.proj === 'duration') { setDuration(parseFloat(el.value) || p.duration); return; }
   if (el.dataset.proj === 'fps') { p.fps = +el.value; commit(); return; }
   if (el.dataset.proj === 'motionBlur') { p.motionBlur = clamp(parseFloat(el.value) || 0, 0, 100); commit(); refreshTime(); return; }
+  if (el.dataset.projCheck === 'safeArea') { p.safeArea = !!el.checked; commit(); drawOverlay(); return; }
   if (el.dataset.parent !== undefined && L) {
     setParent(L, el.value || null);
     commit(); renderTimeline(); renderPanel(); refreshTime();
@@ -3250,6 +3391,16 @@ panel.addEventListener('click', e => {
   const b = e.target.closest('button');
   if (!b) return;
   const L = selLayer();
+  if (b.dataset.markerGo) {
+    const marker = markerById(b.dataset.markerGo);
+    if (marker) { setTime(marker.t); editMarker(marker); }
+    return;
+  }
+  if (b.dataset.captionStyle) {
+    const group = captionGroupOf(L);
+    if (group) applyCaptionStyle(group, b.dataset.captionStyle);
+    return;
+  }
   if (b.dataset.beat && L) {
     if (applyBeatPreset(L, b.dataset.beat)) { commit(); renderTimeline(); refreshTime(); toast('Animação na batida aplicada.'); }
     return;
@@ -3271,7 +3422,8 @@ panel.addEventListener('click', e => {
     } else refreshTime();
   } else if (b.dataset.act) {
     const act = b.dataset.act;
-    if (act === 'kf-all' && L) {
+    if (act === 'marker-add') addMarker();
+    else if (act === 'kf-all' && L) {
       const allOn = TRANSFORM.every(pr => kfIndex(L, pr) >= 0);
       TRANSFORM.forEach(pr => { if ((kfIndex(L, pr) >= 0) === allOn) toggleKf(L, pr); });
       commit(); renderTimeline(); refreshTime();
@@ -3350,6 +3502,7 @@ function setDuration(d) {
     if (l.start !== oldStart) delete l.s.transitionStart;
     if (l.end !== oldEnd) delete l.s.transitionEnd;
   }
+  (p.markers || []).forEach(marker => { marker.t = round(clamp(marker.t, 0, d), 3); });
   S.time = clamp(S.time, 0, d);
   commit(); renderTimeline(); renderPanel(); refreshTime();
 }
@@ -4415,6 +4568,7 @@ function editWithAIModal(previous = {}, error = '') {
     <p class="hint">A montagem pode ter até 2 minutos. Se não houver áudio legível, a análise usará apenas imagens e não criará legendas.</p>
     <div class="row plain"><label for="editAspect">Formato</label><select id="editAspect"><option value="9:16">Vertical · Reels / Shorts</option><option value="16:9">Horizontal · YouTube</option><option value="1:1">Quadrado</option><option value="4:5">Retrato</option><option value="keep">Manter projeto</option></select></div>
     <div class="row plain"><label for="editFit">Enquadrar</label><select id="editFit"><option value="cover">Preencher e recortar</option><option value="contain">Mostrar vídeo inteiro</option></select></div>
+    <div class="row plain"><label for="editCaptionStyle">Legenda</label><select id="editCaptionStyle">${captionStyleOptions(previous.captionStyle)}</select></div>
     <div class="ai-edit-options">
       <label class="check"><input id="editPauses" type="checkbox"${previous.cutPauses === false ? '' : ' checked'}> Cortar pausas de som baixo</label>
       <label class="check"><input id="editCaptions" type="checkbox"${previous.captions === false ? '' : ' checked'}> Criar legendas animadas</label>
@@ -4451,7 +4605,7 @@ function readAIEditOptions() {
   if (!(aspect === 'keep' || Object.hasOwn(ASPECTS, aspect)) || !['cover', 'contain'].includes(fit)) throw new Error('Escolha um formato válido.');
   return { layerId: L.id, sourceFrom, sourceTo, sourceDuration: sourceTo - sourceFrom,
     speed: clamp(Number(L.s.speed) || 1, 0.25, 4), fps: P().fps, targetDuration, request,
-    aspect, fit, cutPauses: $('#editPauses').checked, captions: $('#editCaptions').checked, zoom: $('#editZoom').checked };
+    aspect, fit, captionStyle: captionStyleId($('#editCaptionStyle').value), cutPauses: $('#editPauses').checked, captions: $('#editCaptions').checked, zoom: $('#editZoom').checked };
 }
 
 async function beginAIEdit(localOnly) {
@@ -4604,8 +4758,8 @@ function reviewAIEdit(job, assembly) {
   $$('[data-edit-clip]').forEach(el => el.onchange = update); update();
 }
 
-function wrapAIEditCaption(text, width, size) {
-  const measure = document.createElement('canvas').getContext('2d'); measure.font = `900 ${size}px Montserrat, sans-serif`;
+function wrapAIEditCaption(text, width, size, font = 'Montserrat', weight = 900) {
+  const measure = document.createElement('canvas').getContext('2d'); measure.font = `${weight} ${size}px "${font}", sans-serif`;
   const lines = []; let line = '';
   for (const word of text.split(/\s+/)) {
     if (line && measure.measureText(line + ' ' + word).width > width) { lines.push(line); line = ''; }
@@ -4653,13 +4807,13 @@ function applyAIEditAssembly(job, result) {
       }
       return L;
     });
+    const captionValues = captionStyleValues(options.captionStyle, Math.min(width, height));
     group = result.captions.length ? makeLayer('group', { name: 'Legendas da edição', p: { x: width / 2, y: height * 0.78 } }) : null;
-    const size = Math.max(14, Math.round(Math.min(width, height) * 0.065));
+    if (group) { group.s.captionGroup = true; group.s.captionStyle = captionStyleId(options.captionStyle); }
     captions = result.captions.map((caption, i) => makeLayer('text', { name: `Legenda ${i + 1}`, parent: group.id,
       start: caption.start, end: caption.end, p: { x: 0, y: 0 },
-      s: { text: wrapAIEditCaption(caption.text, width * 0.86, size), font: 'Montserrat', size, weight: 900,
-        color: theme.white, strokeColor: theme.bg, stroke: Math.max(1, Math.round(size * 0.1)),
-        anim: caption.end - caption.start >= 0.4 + 0.18 * (caption.text.split(/\s+/).length - 1) ? 'words' : 'none', parallax: 0 } }));
+      s: { text: wrapAIEditCaption(caption.text, width * 0.86, captionValues.size, captionValues.font, captionValues.weight), ...captionValues,
+        anim: caption.end - caption.start >= 0.4 + 0.18 * (caption.text.split(/\s+/).length - 1) ? captionValues.anim : 'none', parallax: 0 } }));
     next.layers = [...captions, ...(group ? [group] : []), ...videos];
   } finally { S.project = previous; }
   commit();
@@ -4813,9 +4967,15 @@ async function sliceToWav(buffer, from, dur) {
 }
 const blobToB64 = async b => (await blobToDataURL(b)).split(',')[1];
 
-function createCaptionLayers(L, segs, style, groupName = 'Legendas') {
+function createCaptionLayers(L, segs, style = 'destaque', groupName = 'Legendas') {
   const p = P(), m = Math.min(p.width, p.height);
+  const preset = captionStyleId(style);
+  const values = captionStyleValues(preset, m);
+  // Chamadas antigas que enviavam só a animação continuam com o movimento escolhido.
+  if (!CAPTION_STYLES[style] && TEXT_ANIMS[style]) values.anim = style;
   const group = makeLayer('group', { name: groupName, p: { x: p.width / 2, y: Math.round(p.height * 0.74) } });
+  group.s.captionGroup = true;
+  group.s.captionStyle = preset;
   group.start = 0; group.end = p.duration;
   const caps = segs.map((s, i) => {
     const next = segs[i + 1];
@@ -4823,13 +4983,28 @@ function createCaptionLayers(L, segs, style, groupName = 'Legendas') {
     const end = clamp(Math.min(L.start + s.end + 0.15, next ? L.start + next.start : Infinity), start + 0.15, p.duration);
     return makeLayer('text', {
       name: `Legenda ${i + 1}`, parent: group.id, start, end, p: { x: 0, y: 0 },
-      s: { text: s.text, font: 'Montserrat', size: Math.round(m * 0.075), weight: 900, color: '#ffffff', stroke: Math.round(m * 0.008), strokeColor: '#000000', anim: style, shadowY: 6, shadowBlur: 12, shadowOpacity: 50 },
+      s: { text: s.text, ...values },
     });
   });
   p.layers.unshift(group, ...caps);
   S.sel = group.id; S.selKf = null;
   commit(); hideModal(); renderTimeline(); renderPanel(); setTime(caps[0].start);
   toast(`${caps.length} legendas criadas. Mova o grupo "${groupName}" para reposicionar todas.`);
+}
+
+function captionGroupOf(L) {
+  if (!L) return null;
+  const group = L.type === 'group' ? L : byId(L.parent);
+  return group && group.type === 'group' && (group.s.captionGroup || /^Legendas\b/i.test(group.name || '')) ? group : null;
+}
+function applyCaptionStyle(group, id) {
+  const preset = captionStyleId(id), values = captionStyleValues(preset);
+  const captions = P().layers.filter(L => L.type === 'text' && L.parent === group.id);
+  if (!captions.length) { toast('Este grupo ainda não tem legendas para estilizar.'); return; }
+  captions.forEach(L => Object.assign(L.s, values));
+  group.s.captionGroup = true; group.s.captionStyle = preset;
+  commit(); renderPanel(); renderTimeline(); refreshTime();
+  toast(`Estilo "${CAPTION_STYLES[preset].label}" aplicado em ${captions.length} legenda${captions.length === 1 ? '' : 's'}.`);
 }
 
 /* ======================= Transformers.js / Whisper ======================= */
@@ -4889,7 +5064,7 @@ async function transcribeAudioWhisper(audioBuffer, { from = 0, dur, lang, model 
   return await pipe(audioData, opts);
 }
 
-async function runCaptionsWhisper(L, { style = 'pop', lang = 'portuguese', action = 'layers', model = 'onnx-community/whisper-tiny' } = {}) {
+async function runCaptionsWhisper(L, { style = 'destaque', lang = 'portuguese', action = 'layers', model = 'onnx-community/whisper-tiny' } = {}) {
   const say = busy('Transcrevendo com Whisper…', 'Carregando Transformers.js…');
   try {
     const rec = A.get(L.s.asset);
@@ -4987,8 +5162,9 @@ function aiCaptionsPicker() {
   }
   const sel = selLayer();
   const first = media.includes(sel) ? sel : media[0];
+  let selectedStyle = 'destaque';
   showModal('Legendas automáticas & Transcrição', `
-    <p>A IA escuta o áudio, transcreve e sincroniza legendas animadas estilo Reels.</p>
+    <p>A IA escuta o áudio, transcreve e sincroniza legendas editáveis na linha do tempo.</p>
     <div class="row plain"><label for="capEngine">Motor de IA</label><select id="capEngine">
       <option value="whisper" selected>Whisper (no aparelho / sem chave / grátis)</option>
       <option value="gemini">Gemini (nuvem / requer chave API)</option>
@@ -5000,11 +5176,7 @@ function aiCaptionsPicker() {
       <option value="spanish">Espanhol</option>
       <option value="">Detectar automático</option>
     </select></div>
-    <div class="row plain"><label for="capStyle">Estilo</label><select id="capStyle">
-      <option value="pop">Estourar letras</option>
-      <option value="words">Palavra por palavra</option>
-      <option value="none">Sem animação</option>
-    </select></div>
+    <div class="caption-picker"><h3>Estilo visual</h3>${captionStyleCards(selectedStyle)}</div>
     <div class="row plain"><label for="capAction">Ação</label><select id="capAction">
       <option value="layers" selected>Criar legendas animadas na linha do tempo</option>
       <option value="text">Apenas ver e copiar transcrição em texto</option>
@@ -5015,17 +5187,20 @@ function aiCaptionsPicker() {
       label: 'Processar', cls: 'btn-primary', keepOpen: true, onClick: () => {
         const engine = $('#capEngine').value;
         const layer = byId($('#capLayer').value);
-        const style = $('#capStyle').value;
         const lang = $('#capLang').value;
         const action = $('#capAction').value;
         if (engine === 'gemini') {
-          runCaptions(layer, style);
+          runCaptions(layer, selectedStyle);
         } else {
-          runCaptionsWhisper(layer, { style, lang, action });
+          runCaptionsWhisper(layer, { style: selectedStyle, lang, action });
         }
       }
     },
   ]);
+  $$('[data-caption-style]', $('#modalBody')).forEach(b => (b.onclick = () => {
+    selectedStyle = captionStyleId(b.dataset.captionStyle);
+    $$('[data-caption-style]', $('#modalBody')).forEach(card => card.classList.toggle('on', card === b));
+  }));
 }
 
 async function runCaptions(L, style) {
@@ -5421,6 +5596,10 @@ function templatesModal() {
   $$('[data-tpl]').forEach(b => (b.onclick = () => { hideModal(); useTemplate(b.dataset.tpl); }));
 }
 $('#btnTemplates').onclick = templatesModal;
+$('#btnQuickTemplates').onclick = templatesModal;
+$('#btnQuickMedia').onclick = () => pickMedia('video');
+$('#btnQuickCaptions').onclick = aiCaptionsPicker;
+$('#btnCaptions').onclick = aiCaptionsPicker;
 
 /* ======================= animação por código (GSAP) ======================= */
 /* O código roda isolado: um iframe sandbox (origem opaca, sem acesso a localStorage/IndexedDB)
@@ -6598,6 +6777,7 @@ document.addEventListener('keydown', e => {
   else if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); }
   else if (mod && e.key.toLowerCase() === 'd' && L) { e.preventDefault(); duplicateLayer(L); }
   else if ((e.key.toLowerCase() === 's' || (mod && e.key.toLowerCase() === 'k')) && L) { e.preventDefault(); splitLayer(L); }
+  else if (e.shiftKey && e.key.toLowerCase() === 'm') { e.preventDefault(); addMarker(); }
   else if (e.key.toLowerCase() === 'm' && L && MEDIA(L.type)) { e.preventDefault(); L.s.muted = !L.s.muted; commit(); renderTimeline(); renderPanel(); refreshTime(); }
   else if ((e.key === 'Delete' || e.key === 'Backspace') && L) { e.preventDefault(); deleteLayer(L); }
   else if (e.key === 'Home') setTime(0);
@@ -7018,7 +7198,8 @@ window.__motion = {
   S, A, P, byId, select, setTime, setParent, makeLayer, addLayer, splitLayer, freezeFrame, registerAsset, commit,
   openPhotopea, closePhotopea, photopeaChoiceModal, ffmpegModal, getFFmpeg,
   getWhisper, transcribeAudioWhisper, runCaptionsWhisper, aiCaptionsPicker,
-  getMediaPipeVision, getMediaPipeSegmenter, segmentPersonMediaPipe, mediaPipeCutPerson, getMediaPipeFaceDetector, mediaPipeFaceAutoFrame
+  getMediaPipeVision, getMediaPipeSegmenter, segmentPersonMediaPipe, mediaPipeCutPerson, getMediaPipeFaceDetector, mediaPipeFaceAutoFrame,
+  captionStyleValues, createCaptionLayers, captionGroupOf, applyCaptionStyle, addMarker, projectMarkers
 };
 // câmera lenta (testes)
 Object.assign(window.__motion, { avcLevel, pickVideoCodec });   // 4K (testes)

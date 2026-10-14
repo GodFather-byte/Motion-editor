@@ -2,7 +2,7 @@
 Atualizado por: Copilot em 14/10/2026
 
 ## Objetivo atual
-Integrar IA nativa do Chrome, cortes de silêncio, recursos PWA e gestos de timeline.
+Resolver o merge com main preservando módulos nativos e fluxo de vídeo curto.
 
 ## Estado agora
 - Quatro módulos IIFE/globais carregados antes de app.js, sem novas dependências do app.
@@ -14,9 +14,12 @@ Integrar IA nativa do Chrome, cortes de silêncio, recursos PWA e gestos de time
 - Share Target POST guarda File em shared-media; boot importa e limpa somente entregas concluídas.
 - TimelineTouchEngine: pinça, scroll nos dois eixos, seleção por toque, toque longo, snap e trim de 44 px.
 - Mouse e keyframes mantêm handlers existentes; cancelamento de gesto restaura a camada.
-- `sw.js` está em `motion-v30`; shell inclui os quatro módulos.
+- Estúdio de Legendas mantém cinco estilos e cartão de fundo com aplicação em lote.
+- Marcadores persistentes têm edição e snap no mouse e no motor de toque.
+- Guia seguro 9:16 fica só na prévia; atalhos rápidos ficam no desktop.
+- `sw.js` está em `motion-v31`; shell inclui os quatro módulos.
 - Testes novos: native-services, silence-cutter, share-target e media-modules.
-- Regressões: mobile-sheets, preview-controls, ai-edit-plan e slowmo.
+- Regressões: short-form, mobile-sheets, preview-controls, ai-edit-plan e slowmo.
 
 ## Como retomar
 1. Rode `git pull` e confira `git status`.
