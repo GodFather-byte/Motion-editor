@@ -312,3 +312,60 @@ test('Celular (360 px): o painel com câmera lenta não cria rolagem lateral', a
   assert.ok(d.psw <= d.pcw + 1, `painel sem rolagem lateral: ${d.psw} x ${d.pcw}`);
   assert.ok(d.right <= 360, `curva dentro da tela: ${d.right}`);
 });
+
+test('dropVideo2 limpa o estado corretamente e ignora ids inexistentes', async t => {
+  const page = await editor(t);
+
+  const result = await page.evaluate(() => {
+    const m = window.__motion;
+
+    const v = document.createElement('video');
+    v.src = 'fake.mp4';
+    let paused = false;
+    let loaded = false;
+    let removeAttributeCalled = false;
+
+    v.pause = () => { paused = true; };
+    v.load = () => { loaded = true; };
+
+    const originalRemoveAttribute = v.removeAttribute;
+    v.removeAttribute = function(name) {
+      if (name === 'src') removeAttributeCalled = true;
+      originalRemoveAttribute.call(v, name);
+    };
+
+    const testId = 'test-id';
+    m.VIDS2.set(testId, v);
+
+    const hadVideo = m.VIDS2.has(testId);
+
+    m.dropVideo2(testId);
+
+    const hasVideoAfter = m.VIDS2.has(testId);
+    const srcAfter = v.getAttribute('src');
+
+    const sizeBeforeMissing = m.VIDS2.size;
+    m.dropVideo2('non-existent-id');
+    const sizeAfterMissing = m.VIDS2.size;
+
+    return {
+      hadVideo,
+      paused,
+      loaded,
+      removeAttributeCalled,
+      hasVideoAfter,
+      srcAfter,
+      sizeBeforeMissing,
+      sizeAfterMissing
+    };
+  });
+
+  assert.equal(result.hadVideo, true, 'O vídeo devia estar no mapa VIDS2');
+  assert.equal(result.paused, true, 'pause() devia ser chamado');
+  assert.equal(result.removeAttributeCalled, true, 'removeAttribute("src") devia ser chamado');
+  assert.equal(result.loaded, true, 'load() devia ser chamado');
+  assert.equal(result.hasVideoAfter, false, 'O vídeo devia ser removido do mapa VIDS2');
+  assert.equal(result.srcAfter, null, 'O atributo src devia ser null');
+
+  assert.equal(result.sizeBeforeMissing, result.sizeAfterMissing, 'dropVideo2 deve ignorar id inexistente sem alterar o mapa');
+});
