@@ -3836,8 +3836,8 @@ function loadScript(src) {
 async function pickVideoCodec(w, h, fps) {
   const bitrate = Math.round(clamp(w * h * fps * 0.14, 2e6, 60e6));
   const tries = [
-    ['avc1.640033', 'avc'], ['avc1.640028', 'avc'], ['avc1.4d0033', 'avc'], ['avc1.4d0028', 'avc'], ['avc1.42003e', 'avc'], ['avc1.42001f', 'avc'],
-    ['vp09.00.40.08', 'vp9'], ['vp09.00.10.08', 'vp9'],
+    ['avc1.640034', 'avc'], ['avc1.640033', 'avc'], ['avc1.640028', 'avc'], ['avc1.4d0034', 'avc'], ['avc1.4d0033', 'avc'], ['avc1.4d0028', 'avc'], ['avc1.42003e', 'avc'], ['avc1.42001f', 'avc'],
+    ['vp09.00.51.08', 'vp9'], ['vp09.00.50.08', 'vp9'], ['vp09.00.40.08', 'vp9'], ['vp09.00.10.08', 'vp9'],
   ];
   for (const [codec, mux] of tries) {
     const cfg = { codec, width: w, height: h, bitrate, framerate: fps, latencyMode: 'quality' };
