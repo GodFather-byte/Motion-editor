@@ -91,6 +91,16 @@ const COLOR_LOOKS = {
   cool: { label: 'Frio', sepia: 25, hue: 170, saturate: 85 },
   vintage: { label: 'Vintage', brightness: 110, contrast: 88, saturate: 75, sepia: 45 },
   mono: { label: 'Preto e branco', saturate: 0, contrast: 115 },
+  noir: { label: 'Noir', saturate: 0, contrast: 160, brightness: 92 },
+  sunset: { label: 'Pôr do sol', sepia: 30, saturate: 150, hue: 15, brightness: 105 },
+  neon: { label: 'Neon', saturate: 220, contrast: 130, brightness: 105, hue: 280 },
+  pastel: { label: 'Pastel', saturate: 60, brightness: 115, contrast: 85 },
+  teal: { label: 'Teal e laranja', hue: 190, saturate: 120, contrast: 115, sepia: 10 },
+  faded: { label: 'Desbotado', contrast: 80, brightness: 110, saturate: 70 },
+  dramatic: { label: 'Dramático', contrast: 150, saturate: 110, brightness: 92 },
+  retro: { label: 'Retrô', sepia: 60, contrast: 105, saturate: 130, hue: 330 },
+  cyber: { label: 'Cyberpunk', hue: 260, saturate: 190, contrast: 125 },
+  soft: { label: 'Suave', contrast: 92, brightness: 108, saturate: 95 },
 };
 const TRANSITIONS = { none: 'Nenhuma', fade: 'Dissolver', zoom: 'Zoom suave', wipe: 'Cortina lateral' };
 const MEDIA_FITS = { stretch: 'Livre (esticar)', contain: 'Mostrar inteiro', cover: 'Preencher e recortar' };
@@ -1083,7 +1093,30 @@ function drawLayer(c, L, t, comp) {
   S.bounds.set(L.id, b);
 }
 
+/* desfoque de movimento (estilo RSMB): média de instantes espalhados pelo obturador do projeto */
+const MB_SAMPLES = 6;
+let mbCanvases = null;
 function renderFrame(c, t, opt = {}) {
+  const shutter = (P().motionBlur || 0) / 100;
+  if (!shutter || opt.noBlur) return renderFrameOnce(c, t, opt);
+  const w = c.canvas.width, h = c.canvas.height;
+  if (!mbCanvases || mbCanvases.acc.width !== w || mbCanvases.acc.height !== h) {
+    mbCanvases = { acc: document.createElement('canvas'), tmp: document.createElement('canvas') };
+    mbCanvases.acc.width = mbCanvases.tmp.width = w; mbCanvases.acc.height = mbCanvases.tmp.height = h;
+  }
+  const ac = mbCanvases.acc.getContext('2d'), tc = mbCanvases.tmp.getContext('2d');
+  ac.setTransform(1, 0, 0, 1, 0, 0); ac.globalAlpha = 1; ac.clearRect(0, 0, w, h);
+  for (let k = 0; k < MB_SAMPLES; k++) {
+    const tk = t + (k / (MB_SAMPLES - 1) - 0.5) * shutter / P().fps;   // centrado no quadro atual
+    renderFrameOnce(tc, tk, opt);
+    ac.globalAlpha = 1 / (k + 1);                                     // média corrente
+    ac.drawImage(mbCanvases.tmp, 0, 0);
+  }
+  c.setTransform(1, 0, 0, 1, 0, 0); c.globalAlpha = 1; c.globalCompositeOperation = 'source-over'; c.filter = 'none';
+  c.clearRect(0, 0, w, h);
+  c.drawImage(mbCanvases.acc, 0, 0);
+}
+function renderFrameOnce(c, t, opt = {}) {
   const p = P();
   RK = opt.k || 1;
   RKM = new DOMMatrix([RK, 0, 0, RK, 0, 0]);
@@ -2248,7 +2281,13 @@ function drawWaves() {
   });
 }
 
-function updatePlayhead() { $('#playhead').style.left = labelW() + tx(S.time) + 'px'; }
+function updatePlayhead() { $('#playhead').style.left = labelW() + tx(S.time) + 'px'; clipPlayhead(); }
+/* ao rolar a linha do tempo para a direita, a agulha passa sob a coluna de camadas: esconde nesse trecho */
+function clipPlayhead() {
+  const sc = $('#tlScroll'), ph = $('#playhead');
+  ph.style.visibility = (parseFloat(ph.style.left) || 0) - sc.scrollLeft < labelW() + 7 ? 'hidden' : '';
+}
+$('#tlScroll').addEventListener('scroll', clipPlayhead, { passive: true });
 function followPlayhead() {
   const sc = $('#tlScroll'), x = labelW() + tx(S.time);
   if (x > sc.scrollLeft + sc.clientWidth - 30 || x < sc.scrollLeft + labelW()) sc.scrollLeft = x - labelW() - 20;
@@ -2465,6 +2504,7 @@ function projectPanel() {
     <div class="row plain"><label for="pj-duration">Duração (s)</label><input class="field" type="number" id="pj-duration" data-proj="duration" min="0.5" max="600" step="0.5"></div>
     <div class="row plain"><label for="pj-fps">Quadros/s</label><select class="field" id="pj-fps" data-proj="fps"><option>24</option><option>30</option><option>60</option></select></div>
     <div class="row plain"><label for="pj-bg">Fundo</label><input type="color" id="pj-bg" data-proj="background"></div>
+    <div class="row plain"><label for="pj-blur">Desfoque de movimento %</label><input class="field" type="number" id="pj-blur" data-proj="motionBlur" min="0" max="100" step="5" value="${p.motionBlur || 0}" title="0 desliga. Valores altos deixam a prévia mais lenta."></div>
   </div>
   <div class="sec"><h3>Como usar</h3>
     <p class="hint">Adicione texto, formas, imagens, vídeos e música com os botões abaixo do preview. Toque numa camada para editar e arraste no preview para mover. A alça azul do canto muda o tamanho e a bolinha de cima gira.</p>
@@ -2789,6 +2829,7 @@ panel.addEventListener('change', e => {
   const el = e.target, L = selLayer(), p = P();
   if (el.dataset.proj === 'duration') { setDuration(parseFloat(el.value) || p.duration); return; }
   if (el.dataset.proj === 'fps') { p.fps = +el.value; commit(); return; }
+  if (el.dataset.proj === 'motionBlur') { p.motionBlur = clamp(parseFloat(el.value) || 0, 0, 100); commit(); refreshTime(); return; }
   if (el.dataset.parent !== undefined && L) {
     setParent(L, el.value || null);
     commit(); renderTimeline(); renderPanel(); refreshTime();
@@ -5956,6 +5997,8 @@ menu.addEventListener('click', async e => {
     openPhotopea({ mode: 'frame' });
   } else if (act === 'ffmpeg') {
     ffmpegModal();
+  } else if (act === 'donate') {
+    showDonate();
   } else if (act === 'help') {
     showModal('Atalhos', `<div class="keys">
       <kbd>Espaço</kbd><span>Reproduzir / pausar</span>
@@ -6063,6 +6106,26 @@ $('#btnInstall').onclick = async () => {
 if ('serviceWorker' in navigator && !inFrame && (location.protocol === 'https:' || location.hostname === 'localhost')) {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 }
+
+/* ======================= apoiar o projeto (opcional) ======================= */
+/* O Motion é gratuito. Preencha só o que quiser oferecer; sem nada preenchido, o item do menu fica escondido. */
+const DONATE = {
+  pix: '',           // chave PIX: e-mail, telefone, CPF/CNPJ ou chave aleatória
+  pixName: '',       // nome do titular, como aparece no app do banco
+  links: [],         // ex.: [{ label: 'GitHub Sponsors', url: 'https://github.com/sponsors/usuario' }]
+};
+function showDonate() {
+  const pix = DONATE.pix ? `<p>Chave PIX: <code>${esc(DONATE.pix)}</code>${DONATE.pixName ? ` (${esc(DONATE.pixName)})` : ''}</p>` : '';
+  const links = DONATE.links.map(l => `<a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.label)}</a>`).join(' · ');
+  showModal('Apoiar o Motion', `<p>O Motion é gratuito e de código aberto. Se ele te ajudou, você pode apoiar o projeto.</p>${pix}${links ? `<p>${links}</p>` : ''}`, [
+    ...(DONATE.pix ? [{ label: 'Copiar chave PIX', keepOpen: true, onClick: () => {
+      const copy = navigator.clipboard ? navigator.clipboard.writeText(DONATE.pix) : Promise.reject(new Error('sem área de transferência'));
+      copy.then(() => toast('Chave PIX copiada.'), () => toast('Não consegui copiar. Copie a chave acima.'));
+    } }] : []),
+    { label: 'Fechar' },
+  ]);
+}
+$$('[data-menu="donate"]').forEach(b => { b.hidden = !(DONATE.pix || DONATE.links.length); });
 
 /* ======================= início ======================= */
 setProject(loadSaved() || demoProject());
