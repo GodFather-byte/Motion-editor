@@ -400,23 +400,41 @@ function patchOf(g, w, h, cx, cy, tw, th) {
 }
 /* correlação normalizada: melhor posição do modelo dentro de uma janela de raio r ao redor de (cx, cy) */
 function matchPatch(g, w, h, tpl, tw, th, cx, cy, r) {
-  let mt = 0; for (const v of tpl) mt += v; mt /= tpl.length;
-  let vt = 0; for (const v of tpl) vt += (v - mt) * (v - mt);
+  const n = tw * th;
+  let mt = 0;
+  for (let i = 0; i < n; i++) mt += tpl[i];
+  mt /= n;
+
+  let vt = 0;
+  const tpl_b = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const b = tpl[i] - mt;
+    tpl_b[i] = b;
+    vt += b * b;
+  }
   const st = Math.sqrt(vt) || 1e-6;
   let best = { score: -Infinity, x: cx, y: cy };
-  for (let y = cy - r; y <= cy + r; y++) for (let x = cx - r; x <= cx + r; x++) {
-    const x0 = Math.round(x - tw / 2), y0 = Math.round(y - th / 2);
-    if (x0 < 0 || y0 < 0 || x0 + tw > w || y0 + th > h) continue;
-    let mg = 0;
-    for (let j = 0; j < th; j++) for (let i = 0; i < tw; i++) mg += g[(y0 + j) * w + x0 + i];
-    mg /= tw * th;
-    let num = 0, vg = 0;
-    for (let j = 0; j < th; j++) for (let i = 0; i < tw; i++) {
-      const a = g[(y0 + j) * w + x0 + i] - mg, b = tpl[j * tw + i] - mt;
-      num += a * b; vg += a * a;
+
+  for (let y = cy - r; y <= cy + r; y++) {
+    for (let x = cx - r; x <= cx + r; x++) {
+      const x0 = Math.round(x - tw / 2), y0 = Math.round(y - th / 2);
+      if (x0 < 0 || y0 < 0 || x0 + tw > w || y0 + th > h) continue;
+
+      let sumG = 0, sumG2 = 0, num = 0;
+      let idx = 0;
+      for (let j = 0; j < th; j++) {
+        let gIdx = (y0 + j) * w + x0;
+        for (let i = 0; i < tw; i++) {
+          const val = g[gIdx++];
+          sumG += val;
+          sumG2 += val * val;
+          num += val * tpl_b[idx++];
+        }
+      }
+      const vg = sumG2 - (sumG * sumG) / n;
+      const score = num / ((Math.sqrt(vg > 0 ? vg : 0) * st) || 1e-6);
+      if (score > best.score) best = { score, x: x, y: y };
     }
-    const score = num / ((Math.sqrt(vg) * st) || 1e-6);
-    if (score > best.score) best = { score, x: x, y: y };
   }
   return best;
 }
