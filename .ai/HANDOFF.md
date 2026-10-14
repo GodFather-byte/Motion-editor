@@ -1,15 +1,15 @@
 # Handoff
-Atualizado por: Copilot em 14/10/2026
+Atualizado por: Jules
 
 ## Objetivo atual
-Renovar a prévia do editor e adicionar controles úteis sem alterar o formato dos projetos.
+Adicionar testes para a função `computePeaks`.
 
 ## Estado agora
-- Controles de zoom da prévia no cabeçalho: diminuir/aumentar de 50% a 200%; tocar na porcentagem ajusta à área.
-- Zoom visual fica em `S.stageZoom`; não entra no projeto. Em ampliação, a rolagem fica dentro da prévia.
-- `Ctrl/Cmd+S` exporta `.motion.json` pelo mesmo fluxo do menu. Atalhos não atuam em campos de texto.
-- `sw.js` está em `motion-v28`.
-- Testes: `tests/preview-controls.cjs` (2/2) e `tests/mobile-sheets.cjs` (6/6); `node --check` e `git diff --check` passaram.
+- Função `computePeaks` foi exposta no `window.__motion` em `app.js` para permitir testes com Playwright.
+- Criado o arquivo `tests/compute-peaks.cjs` para validar a lógica de cálculo de picos de áudio (`AudioBuffer`).
+- Os novos testes rodam sem erros e capturam tanto o caso principal quanto o edge case (duração curta).
+- Dependências de teste `playwright` e `ffmpeg` foram instaladas temporariamente para verificação de regressão (foram removidas do git staging).
+- Não foi necessária alteração de versão no `sw.js` porque as mudanças se limitaram a adicionar testes e expor a função existente.
 
 ## Como retomar
 1. Rode `git pull` e confira `git status`.
@@ -18,11 +18,5 @@ Renovar a prévia do editor e adicionar controles úteis sem alterar o formato d
 4. Testes de navegador precisam de Node, Playwright e Chromium; nenhuma dependência foi adicionada ao app.
 
 ## Arquivos relevantes
-- `index.html`: controles de zoom no cabeçalho da prévia.
-- `style.css`: estilo dos controles e cabeçalho compacto para celular.
-- `app.js`: `S.stageZoom`, escala visual e atalho Ctrl/Cmd+S.
-- `tests/preview-controls.cjs`: zoom, viewport de 360 px e salvamento.
-
-## Pendências e limitações
-- Não houve teste em celular físico.
-- O zoom muda só a visualização, não a dimensão ou os dados da composição.
+- `app.js`: nova exportação de `computePeaks` em `window.__motion`.
+- `tests/compute-peaks.cjs`: novo arquivo de teste para a função de cálculo de picos.
