@@ -48,7 +48,8 @@ const BEZ_OF = { linear: [0, 0, 1, 1], easeIn: [0.55, 0.055, 0.675, 0.19], easeO
 const bezCache = new Map();
 function bezier(bz) {
   const key = bz.join(',');
-  if (bezCache.has(key)) return bezCache.get(key);
+  const cached = bezCache.get(key);
+  if (cached) return cached;
   const [x1, y1, x2, y2] = bz;
   const cx = 3 * x1, bx = 3 * (x2 - x1) - cx, ax = 1 - cx - bx;
   const cy = 3 * y1, by = 3 * (y2 - y1) - cy, ay = 1 - cy - by;
