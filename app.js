@@ -2659,7 +2659,7 @@ function renderTimeline() {
     return `<div class="tl-row${L.id === S.sel ? ' sel' : ''}${L.visible ? '' : ' off'}" data-id="${L.id}">
       <div class="tl-label" style="padding-left:${8 + d * 10}px"><button class="eye" data-eye aria-label="${L.visible ? 'Ocultar' : 'Mostrar'} camada">${L.visible ? eyeOn : eyeOff}</button>${muteBtn}<i class="type-dot ${L.type}"></i>${tag}<span class="name">${esc(L.name)}</span></div>
       <div class="tl-track" style="width:${trackW}px">
-        <div class="clip ${L.type}" style="left:${tx(L.start)}px;width:${(L.end - L.start) * S.pps}px">${MEDIA(L.type) ? `<canvas class="wave" data-wave="${L.id}"></canvas>${rampLine(L)}` : ''}<span class="clip-label">${esc(L.name)}</span><span class="h l"></span><span class="h r"></span></div>
+        <div class="clip ${L.type}" style="left:${tx(L.start)}px;width:${(L.end - L.start) * S.pps}px">${MEDIA(L.type) ? `<canvas class="wave" data-wave="${L.id}"></canvas>${rampLine(L)}` : ''}<span class="clip-label">${esc(L.name)}</span><span class="h l tl-trim left"></span><span class="h r tl-trim right"></span></div>
         ${kfs}
       </div></div>`;
   }).join('') || `<div class="tl-row"><div class="tl-label" style="color:var(--muted)">Vazio</div><div class="tl-track" style="width:${trackW}px"></div></div>`;
@@ -2831,6 +2831,64 @@ rows.addEventListener('pointerdown', e => {
     if (L.start !== s0 || L.end !== e0) commit();
     renderTimeline(); renderPanel(); refreshTime();
   };
+});
+
+let touchOriginal = null;
+const timelineTouch = window.TimelineTouchEngine && new window.TimelineTouchEngine($('#tlScroll'), {
+  minScale: 40, maxScale: 400,
+  disabled: () => S.exporting || !P(),
+  getScale: () => S.pps,
+  setScale: scale => { S.pps = scale; $('#tlZoom').value = scale; renderTimeline(); },
+  getScroll: () => $('#tlScroll').scrollLeft,
+  setScroll: scroll => { $('#tlScroll').scrollLeft = Math.max(0, scroll); },
+  getVerticalScroll: () => $('#tlScroll').scrollTop,
+  setVerticalScroll: scroll => { $('#tlScroll').scrollTop = Math.max(0, scroll); },
+  getOrigin: () => labelW() + TL_PAD,
+  getClip: id => { const L = byId(id); return L && { start: L.start, end: L.end }; },
+  onTap: (id, label) => { select(id); if (label) openSheet('props'); },
+  snapPoints: id => [0, S.time, ...projectBeats(), ...projectMarkers().map(m => m.t), ...P().layers.filter(L => L.id !== id).flatMap(L => [L.start, L.end])],
+  onBegin: id => {
+    pause();
+    const L = byId(id);
+    touchOriginal = L ? JSON.parse(JSON.stringify(L)) : null;
+    if (L) select(id);
+  },
+  onClipMove: (id, start) => {
+    const L = byId(id), original = touchOriginal;
+    if (!L || !original || original.id !== id) return;
+    const delta = clamp(snap(start) - original.start, -original.start, P().duration - original.end);
+    L.start = original.start + delta; L.end = original.end + delta;
+    L.kf = JSON.parse(JSON.stringify(original.kf));
+    for (const keys of Object.values(L.kf)) for (const key of keys) key.t += delta;
+    if (original.s.rampPts) L.s.rampPts = original.s.rampPts.map(([t, m]) => [t + delta, m]);
+    for (const key of ['transitionStart', 'transitionEnd']) if (original.s[key] != null) L.s[key] = original.s[key] + delta;
+    renderTimeline(); refreshTime();
+  },
+  onTrim: (id, side, time) => {
+    const L = byId(id), original = touchOriginal;
+    if (!L || !original || original.id !== id) return;
+    if (side === 'left') {
+      const min = TIMED_MEDIA(L.type) ? Math.max(0, timeAtSrc(original, 0)) : 0;
+      L.start = clamp(snap(time), min, original.end - 0.1);
+      if (TIMED_MEDIA(L.type)) L.s.trimIn = srcTime(original, L.start);
+      delete L.s.transitionStart;
+    } else {
+      const max = TIMED_MEDIA(L.type) ? Math.min(P().duration, original.start + mediaRemaining(original)) : P().duration;
+      L.end = clamp(snap(time), original.start + 0.1, max);
+      delete L.s.transitionEnd;
+    }
+    renderTimeline(); refreshTime();
+  },
+  onPlayhead: time => { pause(); setTime(time); },
+  onEnd: cancelled => {
+    const original = touchOriginal, L = original && byId(original.id);
+    if (L) {
+      if (cancelled) Object.assign(L, original);
+      else if (L.start !== original.start || L.end !== original.end) commit();
+    }
+    touchOriginal = null;
+    renderTimeline(); renderPanel(); refreshTime();
+  }
 });
 
 /* ======================= painel de propriedades ======================= */
@@ -3691,9 +3749,13 @@ mediaInput.addEventListener('change', async e => {
   if (!file || !pendingMedia) return;
   const { kind, replaceId } = pendingMedia;
   pendingMedia = null;
+  await importMediaFile(file, kind, replaceId);
+});
+
+async function importMediaFile(file, kind, replaceId = null) {
   const fileKind = file.type.split('/')[0];
   if (kind === 'lottie' ? !/\.(json|lottie)$/i.test(file.name) || /\.motion\.json$/i.test(file.name) : fileKind && fileKind !== kind) {
-    toast(kind === 'lottie' ? 'Escolha uma animação Lottie .json ou dotLottie .lottie. Projetos .motion.json abrem pelo menu.' : `Esse arquivo não é ${kind === 'image' ? 'uma imagem' : kind === 'video' ? 'um vídeo' : 'um áudio'}.`); return;
+    toast(kind === 'lottie' ? 'Escolha uma animação Lottie .json ou dotLottie .lottie. Projetos .motion.json abrem pelo menu.' : `Esse arquivo não é ${kind === 'image' ? 'uma imagem' : kind === 'video' ? 'um vídeo' : 'um áudio'}.`); return false;
   }
   toast('Carregando arquivo…');
   try {
@@ -3710,7 +3772,7 @@ mediaInput.addEventListener('change', async e => {
       if (kind === 'lottie') existing.s.animationId = rec.defaultId;
       if (TIMED_MEDIA(kind)) existing.end = Math.min(p.duration, rampOf(existing) && rec.duration ? timeAtSrc(existing, rec.duration) : existing.start + (rec.duration || p.duration) / (existing.s.speed || 1));
       commit(); renderPanel(); renderTimeline(); refreshTime();
-      return;
+      return true;
     }
     if (kind === 'lottie') {
       const fit = Math.min(p.width * 0.7 / rec.w, p.height * 0.5 / rec.h, 1);
@@ -3727,10 +3789,39 @@ mediaInput.addEventListener('change', async e => {
       addLayer(L, true);
     }
     toast(rec.buffer || kind === 'image' || kind === 'lottie' ? 'Pronto.' : 'Adicionado. O som deste vídeo não pôde ser lido.');
+    return true;
   } catch (err) {
     toast(kind === 'lottie' ? err.message || 'Não consegui abrir essa animação.' : 'Não consegui abrir esse arquivo. Tente outro formato (MP4, MP3, PNG, JPG).');
+    return false;
   }
-});
+}
+
+$('#btnSilenceCut').onclick = async () => {
+  const L = selLayer(), project = P();
+  if (!L || !MEDIA(L.type)) { toast('Selecione um vídeo ou áudio.'); return; }
+  if (S.exporting || S.playing) { toast('Pause antes de cortar.'); return; }
+  const button = $('#btnSilenceCut'), snapshot = JSON.stringify(L);
+  button.disabled = true;
+  try {
+    const rec = A.get(L.s.asset);
+    const stored = rec?.blob ? null : await idb.get(L.s.asset);
+    const buffer = rec?.buffer || await decodeAudio(rec?.blob || stored?.blob);
+    if (!buffer) { toast('Não consegui ler o áudio.'); return; }
+    if (P() !== project || !project.layers.includes(L) || JSON.stringify(L) !== snapshot || S.exporting || S.playing) {
+      toast('O projeto mudou. Tente novamente.'); return;
+    }
+    const result = window.SmartSilenceCutter.detectSilenceIntervals(buffer);
+    const from = srcTime(L, L.start), to = srcTime(L, L.end);
+    if (!result.silenceIntervals.some(gap => gap.start < to && gap.end > from)) { toast('Nenhum silêncio encontrado.'); return; }
+    const parts = window.SmartSilenceCutter.integrateIntoProject(project, L.id, result.speechIntervals, { srcTime, timeAtSrc, uid, commit });
+    if (!parts) { toast('Não consegui cortar esta camada.'); return; }
+    S.sel = parts[0]?.id || null; S.selKf = null;
+    renderTimeline(); renderPanel(); refreshTime();
+    window.MobilePWAIntegration?.triggerHaptic('success');
+    toast('Silêncios cortados.');
+  } catch { toast('Não consegui cortar os silêncios.'); }
+  finally { button.disabled = false; }
+};
 
 /* coloca a mídia a partir do cursor e aumenta o projeto se ela for mais longa */
 function growForMedia(dur, L) {
@@ -3894,6 +3985,16 @@ const fileBase = () => (P().name || 'motion').normalize('NFD').replace(/[̀-ͯ]/
 const hasSound = () => P().layers.some(L => MEDIA(L.type) && L.visible && !L.s.muted && (L.s.volume ?? 100) > 0 && A.get(L.s.asset)?.buffer);
 
 async function exportVideo(forceMime) {
+  if (S.exporting) return;
+  window.MobilePWAIntegration?.enableWakeLock();
+  try {
+    return await recordVideo(forceMime);
+  } finally {
+    await window.MobilePWAIntegration?.releaseWakeLock();
+  }
+}
+
+async function recordVideo(forceMime) {
   if (S.exporting) return;
   if (!window.MediaRecorder || !canvas.captureStream) {
     showModal('Exportação indisponível', '<p>Este navegador não grava vídeo a partir do canvas. Use o Chrome, Edge ou Firefox atualizados, ou o Safari 14.1+.</p>', [{ label: 'Entendi', cls: 'btn-primary' }]);
@@ -4227,6 +4328,7 @@ async function fastExport({ k = 1, fps = P().fps } = {}) {
   S.exporting = true; drawOverlay();
   let venc = null;
   try {
+    await window.MobilePWAIntegration?.enableWakeLock();
     say('Preparando…', 0);
     await loadScript(MUXER_URL);
     const video = await pickVideoCodec(W, H, fps);
@@ -4286,6 +4388,7 @@ async function fastExport({ k = 1, fps = P().fps } = {}) {
       { label: 'Fechar' }, { label: 'Gravar em tempo real', cls: 'btn-primary', onClick: () => setTimeout(() => exportVideo(), 50) },
     ]);
   } finally {
+    await window.MobilePWAIntegration?.releaseWakeLock();
     S.exporting = false;
     pauseAllVideos();
     S.time = keepTime;
@@ -7066,6 +7169,7 @@ $('#btnHome').onclick = goHome;
 /* ======================= início ======================= */
 /* #editor abre direto o último projeto (recarregar fica no editor); sem ele, abre a tela inicial */
 function bootView() {
+  if (location.hash === '#editor?shared=1') history.replaceState(null, '', '#editor');
   if (location.hash !== '#editor') { setView('home'); renderHome(); return; }
   const saved = loadSaved();
   let last = null;
@@ -7073,12 +7177,17 @@ function bootView() {
   if (saved || !last) { setProject(saved || buildDemo()); showEditor(); return; }
   // a cópia rápida sumiu (ex.: localStorage cheio): abre o último projeto da biblioteca
   app.hidden = true;
-  libQueue(libAll).then(recs => {
+  return libQueue(libAll).then(recs => {
     const r = recs.find(x => x.id === last) || recs.sort(byUpdated)[0];
     return r ? parseProject(r.json) : null;
   }).catch(() => null).then(p => { if (!P()) { setProject(p || buildDemo()); showEditor(); } });
 }
-bootView();
+Promise.resolve(bootView()).then(() => window.MobilePWAIntegration?.consumeSharedMedia(async file => {
+  const kind = file.type.split('/')[0];
+  if (!['image', 'video', 'audio'].includes(kind)) return false;
+  if (!P()) { setProject(newProject()); showEditor(); }
+  return importMediaFile(file, kind);
+})).catch(() => toast('Não consegui receber a mídia compartilhada.'));
 new ResizeObserver(() => { if (P()) fitStage(); }).observe($('#stage'));
 window.addEventListener('resize', () => renderTimeline());
 if (document.fonts) {

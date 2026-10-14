@@ -1,24 +1,38 @@
 # Handoff
-Atualizado por: Codex em 14/10/2026
+Atualizado por: Copilot em 14/10/2026
 
-## Fluxo de vídeo curto
-- Estúdio de Legendas: cinco estilos Motion, aplicação em lote e cartão ajustável atrás do texto.
-- Marcadores de roteiro persistentes: botão da timeline, `Shift+M`, edição, snap magnético e lista no projeto.
-- Guia de área segura para 9:16: só na prévia, nunca na exportação.
-- Atalhos rápidos de importar, legendar e abrir modelos no desktop.
-- Legendas por Whisper, Gemini e edição com IA usam os estilos novos.
+## Objetivo atual
+Resolver o merge com main preservando módulos nativos e fluxo de vídeo curto.
 
-## Arquivos centrais
-- `app.js`: `CAPTION_STYLES`, `createCaptionLayers`, `addMarker`, `drawSafeAreaGuide`.
-- `index.html` e `style.css`: controles e layout responsivo.
-- `tests/short-form.cjs`: cobertura do fluxo novo.
-- `sw.js`: cache em `motion-v30`.
+## Estado agora
+- Quatro módulos IIFE/globais carregados antes de app.js, sem novas dependências do app.
+- ChromeAIService adapta APIs modernas/legadas; progresso, frame JPEG, metadados, cortes e legendas.
+- SmartSilenceCutter usa RMS de 20 ms; chip "Cortar silêncios" na IA para vídeo/áudio selecionado.
+- Ripple mantém trim/speed, rampas, keyframes e histórico por conversores injetados.
+- Camadas-pai cortadas deixam grupo-âncora para preservar transformações dos filhos.
+- MobilePWAIntegration oferece OPFS, Wake Lock durante exportVideo/fastExport e vibração.
+- Share Target POST guarda File em shared-media; boot importa e limpa somente entregas concluídas.
+- TimelineTouchEngine: pinça, scroll nos dois eixos, seleção por toque, toque longo, snap e trim de 44 px.
+- Mouse e keyframes mantêm handlers existentes; cancelamento de gesto restaura a camada.
+- Estúdio de Legendas mantém cinco estilos e cartão de fundo com aplicação em lote.
+- Marcadores persistentes têm edição e snap no mouse e no motor de toque.
+- Guia seguro 9:16 fica só na prévia; atalhos rápidos ficam no desktop.
+- `sw.js` está em `motion-v31`; shell inclui os quatro módulos.
+- Testes novos: native-services, silence-cutter, share-target e media-modules.
+- Regressões: short-form, mobile-sheets, preview-controls, ai-edit-plan e slowmo.
 
-## Validação feita
-- `node --check app.js` e `node --check tests/short-form.cjs` passaram.
-- `tests/short-form.cjs`: 4 cenários Playwright passaram (desktop e 360 px).
-- 19 testes estáticos existentes passaram; `git diff --check` passou.
+## Como retomar
+1. Rode `git pull` e confira `git status`.
+2. Consulte `README.md` e `.ai/MAPA.md` para localizar recursos e testes.
+3. Teste com `python3 -m http.server 8000`, `node --check app.js` e os testes citados.
+4. Testes de navegador usam Playwright/Chromium; slowmo também precisa de FFmpeg.
 
-## Continuidade
-- Publicar na branch `feat/estudio-video-curto`, sem tocar na PR #27.
-- Manter textos em PT-BR, cores de UI em variáveis CSS e sem dependências novas.
+## Arquivos relevantes
+- `chrome-ai.js`, `silence-cutter.js`, `mobile-pwa.js`, `timeline-touch.js`.
+- `app.js`, `index.html`, `style.css`: integração e chip IA.
+- `sw.js`, `manifest.webmanifest`: shell offline e Share Target.
+
+## Pendências e limitações
+- Sem teste em celular físico ou modelo Gemini Nano real; APIs nativas cobertas por mocks.
+- APIs ausentes retornam null/false; diagnóstico da IA fica em ChromeAIService.reason.
+- OPFS é serviço opt-in; IndexedDB continua sendo o armazenamento padrão do editor.
