@@ -23,16 +23,16 @@ Corrigir revisão do Creator Workstation OS, preservando as correções DOM XSS 
 - Sintaxe app/workstation/sw/teste e git diff --check aprovados.
 
 ## Como retomar
-1. Confira `git status`; alterações anteriores preservadas, sem commit/push por instrução explícita.
-2. Testes usam TMPDIR="$PWD" CHROMIUM_PATH=/usr/bin/chromium node --test e os sete arquivos acima.
-3. Coordenador pode fazer scan de segredos, commit e parallel_validation; não executados nesta revisão.
+1. Rode `git pull` e confira `git status`; implementação e correções foram commitadas e enviadas.
+2. Testes usam CHROMIUM_PATH=/usr/bin/chromium node --test e os sete arquivos acima.
+3. Scan de segredos limpo; parallel_validation final concluiu CodeQL com zero alertas.
 
 ## Arquivos relevantes
 - Correção atual: app.js, workstation.js, sw.js, tests/workstation.cjs e este handoff.
 
 ## Pendências e limitações
 - video-editor.cjs:192 tem timeout de exportação reproduzido no HEAD pelo coordenador; não alterado/reexecutado.
-- CodeQL/parallel_validation precisam ser reexecutados pelo coordenador, se necessário.
+- Revisor especializado verificou o diff; revisão automática indisponível (binário ausente).
 - APIs de captura/OPFS/LanguageModel/fala exigem navegador compatível e HTTPS/localhost.
 - Modelo real e celular físico não verificados; testes usam API LanguageModel controlada.
 - OPFS é privado por origem; reconhecimento de fala opt-in pode usar serviço do navegador.
