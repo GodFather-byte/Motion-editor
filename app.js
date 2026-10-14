@@ -6326,11 +6326,36 @@ $('#projectInput').addEventListener('change', async e => {
 });
 
 /* ======================= modal e aviso ======================= */
+function sanitizeHTML(html) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const forbiddenTags = ['SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'APPLET', 'BASE', 'META', 'LINK'];
+  for (const el of doc.body.querySelectorAll('*')) {
+    if (forbiddenTags.includes(el.tagName)) {
+      el.remove();
+      continue;
+    }
+    for (const attr of [...el.attributes]) {
+      const name = attr.name.toLowerCase();
+      const value = attr.value.toLowerCase().trim();
+      if (name.startsWith('on') || value.startsWith('javascript:')) {
+        el.removeAttribute(attr.name);
+      }
+    }
+  }
+  const frag = document.createDocumentFragment();
+  frag.append(...doc.body.childNodes);
+  return frag;
+}
+
 function showModal(title, body, actions = []) {
   cancelAIEditJob();
   $('.modal-card').classList.remove('wide');
   $('#modalTitle').textContent = title;
-  $('#modalBody').innerHTML = body;
+
+  const modalBody = $('#modalBody');
+  modalBody.innerHTML = '';
+  modalBody.appendChild(sanitizeHTML(body));
+
   const box = $('#modalActions');
   box.innerHTML = '';
   actions.forEach(a => {
