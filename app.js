@@ -3071,19 +3071,27 @@ panel.addEventListener('input', e => {
       }
       commit(); renderPanel(); renderTimeline();
     }
-    $$(`[data-s="${key}"]`, panel).forEach(o => { if (o !== el && o.type !== 'checkbox') o.value = v; });
+
+    if (el && el.parentNode && el.parentNode.classList.contains('range-group')) {
+      const s = el.type === 'range' ? el.nextElementSibling : el.previousElementSibling;
+      if (s && s.dataset && s.dataset.s === key && s.type !== 'checkbox') s.value = v;
+    } else {
+      $$(`[data-s="${key}"]`, panel).forEach(o => { if (o !== el && o.type !== 'checkbox') o.value = v; });
+    }
+
     if (key === 'fillType') $$('[data-show="grad"]', panel).forEach(x => (x.hidden = v === 'solid'));
-    if (key === 'fillOn') $$('[data-show="fillOn"]', panel).forEach(x => (x.hidden = !v));
-    if (key === 'chromaOn') $$('[data-show="chroma"]', panel).forEach(x => (x.hidden = !v));
-    if (key === 'onPath') $$('[data-show="onPath"]', panel).forEach(x => (x.hidden = !v));
-    if (key === 'colorMode') $$('[data-show="customColors"]', panel).forEach(x => (x.hidden = v !== 'custom'));
-    if (key === 'preset' && PARTICLES[v]) {
+    else if (key === 'fillOn') $$('[data-show="fillOn"]', panel).forEach(x => (x.hidden = !v));
+    else if (key === 'chromaOn') $$('[data-show="chroma"]', panel).forEach(x => (x.hidden = !v));
+    else if (key === 'onPath') $$('[data-show="onPath"]', panel).forEach(x => (x.hidden = !v));
+    else if (key === 'colorMode') $$('[data-show="customColors"]', panel).forEach(x => (x.hidden = v !== 'custom'));
+    else if (key === 'mediaFit') $$('[data-show="focal"]', panel).forEach(x => (x.hidden = v !== 'cover'));
+    else if (key === 'preset' && PARTICLES[v]) {
       // trocar o tipo de partícula traz os valores típicos dele
       for (const k of PARTICLE_KEYS) L.s[k] = PARTICLES[v][k];
       if (v === 'confetti' || v === 'snow' || v === 'bubbles') L.s.areaW = Math.round(P().width * (v === 'snow' ? 1.1 : 0.6));
       syncPanel(true);
     }
-    if (key === 'mediaFit') $$('[data-show="focal"]', panel).forEach(x => (x.hidden = v !== 'cover'));
+
     if (key === 'clip' || key === 'trimIn') renderTimeline();
     refreshTime();
   } else if (el.dataset.name !== undefined && L) {
