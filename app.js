@@ -2990,12 +2990,15 @@ function syncPanel(full) {
       if (el.type === 'checkbox') el.checked = !!L.s[el.dataset.s];
       else el.value = L.s[el.dataset.s] ?? '';
     });
-    $$('[data-show="grad"]', panel).forEach(el => (el.hidden = !L.s.fillType || L.s.fillType === 'solid'));
-    $$('[data-show="fillOn"]', panel).forEach(el => (el.hidden = !L.s.fillOn));
-    $$('[data-show="chroma"]', panel).forEach(el => (el.hidden = !L.s.chromaOn));
-    $$('[data-show="onPath"]', panel).forEach(el => (el.hidden = !L.s.onPath));
-    $$('[data-show="customColors"]', panel).forEach(el => (el.hidden = L.s.colorMode !== 'custom'));
-    $$('[data-show="focal"]', panel).forEach(el => (el.hidden = L.s.mediaFit !== 'cover'));
+    $$('[data-show]', panel).forEach(el => {
+      const show = el.dataset.show;
+      if (show === 'grad') el.hidden = !L.s.fillType || L.s.fillType === 'solid';
+      else if (show === 'fillOn') el.hidden = !L.s.fillOn;
+      else if (show === 'chroma') el.hidden = !L.s.chromaOn;
+      else if (show === 'onPath') el.hidden = !L.s.onPath;
+      else if (show === 'customColors') el.hidden = L.s.colorMode !== 'custom';
+      else if (show === 'focal') el.hidden = L.s.mediaFit !== 'cover';
+    });
     const ts = $('#t-start', panel), te = $('#t-end', panel);
     if (ts && ts !== active) ts.value = round(L.start, 2);
     if (te && te !== active) te.value = round(L.end, 2);
