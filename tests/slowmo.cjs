@@ -86,6 +86,28 @@ async function grayWhen(page, ok) {
   return g;
 }
 
+test('cleanRamp filtra pontos inválidos, ignora os que não são arrays, limita pelo multiplicador mínimo e ordena', async t => {
+  const page = await editor(t);
+  const results = await page.evaluate(() => {
+    const m = window.__motion;
+    return {
+      nullInput: m.cleanRamp(null),
+      notArray: m.cleanRamp("string"),
+      invalidFormat: m.cleanRamp([[1, 2], "invalid", [3, 4]]),
+      unsorted: m.cleanRamp([[3, 1], [1, 2], [2, 0.5]]),
+      negativeMultipliers: m.cleanRamp([[1, -0.5], [2, 0]]),
+      invalidNumbers: m.cleanRamp([[1, NaN], [Infinity, 2], ["a", "b"]])
+    };
+  });
+
+  assert.deepEqual(results.nullInput, []);
+  assert.deepEqual(results.notArray, []);
+  assert.deepEqual(results.invalidFormat, [[1, 2], [3, 4]]);
+  assert.deepEqual(results.unsorted, [[1, 2], [2, 0.5], [3, 1]]);
+  assert.deepEqual(results.negativeMultipliers, [[1, 0.01], [2, 0.01]], 'aplica RAMP_MIN (0.01)');
+  assert.deepEqual(results.invalidNumbers, []);
+});
+
 test('Rampa: srcTime e timeAtSrc são inversas exatas e a divisão não quebra a continuidade', async t => {
   const page = await editor(t);
   const r = await page.evaluate(() => {
