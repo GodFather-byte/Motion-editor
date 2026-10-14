@@ -204,8 +204,9 @@ textarea.code {
 .preview-fit { min-width: 48px; height: 30px; padding: 0 5px; border: 0; border-radius: 6px; background: transparent; color: var(--accent); font: 600 11px var(--font-mono); }
 .preview-fit:hover { background: var(--raise); }
 .preview-info { color: var(--muted); font: 10px var(--font-mono); padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; white-space: nowrap; }
-.stage { position: relative; min-height: 0; min-width: 0; display: grid; place-items: center; padding: 20px; overflow: auto;
+.stage { position: relative; min-height: 0; min-width: 0; display: grid; place-items: center; padding: 20px; overflow: hidden;
   background-image: radial-gradient(var(--grid-line) 1px, transparent 1px); background-size: 16px 16px; }
+.stage.zoomed { place-items: start; overflow: auto; }
 #canvas, #overlay { grid-area: 1 / 1; display: block; border-radius: 4px; }
 #canvas {
   box-shadow: 0 0 0 1px var(--line), 0 18px 48px var(--shadow);

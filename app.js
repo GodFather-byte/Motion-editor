@@ -2276,6 +2276,7 @@ function drawOverlay() {
 function fitStage() {
   const p = P();
   const stage = $('#stage');
+  stage.classList.toggle('zoomed', S.stageZoom > 1);
   const cs = getComputedStyle(stage);
   const aw = stage.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
   const ah = stage.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
