@@ -13,9 +13,15 @@ const round = (v, d = 2) => Math.round(v * 10 ** d) / 10 ** d;
 const wait = ms => new Promise(r => setTimeout(r, ms));
 const isTyping = el => el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
 const hexA = (hex, a) => {
-  const h = String(hex).replace('#', '');
-  const n = parseInt(h.length === 3 ? h.split('').map(c => c + c).join('') : h, 16) || 0;
-  return `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},${a})`;
+  let hexString = String(hex).replace('#', '');
+  if (hexString.length === 3) {
+    hexString = hexString.split('').map(c => c + c).join('');
+  }
+  const num = parseInt(hexString, 16) || 0;
+  const r = (num >> 16) & 255;
+  const g = (num >> 8) & 255;
+  const b = num & 255;
+  return `rgba(${r},${g},${b},${a})`;
 };
 const blobToDataURL = blob => new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(blob); });
 
