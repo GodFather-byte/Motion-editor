@@ -197,6 +197,11 @@ textarea.code {
 }
 .workspace-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 20px 4px; }
 .workspace-head h1 { margin: 3px 0 0; font-size: 16px; font-weight: 600; }
+.quick-flow { display: flex; align-items: center; gap: 4px; min-width: 0; padding: 3px; border: 1px solid var(--soft-line); border-radius: 10px; background: var(--panel-2); }
+.quick-flow-label { padding: 0 7px; color: var(--muted); font-size: 10px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; white-space: nowrap; }
+.quick-flow-item { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 8px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--fg); font-size: 11px; font-weight: 600; white-space: nowrap; }
+.quick-flow-item svg { width: 14px; height: 14px; color: var(--accent); }
+.quick-flow-item:hover { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent); }
 .preview-tools, .preview-zoom { display: flex; align-items: center; gap: 6px; }
 .preview-zoom { gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); }
 .preview-zoom .icon-btn { width: 30px; height: 30px; border-radius: 6px; }
@@ -286,6 +291,10 @@ textarea.code {
 .tick { position: absolute; bottom: 0; width: 1px; background: var(--line); height: 6px; }
 .tick.major { height: 12px; background: var(--muted); }
 .tick span { position: absolute; left: 4px; bottom: 9px; font: 10px/1 var(--font-mono); color: var(--muted); }
+.marker { position: absolute; top: 0; z-index: 8; display: block; width: 24px; height: 30px; margin-left: -12px; padding: 0; overflow: visible; border: 0; background: none; color: var(--accent); }
+.marker i { display: block; width: 12px; height: 12px; margin-left: 6px; background: currentColor; clip-path: polygon(0 0, 100% 0, 50% 100%); }
+.marker span { position: absolute; top: 14px; left: 17px; max-width: 104px; overflow: hidden; color: var(--accent); font: 600 9px/1 var(--font-mono); text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.marker:hover { color: var(--accent-hover); }
 
 .tl-row { border-bottom: 1px solid var(--soft-line); }
 .tl-row.sel .tl-label { background: var(--panel-2); color: var(--fg); box-shadow: inset 2px 0 0 var(--select); }
@@ -353,6 +362,26 @@ textarea.code {
   margin: 0; font-size: 12px; font-weight: 600; color: var(--fg);
   display: flex; align-items: center; justify-content: space-between;
 }
+.marker-list { display: grid; gap: 5px; max-height: 180px; overflow: auto; }
+.marker-list-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; padding: 8px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); color: var(--fg); text-align: left; }
+.marker-list-item:hover { border-color: var(--accent-line); background: var(--accent-soft); }
+.marker-list-item > span { overflow: hidden; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.marker-list-item small { flex: 0 0 auto; color: var(--muted); font: 10px var(--font-mono); }
+.caption-picker, .caption-studio { display: grid; gap: 10px; }
+.caption-picker { padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); }
+.caption-picker h3 { margin: 0; font-size: 12px; }
+.caption-style-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.caption-style-card { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 7px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); color: var(--fg); text-align: left; }
+.caption-style-card:hover { border-color: var(--accent-line); background: var(--accent-soft); }
+.caption-style-card.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent-line); }
+.caption-style-card > span:last-child { display: grid; min-width: 0; gap: 2px; }
+.caption-style-card b { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.caption-style-card small { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.caption-style-sample { display: grid; place-items: center; width: 34px; height: 30px; flex: 0 0 34px; border: 1px solid var(--strong-line); border-radius: 6px; background: var(--bg); color: var(--fg); font: 800 14px/1 var(--font-display); }
+.caption-style-card[data-caption-style="faixa"] .caption-style-sample { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); }
+.caption-style-card[data-caption-style="impacto"] .caption-style-sample { font-family: "Anton", sans-serif; font-size: 18px; }
+.caption-style-card[data-caption-style="conversa"] .caption-style-sample { background: var(--raise); font-family: var(--font-ui); }
+.caption-style-card[data-caption-style="limpo"] .caption-style-sample { border-style: dashed; font-family: var(--font-ui); font-size: 13px; }
 .panel-title { display: flex; align-items: center; gap: 8px; }
 .panel-title input { flex: 1; min-width: 0; font-weight: 600; }
 .hint { margin: 0; color: var(--muted); font-size: 12.5px; }
@@ -423,6 +452,8 @@ input[type=color] { width: 100%; height: 34px; padding: 3px; background: var(--p
   .brand-caption { display: none; }
   .timeline-title { display: none; }
   .tl-zoom input { width: 85px; }
+  .quick-flow-label { display: none; }
+  .quick-flow-item { padding: 0 6px; }
 }
 @media (max-width: 860px) {
   :root { --label-w: 124px; --row-h: 44px; --radius: 12px; --tab-h: calc(56px + env(safe-area-inset-bottom, 0px)); }
@@ -455,6 +486,7 @@ input[type=color] { width: 100%; height: 34px; padding: 3px; background: var(--p
   .workspace-head { padding: 5px 10px 3px; }
   .workspace-head .eyebrow { display: none; }
   .workspace-head h1 { margin: 0; font-size: 13px; }
+  .quick-flow { display: none; }
   .preview-tools { gap: 0; }
   .preview-info { display: none; }
   .preview-zoom .icon-btn { width: 32px; height: 32px; }
@@ -470,6 +502,7 @@ input[type=color] { width: 100%; height: 34px; padding: 3px; background: var(--p
   .tl-zoom svg { width: 14px; }
   .tl-zoom input { width: 60px; }
   .tl-dur { display: none; }
+  .marker span { display: none; }
   .btn-install { padding: 0 10px; }
   textarea.code { min-height: 190px; }
 
