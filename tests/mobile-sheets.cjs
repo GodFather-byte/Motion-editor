@@ -33,7 +33,7 @@ async function editor(t, width = 360, height = 740) {
   const errors = [];
   page.on('pageerror', err => errors.push(err.message));
   t.after(() => assert.deepEqual(errors, [], 'sem erros de JavaScript'));
-  await page.goto(origin, { waitUntil: 'load' });
+  await page.goto(origin + '/#editor', { waitUntil: 'load' });
   await page.waitForFunction(() => !!window.__motion);
   return page;
 }

@@ -48,7 +48,7 @@ async function editor(t, { width = 1280, key = true, file = 'video.webm' } = {})
     requests.push(route.request().postDataJSON());
     return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: { message: 'Requisição sem mock' } }) });
   });
-  await page.goto(origin, { waitUntil: 'networkidle' });
+  await page.goto(origin + '/#editor', { waitUntil: 'networkidle' });
   await sheet(page, 'add');
   await page.locator('[data-add="video"]').click();
   await page.locator('#mediaInput').setInputFiles(path.join(fixtures, file));

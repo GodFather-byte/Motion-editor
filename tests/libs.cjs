@@ -44,7 +44,7 @@ async function editor(t) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
   t.after(() => context.close());
   const page = await context.newPage();
-  await page.goto(origin, { waitUntil: 'load' });
+  await page.goto(origin + '/#editor', { waitUntil: 'load' });
   await page.waitForFunction(() => window.__motion);
   return page;
 }
