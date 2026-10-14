@@ -8,6 +8,9 @@
 - `lottie.js`: `MotionLottie.load/render/sourceInfo`, runtime dotlottie-web 0.81.0 ESM/WASM sob demanda (JSON e dotLottie v1/v2).
 - `sw.js`: service worker (cache offline). Mude `VERSION` a cada release.
 - `manifest.webmanifest`, `icons/`: instalação como app.
+- `tests/slowmo.cjs`: câmera lenta (rampas, ida e volta do tempo, divisão, quadros suaves, som com rampa, 360 px).
+- `tests/home.cjs`: tela inicial e biblioteca (novo projeto, reabrir, mídia por projeto, renomear/duplicar/excluir, modelos, migração, voltar do navegador, celular).
+- Todos os testes abrem `origin + '/#editor'`: sem o hash o app mostra a tela inicial.
 - `tests/mobile-sheets.cjs`: celular (360 e 390 px): tela fixa, abas, folhas, toque na prévia e na linha do tempo, Projeto, Play e largura.
 - `tests/video-editor.cjs`: testes funcionais com Playwright/Chromium, mídia gerada pelo FFmpeg e servidor Python temporário. Em 360 px usa `sheet()`/`closeSheet()` para abrir a folha certa antes de cada clique.
 - `tests/ai-edit-plan.cjs` e `tests/ai-edit.cjs`: plano, pausas e edição por pedido com Gemini simulado, mídia real, exportação e backup.
@@ -31,6 +34,7 @@
 | render | `drawText` (animações de texto), `drawPath`, `drawFramedMedia` (contain/cover/stretch e foco), `drawShape`, `drawLayer` (filtros, looks, transições, sombra, brilho), `renderFrame` (máscara de recorte) |
 | efeitos, partículas e câmera | `GL` (WebGL compartilhado, `GL_FRAG` com os shaders), `chromaSource`, `applyFx` (camada fx em `renderFrame`), `PARTICLES`/`drawParticles` (sem estado), `activeCamera`/`cameraMatrix` (entra no `parentMatrix` das camadas raiz), `textPathPoints`/`pointOnPath` |
 | batida, narração, batidas prontas e figurinhas | `detectBeats` (BPM por autocorrelação), `beatsOf`/`projectBeats` (batidas no tempo da timeline), `magnet` (gruda nas batidas), `analyzeBeats`, `applyBeatPreset` (beatPulse/beatFlash/beatShake), `beatMontage`, `BEAT_STYLES`/`synthBeat`/`beatMakerModal`, `recordVoiceModal` (MediaRecorder), `EMOJIS`, `ICONS` (path SVG 24x24), `iconPath`, `drawIcon`, `stickersModal` |
+| câmera lenta (velocidade e rampas) | `RAMPS`, `speedAt`, `srcTime` (tempo da linha → tempo do arquivo, integral exata), `timeAtSrc` (inversa), `applyRamp` (mantém o mesmo trecho e aumenta o projeto até 600 s), `automateRate` (som segue a curva), quadros suaves: `blendInfo`, `video2For`/`VIDS2`, `nextFrameOf`, `blendCanvas`; `exactSeeks` impede o `syncMedia` de mexer nos vídeos durante uma busca exata |
 | seleção no preview | caminho de movimento, caneta, alças, `fitStage`, arrastar no canvas |
 | tempo e reprodução | `refreshTime`, `play`, `pause` |
 | linha do tempo | `renderTimeline`, forma de onda, arrastar keyframes e blocos, botão de mudo, snap magnético |
@@ -51,11 +55,14 @@
 | photopea | `openPhotopea`, `closePhotopea`, `photopeaChoiceModal`, `applyPhotopeaResult`, Live Messaging (`saveToOE`), integração de atalhos e arquivo |
 | FFmpeg | `getFFmpeg`, `ffmpegModal` (converter para MP4 H.264, extrair áudio WAV, comprimir CRF, gerar GIF animado, mudo, comandos livres) |
 | abas e folhas (celular) | logo após `const app`: `phoneMQ`, `openSheet`/`closeSheet`, estado em `app.dataset.sheet`, clique delegado (abas, X, fundo, encaminhamentos), fechamento antes de ações de chip e de Projeto |
+| biblioteca de projetos e tela inicial | `libAll/libGet/libPut/libDel` (fila `libQueue`), `libSave` (registro com miniatura), `migrateStore`, `showHome/showEditor/enterEditor/goHome` (history: `#editor`), `startProject` (sempre id novo), `openProjectById`, `renderHome`, renomear/duplicar/excluir, `newProjectModal` (formatos) |
 | menu, modal, teclado, PWA, início | resto da interface e inicialização |
 
 ## Modelo de dados (resumo)
 Projeto: `{ name, aspect, width, height, fps, duration, background, layers[], assets{} }`.
-Camada: `{ id, type, name, start, end, visible, parent, p{valores fixos}, kf{prop:[{t,v,e,bz?}]}, s{campos do tipo, flipH, flipV, speed, muted}, codeKf?[props geradas por código], fromCode? }`. Projeto também guarda `code` (último código aplicado).
+Camada: `{ id, type, name, start, end, visible, parent, p{valores fixos}, kf{prop:[{t,v,e,bz?}]}, s{campos do tipo, flipH, flipV, speed, muted}, codeKf?[props geradas por código], fromCode? }`. Projeto também guarda `code` (último código aplicado) e `id` (registro na biblioteca).
+Velocidade: `s.speed` (0.1–4 em vídeo/áudio), `s.rampPts` ([[t, multiplicador]] em tempo absoluto, como keyframes; vazio = constante), `s.ramp` (id do modelo), `s.smoothSlow` (quadros suaves). Use sempre `srcTime`/`timeAtSrc`, nunca `trimIn + (t - start) * speed`.
+Armazenamento: IndexedDB `motion-editor` v2 com `assets` e `projects` (um registro por projeto: json, miniatura, data). `STORE_KEY` guarda a cópia rápida do projeto aberto e `LAST_KEY` o id dele. `cleanupAssets` só apaga mídia que nenhum projeto da biblioteca usa.
 `layers[0]` fica na frente. Arquivos (imagem, vídeo, áudio) ficam no IndexedDB; `assets` guarda só nome e tipo.
 
 Novos campos em `s`: `colorLook`, `lookIntensity`, `transitionIn/Out`, `transitionInDuration/OutDuration`, `mediaFit`, `focalX/Y`. `transitionStart/End` são âncoras opcionais preservadas pelo split, deslocadas ao mover o clipe e removidas ao editar a borda ou a transição correspondente. Projetos antigos usam look Original, sem transição e enquadramento livre.

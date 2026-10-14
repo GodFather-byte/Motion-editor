@@ -38,7 +38,7 @@ async function editor(t, viewport = { width: 1280, height: 800 }, size = [360, 6
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
   t.after(() => assert.deepEqual(errors, [], 'sem erros de JavaScript'));
-  await page.goto(origin, { waitUntil: 'networkidle' });
+  await page.goto(origin + '/#editor', { waitUntil: 'networkidle' });
   await page.waitForFunction(() => !!window.__motion);
   return page;
 }

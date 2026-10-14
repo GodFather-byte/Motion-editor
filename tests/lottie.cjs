@@ -75,7 +75,7 @@ async function editor(t, width = 1280) {
     if (!data) return route.abort();
     requests.push(url); return route.fulfill({ body: data, contentType: url.endsWith('.wasm') ? 'application/wasm' : 'text/javascript' });
   });
-  await page.goto(origin, { waitUntil: 'networkidle' }); await page.waitForFunction(() => !!window.__motion);
+  await page.goto(origin + '/#editor', { waitUntil: 'networkidle' }); await page.waitForFunction(() => !!window.__motion);
   return { page, requests };
 }
 async function importFile(page, file = 'red.json') {
@@ -238,7 +238,7 @@ test('trocar de projeto durante o carregamento descarta o player e ignora a impo
   await page.locator('[data-add="lottie"]').click(); await page.locator('#mediaInput').setInputFiles(path.join(dir, 'red.json'));
   await requested;
   await page.locator('#btnMenu').click(); await page.locator('[data-menu="new"]').click();
-  await page.getByRole('button', { name: 'Novo 1:1', exact: true }).click();
+  await page.locator('#modalBody [data-fmt="1:1"]').click();
   await page.waitForFunction(() => window.__motion.A.size === 0);
   const base = await state(page); release();
   await page.waitForFunction(() => document.querySelector('#toast').textContent.includes('projeto mudou'));

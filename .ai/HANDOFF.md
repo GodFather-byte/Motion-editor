@@ -1,38 +1,37 @@
 # Handoff
-Atualizado por: Claude em 13/10/2026
+Atualizado por: Claude em 14/10/2026
 
 ## Objetivo atual
-Motion Editor 100% código aberto (AGPL-3.0), gratuito. Novidades no navegador, sem nuvem: rastreio, cortes por cena, desfoque de movimento, mais estilos de cor e agulha que não invade as camadas.
+Motion Editor 100% aberto (AGPL-3.0). Nesta rodada: câmera lenta (rampas de velocidade e quadros suaves) e tela inicial com "Meus projetos" (o app não abre mais direto no editor).
 
 ## Estado agora
-- main em 3442fb1. Branch ccr-a74f83ad-cpkqwi tem o commit do PR #9 (apoio ao projeto, aberto) e as novidades abaixo, em PR de rascunho.
-- Feito: agulha da linha do tempo some sob a coluna de camadas ao rolar; 10 estilos de cor novos (17 no total); "Desfoque de movimento %" no painel do projeto (6 instantes dentro do obturador). sw.js em motion-v24.
-- Testes: tests/modern.cjs (5) e regressão (video-editor, ai-edit, ai-edit-plan, photopea, mobile-sheets, export, effects, music, libs, donate) passaram: 55 de 55. lottie.cjs NÃO rodado.
+- Branch ccr-a74f83ad-cpkqwi = main (683567f) + câmera lenta + tela inicial, em PR de rascunho. sw.js em motion-v25.
+- Câmera lenta: painel do vídeo > Áudio e Velocidade > Câmera lenta. 7 curvas (Herói, Bala, Montagem, lento no fim/começo, entrada/saída rápidas), 0.1x e 0.2x, "Quadros suaves". Som, exportação, divisão, cortes e ondas seguem a curva (`srcTime`).
+- Tela inicial: Novo projeto (formatos), Modelos, Exemplo, Abrir arquivo, Ajuda, Meus projetos (miniatura, renomear, duplicar, excluir). Botão Início no editor; "voltar" do navegador/celular volta ao início. Projetos ficam no IndexedDB (store `projects`).
+- Testes: 71 de 71 (slowmo, home e regressão offline). lottie, code-animation, ai-local e ffmpeg passaram no agente da tela inicial (com internet).
 
 ## Como retomar (Codex)
 1. `git fetch origin && git checkout ccr-a74f83ad-cpkqwi && git pull`. Confira `git status` antes de editar.
 2. Não faça merge nem force-push. Merge só quando o dono pedir.
-3. Próximos passos, em ordem:
-   a. Testar o desfoque de movimento na prévia em aparelho real: com obturador alto a prévia fica lenta.
-   b. Desfoque só vale para camadas com keyframes (texto, forma, imagem). Para vídeo, precisaria buscar quadros de forma assíncrona antes de cada amostra.
-   c. Rodar `node --test tests/lottie.cjs` com internet (ainda não rodado).
+3. Testes abrem `origin + '/#editor'` (sem o hash aparece a tela inicial). Use CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chrome e NODE_PATH=/opt/node22/lib/node_modules.
+4. Próximos passos sugeridos:
+   a. Testar em celular real: tela inicial, Início, voltar do Android e câmera lenta na prévia.
+   b. Revisão da tela inicial não foi feita por outro agente (limite de sessão). Vale uma leitura de segurança dos dados (troca rápida de projeto, várias abas).
+   c. Rampa para camadas de áudio (o modelo já aceita; falta só o controle no painel).
 
 ## Arquivos relevantes
-- app.js: `renderFrame` (envelope do desfoque) e `renderFrameOnce`; `clipPlayhead`; `COLOR_LOOKS`; seção "rastreio de movimento e cortes por cena"; "apoiar o projeto" (DONATE).
-- tests/modern.cjs: rastreio, cortes, agulha, estilos e desfoque.
+- app.js: seções "câmera lenta (velocidade e rampas)" e "biblioteca de projetos e tela inicial"; `seekVideosExact` (quadros suaves e `exactSeeks`); `drawShape` caso video (`blendCanvas`).
+- index.html: `#home` (fora de `#app`), `#btnHome` no topo do editor, item "Meus projetos" no menu.
+- tests/slowmo.cjs e tests/home.cjs.
 
 ## Decisões tomadas e motivo
-- Desfoque é síncrono (envelope sobre renderFrameOnce), então não busca quadros de vídeo. Por isso o efeito aparece em formas, textos e imagens que se movem.
-- Agulha é escondida (visibility) quando fica a menos de 7 px da coluna de camadas, em vez de cortada, porque o triângulo também passa do limite.
-- Estilos novos usam só os parâmetros de filtro que já existiam (brightness, contrast, saturate, sepia, hue).
-
-## Pedidos da foto que ficaram de fora
-- Anime Super Resolution, AI Interpolate e V-FPS changer: precisam de modelos de IA ou de fluxo óptico. Não foram feitos.
-- "2100+ projetos": é conteúdo (modelos prontos), não código. Hoje são 8 modelos.
-- Cloud space e assinatura SVIP: não se aplicam a um app gratuito e sem servidor. Não há paywall.
+- Pontos da rampa em tempo absoluto (como keyframes): dividir o bloco mantém a reprodução contínua e mover o bloco move a rampa junto.
+- Aplicar uma curva mantém o mesmo trecho do vídeo; o bloco fica mais longo e o projeto cresce até 600 s.
+- Quadros suaves só na prévia pausada e na exportação quadro a quadro (MP4/GIF). Em tempo real o navegador não entrega dois quadros vizinhos ao mesmo tempo.
+- Novo projeto, modelo, exemplo e arquivo aberto criam sempre um projeto novo na biblioteca; nada é substituído.
 
 ## Pendências e armadilhas
-- Rastreio só faz translação (x, y). Não acompanha rotação nem escala.
-- Cortes por cena usam diferença de cor, sem IA. Limite de 600 s.
-- Fonte própria: não testei salvar e reabrir um .motion.json.
-- DONATE em app.js está vazio: falta chave PIX e/ou links do dono.
+- Várias abas no mesmo projeto: vale o último que salvou. Aba antiga aberta bloqueia a atualização do IndexedDB para v2 (aparece aviso).
+- Abaixo de 0.1x efetivo a prévia avança por buscas e pode parecer travada; a exportação fica certa.
+- Desfoque de movimento + quadros suaves: amostras que cruzam um quadro desenham só o quadro a.
+- DONATE em app.js continua vazio: falta chave PIX e/ou links do dono.

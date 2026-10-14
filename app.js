@@ -197,18 +197,25 @@ const snap = t => Math.round(t * P().fps) / P().fps;
 const idb = (() => {
   let dbp = null;
   const open = () => dbp || (dbp = new Promise((res, rej) => {
-    const r = indexedDB.open('motion-editor', 1);
-    r.onupgradeneeded = () => r.result.createObjectStore('assets');
-    r.onsuccess = () => res(r.result);
+    // v2 cria a biblioteca de projetos ('projects') e mantém os arquivos da v1 ('assets')
+    const r = indexedDB.open('motion-editor', 2);
+    r.onupgradeneeded = () => {
+      const db = r.result;
+      if (!db.objectStoreNames.contains('assets')) db.createObjectStore('assets');
+      if (!db.objectStoreNames.contains('projects')) db.createObjectStore('projects', { keyPath: 'id' });
+    };
+    r.onsuccess = () => { const db = r.result; db.onversionchange = () => { db.close(); dbp = null; }; res(db); };
     r.onerror = () => rej(r.error);
+    r.onblocked = () => toast('Feche as outras abas do Motion para continuar.');
   }));
-  const run = async (mode, fn) => {
+  const run = async (mode, fn, store = 'assets') => {
     const db = await open();
     return new Promise((res, rej) => {
-      const t = db.transaction('assets', mode);
-      const req = fn(t.objectStore('assets'));
+      const t = db.transaction(store, mode);
+      const req = fn(t.objectStore(store));
       t.oncomplete = () => res(req && req.result);
       t.onerror = () => rej(t.error);
+      t.onabort = () => rej(t.error);
     });
   };
   return {
@@ -216,6 +223,7 @@ const idb = (() => {
     get: id => run('readonly', s => s.get(id)),
     del: id => run('readwrite', s => s.delete(id)),
     keys: () => run('readonly', s => s.getAllKeys()),
+    run,
   };
 })();
 
@@ -510,16 +518,21 @@ async function loadAllAssets() {
       }
     } catch { /* arquivo perdido: a camada mostra um aviso */ }
   }
+  if (!P()) return;   // o projeto foi excluído enquanto carregava
   renderMain(); drawOverlay(); renderTimeline();
   if (selLayer()?.type === 'lottie') renderPanel();
 }
 
-async function cleanupAssets() {
-  try {
-    const used = new Set(Object.keys(P().assets || {}));
+/* Só apaga do IndexedDB o arquivo que nenhum projeto da biblioteca usa, nem o projeto aberto.
+   Roda na fila da biblioteca, depois das gravações pendentes. Da memória sai o que o projeto aberto não usa. */
+function cleanupAssets() {
+  const cur = () => (P() && P().assets) || {};
+  for (const [id, rec] of A) if (!cur()[id]) { rec.player?.destroy(); URL.revokeObjectURL(rec.url); A.delete(id); }
+  return libQueue(async () => {
+    const used = new Set(Object.keys(cur()));
+    for (const r of await libAll()) for (const k of recordAssets(r)) used.add(k);
     for (const k of await idb.keys()) if (!used.has(k)) await idb.del(k);
-  } catch { /* ignora */ }
-  for (const [id, rec] of A) if (!P().assets[id]) { rec.player?.destroy(); URL.revokeObjectURL(rec.url); A.delete(id); }
+  }).catch(() => { /* sem IndexedDB: não apaga nada */ });
 }
 
 /* ======================= câmera lenta (velocidade e rampas) ======================= */
@@ -654,6 +667,7 @@ function blendInfo(L, t) {
   const f = srcFps(L), x = Math.max(0, srcTime(L, t)) * f, a = Math.floor(x + 1e-6);
   return { f, frac: Math.max(0, x - a), t1: (a + 0.5) / f, t2: (a + 1.5) / f };
 }
+let blendCanvas = null;
 function video2For(L) {
   const rec = A.get(L.s.asset);
   if (!rec) return null;
@@ -664,7 +678,7 @@ function video2For(L) {
     v.dataset.asset = L.s.asset;
     v.src = rec.url;
     // antes dos metadados o Chromium ignora currentTime e para no 0: a busca só acontece depois deles
-    v.addEventListener('loadedmetadata', () => { if (!S.playing && !S.exporting) syncMedia(); });
+    v.addEventListener('loadedmetadata', () => { if (!S.playing && !S.exporting && !exactSeeks) syncMedia(); });
     v.addEventListener('seeked', () => { if (!S.playing && !S.exporting) { renderMain(); drawOverlay(); } });
     VIDS2.set(L.id, v);
   }
@@ -714,7 +728,7 @@ function rampPanelRows(L) {
     ${selectRow('ramp', 'Rampa', { '': 'Nenhuma (velocidade constante)', ...Object.fromEntries(Object.entries(RAMPS).map(([k, r]) => [k, r.label])) })}
     <div class="ramp-box" id="rampBox"${rampOf(L) ? '' : ' hidden'}>${rampSvg(L)}</div>
     ${checkRow('smoothSlow', 'Quadros suaves (mistura de quadros)')}
-    <p class="hint">A rampa mantém o mesmo trecho do vídeo. Quadros suaves aparecem com o vídeo pausado e na exportação.</p>`;
+    <p class="hint">A rampa mantém o mesmo trecho do vídeo. Quadros suaves aparecem com o vídeo pausado e na exportação quadro a quadro (MP4 e GIF), não na gravação em tempo real.</p>`;
 }
 function syncRampBox(L) {
   const box = $('#rampBox', panel);
@@ -1239,10 +1253,18 @@ function drawShape(c, L, local) {
     case 'video': {
       const v = VIDS.get(L.id) || videoFor(L);
       if (v && v.readyState >= 2) {
-        drawFramedMedia(c, v, v.videoWidth, v.videoHeight, s);
-        // quadros suaves (câmera lenta): o quadro seguinte por cima, com a parte fracionária como alfa
+        // quadros suaves (câmera lenta): mistura os quadros a e a+1 num canvas próprio e desenha o resultado uma vez,
+        // assim o modo de mesclagem e a opacidade da camada valem para o quadro misturado
         const nx = s.smoothSlow ? nextFrameOf(L, L.start + local, v) : null;
-        if (nx) { const a0 = c.globalAlpha; c.globalAlpha = a0 * nx.frac; drawFramedMedia(c, nx.v, nx.v.videoWidth, nx.v.videoHeight, s); c.globalAlpha = a0; }
+        if (nx) {
+          const w = v.videoWidth, h = v.videoHeight;
+          if (!blendCanvas) blendCanvas = document.createElement('canvas');
+          if (blendCanvas.width !== w || blendCanvas.height !== h) { blendCanvas.width = w; blendCanvas.height = h; }
+          const bc = blendCanvas.getContext('2d');
+          bc.globalAlpha = 1; bc.drawImage(v, 0, 0, w, h);
+          bc.globalAlpha = nx.frac; bc.drawImage(nx.v, 0, 0, w, h); bc.globalAlpha = 1;
+          drawFramedMedia(c, blendCanvas, w, h, s);
+        } else drawFramedMedia(c, v, v.videoWidth, v.videoHeight, s);
       } else drawMissing(c, s.w, s.h, A.get(s.asset) ? 'Carregando…' : 'Vídeo');
       return { w: s.w, h: s.h };
     }
@@ -3556,11 +3578,29 @@ function scheduleSave() {
   clearTimeout(saveTimer);
   const status = $('#saveStatus');
   status.textContent = 'Salvando…'; status.dataset.state = 'pending';
-  saveTimer = setTimeout(() => {
-    try { localStorage.setItem(STORE_KEY, snapshot()); status.textContent = 'Salvo neste aparelho'; status.dataset.state = 'saved'; }
-    catch { status.textContent = 'Só nesta sessão'; status.dataset.state = 'error'; toast('Não consegui salvar neste aparelho. Salve o projeto pelo menu para guardar esta versão.'); }
-  }, 600);
+  saveTimer = setTimeout(saveNow, 600);
 }
+/* grava já: cópia rápida no localStorage (projeto aberto) e o registro na biblioteca (IndexedDB) */
+function saveNow() {
+  clearTimeout(saveTimer); saveTimer = null;
+  const p = P();
+  if (!p) return libQueue(() => {}).catch(() => {});
+  if (!p.id) p.id = uid();
+  const json = snapshot(), status = $('#saveStatus');
+  let local = true;
+  try { localStorage.setItem(STORE_KEY, json); }
+  catch { local = false; try { localStorage.removeItem(STORE_KEY); } catch { /* sem localStorage */ } }   // cópia velha não pode valer mais que a biblioteca
+  try { localStorage.setItem(LAST_KEY, p.id); } catch { /* sem localStorage */ }
+  const job = libSave(p, json, homeOpen ? null : canvasThumb()).then(() => true, () => false);
+  job.then(ok => {
+    if (saveTimer || P() !== p) return;   // já há outra gravação a caminho
+    if (ok || local) { status.textContent = 'Salvo neste aparelho'; status.dataset.state = 'saved'; }
+    else { status.textContent = 'Só nesta sessão'; status.dataset.state = 'error'; toast('Não consegui salvar neste aparelho. Salve o projeto pelo menu para guardar esta versão.'); }
+  });
+  return job;
+}
+/* antes de sair do editor ou trocar de projeto: grava o que estiver pendente e espera a biblioteca */
+const flushSave = () => saveNow();
 function loadSaved() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
@@ -3574,6 +3614,7 @@ function setProject(p, fresh) {
   if (S.project) pause();
   VIDS.forEach(v => v.pause()); VIDS.clear();
   [...VIDS2.keys()].forEach(dropVideo2);
+  if (!p.id) p.id = uid();   // id estável do projeto na biblioteca
   S.project = normalize(p); S.sel = null; S.selKf = null; S.time = 0;
   S.undo = [snapshot()]; S.redo = [];
   $('#projectName').value = P().name;
@@ -3844,6 +3885,7 @@ async function encodeAudio(buf, acfg, muxer) {
 }
 
 /* posiciona cada vídeo exatamente no quadro pedido e espera ele aparecer */
+let exactSeeks = 0;   // buscas exatas em andamento: o syncMedia não pode mover os vídeos no meio delas
 async function seekVideosExact(t) {
   const waits = [];
   liveSync = false;   // os vídeos ficam parados em quadros exatos (vale para os quadros suaves)
@@ -3871,7 +3913,8 @@ async function seekVideosExact(t) {
       if (v2) seek(v2, clamp(bl.t2, 0, last), 1e-3);
     } else seek(v, clamp(srcTime(L, t), 0, last), 0.25 / P().fps);
   }
-  await Promise.all(waits);
+  exactSeeks++;
+  try { await Promise.all(waits); } finally { exactSeeks--; }
 }
 
 function exportProgress(title) {
@@ -4357,6 +4400,7 @@ function wrapAIEditCaption(text, width, size) {
 
 function switchAIEditProject(next, selectId = null) {
   pause(); setPen(false); pauseAllVideos(); VIDS.clear(); [...VIDS2.keys()].forEach(dropVideo2);
+  next.id = P().id;   // o backup pode ser de antes da biblioteca ou de outro projeto: o id continua o deste
   S.project = normalize(next); S.sel = selectId; S.selKf = null; S.time = 0;
   commit(); $('#projectName').value = next.name;
   fitStage(); renderTimeline(); renderPanel(); refreshTime();
@@ -5154,13 +5198,8 @@ function templatesModal() {
         <span class="tpl-name">${esc(t.name)}</span>
         <span class="tpl-meta">${t.aspect} · ${t.dur}s</span>
       </button>`).join('')}</div>`, [{ label: 'Fechar' }]);
-  $$('[data-tpl]').forEach(b => (b.onclick = () => {
-    const t = TEMPLATES.find(x => x.id === b.dataset.tpl);
-    const use = () => { setProject(buildTemplate(t), true); toast('Modelo aberto. Toque nos textos para trocar.'); };
-    hideModal();
-    if (P().layers.length) setTimeout(() => showModal('Usar este modelo?', '<p>O projeto atual será substituído. Se quiser guardar, use Salvar projeto antes.</p>', [{ label: 'Cancelar' }, { label: 'Usar modelo', cls: 'btn-primary', onClick: use }]), 30);
-    else use();
-  }));
+  // cada modelo vira um projeto novo; o atual continua em Meus projetos
+  $$('[data-tpl]').forEach(b => (b.onclick = () => { hideModal(); useTemplate(b.dataset.tpl); }));
 }
 $('#btnTemplates').onclick = templatesModal;
 
@@ -6231,15 +6270,12 @@ menu.addEventListener('click', async e => {
   if (!b) return;
   menu.hidden = true;
   const act = b.dataset.menu;
-  if (act === 'new') {
-    showModal('Começar um projeto novo?', '<p>O projeto atual será substituído. Se quiser guardar, use Salvar projeto antes.</p>', [
-      { label: 'Cancelar' },
-      ...Object.keys(ASPECTS).map(a => ({ label: `Novo ${a}`, cls: a === '9:16' ? 'btn-primary' : '', onClick: () => setProject(newProject(a), true) })),
-    ]);
+  if (act === 'home') {
+    goHome();
+  } else if (act === 'new') {
+    newProjectModal();
   } else if (act === 'demo') {
-    showModal('Carregar o exemplo?', '<p>O projeto atual será substituído pelo exemplo.</p>', [
-      { label: 'Cancelar' }, { label: 'Carregar exemplo', cls: 'btn-primary', onClick: () => setProject(demoProject(), true) },
-    ]);
+    openDemo();
   } else if (act === 'save') {
     toast('Preparando o arquivo…');
     const out = JSON.parse(snapshot());
@@ -6283,8 +6319,7 @@ $('#projectInput').addEventListener('change', async e => {
   try {
     const p = JSON.parse(await f.text());
     if (!p || !Array.isArray(p.layers) || !p.width || !p.height) throw new Error('formato');
-    setProject(p, true);
-    toast('Projeto aberto.');
+    if (await startProject(p)) toast('Projeto aberto.');   // entra na biblioteca como projeto novo (id novo)
   } catch {
     toast('Esse arquivo não é um projeto do Motion Editor (.motion.json).');
   }
@@ -6326,7 +6361,7 @@ let arrowTimer;
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && isPhotopeaOpen()) { e.preventDefault(); closePhotopea(); return; }
   if (e.key === 'Escape' && sheetOpen()) { e.preventDefault(); closeSheet(); return; }
-  if (isTyping(e.target) || !$('#modal').hidden || isPhotopeaOpen() || S.exporting || sheetOpen()) return;
+  if (isTyping(e.target) || !$('#modal').hidden || isPhotopeaOpen() || S.exporting || sheetOpen() || homeOpen) return;
   const L = selLayer();
   const mod = e.ctrlKey || e.metaKey;
   if (e.code === 'Space') { e.preventDefault(); S.playing ? pause() : play(); }
@@ -6388,13 +6423,361 @@ function showDonate() {
 }
 $$('[data-menu="donate"]').forEach(b => { b.hidden = !(DONATE.pix || DONATE.links.length); });
 
+/* ======================= biblioteca de projetos e tela inicial ======================= */
+/* Cada projeto é um registro em IndexedDB ('projects'): metadados, miniatura e o JSON.
+   STORE_KEY (localStorage) é só a cópia rápida do projeto aberto; LAST_KEY diz qual projeto ela é.
+   Sem #editor no endereço, o app abre na tela inicial (#home) e o editor (#app) fica escondido. */
+const LAST_KEY = 'motion-editor:last';
+const home = $('#home');
+let homeOpen = true;        // o editor não está na tela (início visível ou projeto ainda carregando)
+let pushedEditor = false;   // o editor entrou por pushState nesta página: Início usa history.back()
+let libChain = Promise.resolve();
+const homeRecs = new Map();
+let homeToken = 0, migration = null, opening = false;
+
+/* fila única da biblioteca: gravações, exclusões, limpeza e leituras na ordem em que foram pedidas */
+function libQueue(fn) { const run = libChain.then(fn); libChain = run.catch(() => {}); return run; }
+const libStore = (mode, fn) => idb.run(mode, fn, 'projects');
+function libAll() { return libStore('readonly', s => s.getAll()).then(r => r || []); }
+function libGet(id) { return libStore('readonly', s => s.get(id)); }
+function libPut(rec) { return libStore('readwrite', s => s.put(rec)); }
+function libDel(id) { return libStore('readwrite', s => s.delete(id)); }
+function recordAssets(r) {
+  if (Array.isArray(r.assets)) return r.assets;
+  try { return Object.keys(JSON.parse(r.json).assets || {}); } catch { return []; }
+}
+const byUpdated = (a, b) => (b.updated || 0) - (a.updated || 0);
+const recordOf = (p, json) => ({ id: p.id, name: p.name || 'Projeto sem título', aspect: p.aspect, width: p.width, height: p.height,
+  duration: p.duration, layerCount: (p.layers || []).length, assets: Object.keys(p.assets || {}), json });
+function parseProject(json) {
+  try { const p = JSON.parse(json); return p && Array.isArray(p.layers) && p.width && p.height ? p : null; } catch { return null; }
+}
+/* "updated" só muda quando o conteúdo muda; sem miniatura nova, fica a anterior */
+function libSave(p, json, thumb) {
+  const rec = recordOf(p, json);
+  return libQueue(async () => {
+    const old = await libGet(rec.id).catch(() => null);
+    await libPut({ ...rec, thumb: thumb || old?.thumb || null, updated: old && old.json === json ? old.updated : Date.now() });
+  });
+}
+/* miniatura JPEG (lado maior ~240 px) do que a prévia mostra agora */
+function canvasThumb() {
+  if (app.hidden || !canvas.width || !canvas.height) return null;
+  const k = Math.min(1, 240 / Math.max(canvas.width, canvas.height));
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(canvas.width * k)); c.height = Math.max(1, Math.round(canvas.height * k));
+  c.getContext('2d').drawImage(canvas, 0, 0, c.width, c.height);
+  try { return c.toDataURL('image/jpeg', 0.75); } catch { return null; }
+}
+/* a cópia rápida nunca pode ficar mais velha que a biblioteca para o mesmo projeto */
+function syncStoreCopy(id, json) {
+  const s = loadSaved();
+  if (!s || s.id !== id) return;
+  try { if (json) localStorage.setItem(STORE_KEY, json); else localStorage.removeItem(STORE_KEY); }
+  catch { try { localStorage.removeItem(STORE_KEY); } catch { /* sem localStorage */ } }
+}
+/* quem já usava o app: o projeto do localStorage entra na biblioteca (e qualquer cópia mais nova que ela) */
+function migrateStore() {
+  return migration || (migration = libQueue(async () => {
+    const p = loadSaved();
+    if (!p) return;
+    let raw = localStorage.getItem(STORE_KEY);
+    if (!p.id) {
+      p.id = uid(); raw = JSON.stringify(p);
+      try { localStorage.setItem(STORE_KEY, raw); localStorage.setItem(LAST_KEY, p.id); } catch { /* fica só na biblioteca */ }
+    }
+    const old = await libGet(p.id);
+    if (old && old.json === raw) return;
+    await libPut({ ...recordOf(p, raw), thumb: old?.thumb || null, updated: Date.now() });
+  }).catch(() => {}));
+}
+window.addEventListener('pagehide', () => { if (saveTimer) saveNow(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && saveTimer) saveNow(); });
+
+/* textos dos cartões */
+function relTime(ms) {
+  const now = Date.now(), s = Math.max(0, now - (ms || 0)) / 1000;
+  if (s < 60) return 'agora';
+  if (s < 3600) return `há ${Math.floor(s / 60)} min`;
+  if (s < 86400) return `há ${Math.floor(s / 3600)} h`;
+  const d = new Date(ms), y = new Date(now); y.setDate(y.getDate() - 1);
+  if (d.toDateString() === y.toDateString()) return 'ontem';
+  return d.toLocaleDateString('pt-BR', d.getFullYear() === new Date(now).getFullYear() ? { day: 'numeric', month: 'short' } : { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+function fmtDur(d) {
+  d = Math.max(0, Number(d) || 0);
+  if (d < 59.95) return `${String(round(d, 1)).replace('.', ',')}s`;
+  const m = Math.floor(d / 60), s = Math.round(d - m * 60);
+  return s ? `${m}min ${s}s` : `${m}min`;
+}
+/* forma proporcional ao formato (ícone dos formatos e capa sem miniatura) */
+function aspectShape(w, h, size = 40) {
+  const k = size / Math.max(w || 1, h || 1);
+  return `<span class="fmt-shape" style="width:${Math.max(6, Math.round((w || 1) * k))}px;height:${Math.max(6, Math.round((h || 1) * k))}px" aria-hidden="true"></span>`;
+}
+const FORMATS = { '9:16': 'Stories, Reels e TikTok', '16:9': 'YouTube e tela cheia', '1:1': 'Feed quadrado', '4:5': 'Feed retrato' };
+
+/* ---------- abrir e criar projetos ---------- */
+function setView(view) {
+  homeOpen = view !== 'editor';
+  document.documentElement.dataset.view = view;
+  home.hidden = view !== 'home';
+  app.hidden = view !== 'editor';
+}
+function showEditor() {
+  setView('editor');
+  fitStage(); renderTimeline(); refreshTime();
+}
+function showHome() {
+  if (P()) { if (S.playing) pause(); flushSave(); }
+  closeSheet(false); menu.hidden = true;
+  if (!$('#modal').hidden) hideModal();
+  if (isPhotopeaOpen()) closePhotopea();
+  setView('home');
+  home.scrollTop = 0;
+  home.focus({ preventScroll: true });
+  renderHome();
+}
+function enterEditor() {
+  if (location.hash !== '#editor') { history.pushState({ motion: 'editor' }, '', '#editor'); pushedEditor = true; }
+  showEditor();
+}
+function goHome() {
+  if (S.exporting) { toast('Espere a exportação terminar.'); return; }
+  if (pushedEditor && location.hash === '#editor') { pushedEditor = false; history.back(); return; }   // o popstate mostra o início
+  history.replaceState(null, '', location.pathname + location.search);
+  showHome();
+}
+window.addEventListener('popstate', () => {
+  const wantEditor = location.hash === '#editor';
+  if (!wantEditor && !homeOpen) {
+    if (S.exporting) { history.pushState({ motion: 'editor' }, '', '#editor'); pushedEditor = true; toast('Espere a exportação terminar.'); return; }
+    pushedEditor = false; showHome();
+  } else if (wantEditor && homeOpen && !home.hidden) {
+    if (P()) { pushedEditor = true; showEditor(); } else history.replaceState(null, '', location.pathname + location.search);
+  }
+});
+
+/* projeto novo (em branco, modelo, exemplo ou arquivo): sempre ganha um id novo; o anterior fica na biblioteca */
+async function startProject(p) {
+  if (opening) return null;   // toque duplo não cria dois projetos
+  opening = true;
+  try {
+    if (P()) await flushSave();
+    p.id = uid();
+    setProject(p, true);
+    if (homeOpen) enterEditor();
+    return p;
+  } finally { opening = false; }
+}
+async function openProjectById(id) {
+  if (opening) return;
+  opening = true;
+  try {
+    if (P() && P().id === id) { enterEditor(); return; }   // ainda carregado: mantém o desfazer
+    if (P()) await flushSave();
+    const rec = await libQueue(() => libGet(id));
+    const p = rec && parseProject(rec.json);
+    if (!p) { toast('Não consegui abrir esse projeto.'); renderHome(); return; }
+    setProject(p, true);
+    enterEditor();
+  } catch { toast('Não consegui abrir esse projeto.'); }
+  finally { opening = false; }
+}
+function buildDemo() { const keep = S.project; try { return demoProject(); } finally { S.project = keep; } }
+function openDemo() { startProject(buildDemo()).then(p => p && toast('Exemplo aberto.')); }
+function useTemplate(id) {
+  const t = TEMPLATES.find(x => x.id === id);
+  if (t) startProject(buildTemplate(t)).then(p => p && toast('Modelo aberto. Toque nos textos para trocar.'));
+}
+function newProjectModal() {
+  showModal('Novo projeto', `<p>Escolha o formato do vídeo.${P() && !homeOpen ? ' O projeto atual continua em Meus projetos.' : ''}</p>
+    <div class="fmt-grid">${Object.keys(ASPECTS).map(a => `<button class="fmt" data-fmt="${a}"><span class="fmt-box">${aspectShape(...ASPECTS[a], 44)}</span><b>${a}</b><span>${esc(FORMATS[a] || '')}</span></button>`).join('')}</div>`, [{ label: 'Cancelar' }]);
+  $$('#modalBody [data-fmt]').forEach(b => (b.onclick = () => { hideModal(); startProject(newProject(b.dataset.fmt)); }));
+  $('#modalBody [data-fmt]').focus({ preventScroll: true });
+}
+/* o projeto aberto foi excluído: o editor fica sem projeto até abrir outro */
+function closeProject() {
+  clearTimeout(saveTimer); saveTimer = null;
+  if (S.playing) pause();
+  VIDS.forEach(v => { v.pause(); v.removeAttribute('src'); v.load(); }); VIDS.clear();
+  S.project = null; S.sel = null; S.selKf = null; S.undo = []; S.redo = [];
+}
+
+/* ---------- opções do projeto ---------- */
+function projectOptions(id) {
+  const rec = homeRecs.get(id);
+  if (!rec) return;
+  showModal(rec.name || 'Projeto sem título', `<div class="opt-list">
+    <button class="opt" data-opt="rename"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg>Renomear</button>
+    <button class="opt" data-opt="dup"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>Duplicar</button>
+    <button class="opt opt-danger" data-opt="del"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>Excluir</button>
+  </div>`, [{ label: 'Fechar' }]);
+  $$('#modalBody [data-opt]').forEach(b => (b.onclick = () => {
+    const act = b.dataset.opt;
+    if (act === 'rename') renameModal(rec);
+    else if (act === 'dup') { hideModal(); duplicateProject(id); }
+    else confirmDelete(rec);
+  }));
+}
+function renameModal(rec) {
+  showModal('Renomear projeto', `<input class="field rename-field" id="renameField" maxlength="80" spellcheck="false" aria-label="Nome do projeto" value="${esc(rec.name || '')}">`, [
+    { label: 'Cancelar' }, { label: 'Salvar', cls: 'btn-primary', onClick: () => renameProject(rec.id, $('#renameField').value) }]);
+  const f = $('#renameField');
+  f.focus(); f.select();
+  f.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); $('#modalActions .btn-primary').click(); } };
+}
+async function renameProject(id, name) {
+  name = String(name || '').trim().slice(0, 80) || 'Projeto sem título';
+  try {
+    if (P() && P().id === id) {
+      if (P().name !== name) { P().name = name; $('#projectName').value = name; commit(); }
+      await flushSave();
+    } else {
+      await libQueue(async () => {
+        const rec = await libGet(id), p = rec && parseProject(rec.json);
+        if (!p) throw new Error('sem projeto');
+        p.name = name;
+        const json = JSON.stringify(p);
+        await libPut({ ...rec, ...recordOf(p, json), updated: Date.now() });
+        syncStoreCopy(id, json);
+      });
+    }
+    toast('Nome alterado.');
+  } catch { toast('Não consegui renomear.'); }
+  renderHome();
+}
+async function duplicateProject(id) {
+  try {
+    if (P() && P().id === id) await flushSave();
+    await libQueue(async () => {
+      const rec = await libGet(id), p = rec && parseProject(rec.json);
+      if (!p) throw new Error('sem projeto');
+      p.id = uid(); p.name = `${p.name || 'Projeto sem título'} (cópia)`.slice(0, 80);
+      const json = JSON.stringify(p);
+      await libPut({ ...rec, ...recordOf(p, json), updated: Date.now() });
+    });
+    toast('Projeto duplicado.');
+  } catch { toast('Não consegui duplicar.'); }
+  renderHome();
+}
+function confirmDelete(rec) {
+  showModal('Excluir este projeto?', `<p>Não dá para desfazer. “${esc(rec.name || 'Projeto sem título')}” e os arquivos que só ele usa saem deste aparelho.</p>`, [
+    { label: 'Cancelar' }, { label: 'Excluir', cls: 'btn-danger', onClick: () => deleteProject(rec.id) }]);
+}
+async function deleteProject(id) {
+  try {
+    if (P() && P().id === id) closeProject();
+    await libQueue(() => libDel(id));
+    syncStoreCopy(id, null);
+    let last = null;
+    try { last = localStorage.getItem(LAST_KEY); } catch { /* sem localStorage */ }
+    if (last === id) {
+      const next = (await libQueue(libAll)).sort(byUpdated)[0];
+      try { if (next) localStorage.setItem(LAST_KEY, next.id); else localStorage.removeItem(LAST_KEY); } catch { /* sem localStorage */ }
+    }
+    await cleanupAssets();   // arquivos que só este projeto usava
+    toast('Projeto excluído.');
+  } catch { toast('Não consegui excluir.'); }
+  renderHome();
+}
+
+/* ---------- tela inicial ---------- */
+function projectCard(r) {
+  const name = esc(r.name || 'Projeto sem título');
+  const [w, h] = ASPECTS[r.aspect] || [r.width, r.height];
+  const cover = r.thumb ? `<img src="${esc(r.thumb)}" alt="" decoding="async">` : `<span class="proj-ph">${aspectShape(w, h, 56)}</span>`;
+  return `<article class="proj">
+    <button class="proj-open" data-open="${esc(r.id)}">
+      <span class="proj-thumb">${cover}</span>
+      <span class="proj-info"><span class="proj-name">${name}</span>
+        <span class="proj-meta">${esc(r.aspect || `${r.width}×${r.height}`)} · ${fmtDur(r.duration)}</span>
+        <span class="proj-time">${esc(relTime(r.updated))}</span></span>
+    </button>
+    <button class="proj-more" data-more="${esc(r.id)}" aria-label="Opções do projeto" title="Opções do projeto"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="19" r="1.4"/></svg></button>
+  </article>`;
+}
+async function renderHome() {
+  const token = ++homeToken, grid = $('#homeGrid');
+  renderHomeTemplates();
+  let recs = [], failed = false;
+  try { await migrateStore(); recs = await libQueue(libAll); } catch { failed = true; }
+  if (token !== homeToken) return;
+  recs.sort(byUpdated);
+  homeRecs.clear();
+  recs.forEach(r => homeRecs.set(r.id, r));
+  grid.innerHTML = recs.map(projectCard).join('');
+  $('#homeCount').textContent = recs.length ? String(recs.length) : '';
+  $('#homeEmpty').hidden = recs.length > 0;
+  $('#homeEmptyText').textContent = failed ? 'Não consegui ler os projetos deste aparelho.' : 'Seus vídeos ficam aqui, salvos neste aparelho.';
+}
+/* modelos: a linha aparece na hora; as miniaturas chegam aos poucos, depois das fontes */
+let tplThumbs = null;
+function renderHomeTemplates() {
+  const row = $('#homeTpls');
+  if (row.childElementCount) return;
+  row.innerHTML = TEMPLATES.map(t => `<button class="home-tpl" data-tpl-new="${t.id}">
+      <span class="home-tpl-img" data-tpl-img="${t.id}">${thumbCache.has(t.id) ? `<img src="${thumbCache.get(t.id)}" alt="">` : aspectShape(...ASPECTS[t.aspect], 44)}</span>
+      <span class="home-tpl-name">${esc(t.name)}</span><span class="home-tpl-meta">${t.aspect} · ${fmtDur(t.dur)}</span></button>`).join('');
+  tplThumbs = tplThumbs || templateFonts().then(async () => {
+    for (const t of TEMPLATES) {
+      await new Promise(r => (window.requestIdleCallback ? requestIdleCallback(() => r(), { timeout: 400 }) : setTimeout(r, 30)));
+      const box = $(`[data-tpl-img="${t.id}"]`);
+      try { if (box && !box.querySelector('img')) box.innerHTML = `<img src="${templateThumb(t)}" alt="">`; } catch { /* fica a forma */ }
+    }
+  });
+}
+/* carrega as fontes usadas pelos modelos antes da primeira miniatura (o cache não refaz) */
+function templateFonts() {
+  if (!document.fonts) return Promise.resolve();
+  const specs = new Set();
+  for (const t of TEMPLATES) for (const L of buildTemplate(t).layers) if (L.type === 'text') specs.add(`${L.s.weight || 400} 40px "${L.s.font}"`);
+  return Promise.race([Promise.all([...specs].map(s => document.fonts.load(s).catch(() => {}))), wait(3000)]);
+}
+home.addEventListener('click', e => {
+  const b = e.target.closest('[data-home], [data-tpl-new], [data-open], [data-more]');
+  if (!b) return;
+  if (b.dataset.tplNew) return useTemplate(b.dataset.tplNew);
+  if (b.dataset.open) return openProjectById(b.dataset.open);
+  if (b.dataset.more) return projectOptions(b.dataset.more);
+  const act = b.dataset.home;
+  if (act === 'new') newProjectModal();
+  else if (act === 'templates') templatesModal();
+  else if (act === 'demo') openDemo();
+  else if (act === 'open') $('#projectInput').click();
+  else if (act === 'help') $('#menu [data-menu="help"]').click();
+  else if (act === 'donate') showDonate();
+  else if (act === 'install') $('#btnInstall').click();
+});
+$$('[data-home="donate"]').forEach(b => { b.hidden = !(DONATE.pix || DONATE.links.length); });
+{
+  const inst = $('#btnInstall'), sync = () => { $('#homeInstall').hidden = inst.hidden; };
+  new MutationObserver(sync).observe(inst, { attributes: true, attributeFilter: ['hidden'] });
+  sync();
+}
+$('#btnHome').onclick = goHome;
+
 /* ======================= início ======================= */
-setProject(loadSaved() || demoProject());
-new ResizeObserver(() => fitStage()).observe($('#stage'));
+/* #editor abre direto o último projeto (recarregar fica no editor); sem ele, abre a tela inicial */
+function bootView() {
+  if (location.hash !== '#editor') { setView('home'); renderHome(); return; }
+  const saved = loadSaved();
+  let last = null;
+  try { last = localStorage.getItem(LAST_KEY); } catch { /* sem localStorage */ }
+  if (saved || !last) { setProject(saved || buildDemo()); showEditor(); return; }
+  // a cópia rápida sumiu (ex.: localStorage cheio): abre o último projeto da biblioteca
+  app.hidden = true;
+  libQueue(libAll).then(recs => {
+    const r = recs.find(x => x.id === last) || recs.sort(byUpdated)[0];
+    return r ? parseProject(r.json) : null;
+  }).catch(() => null).then(p => { if (!P()) { setProject(p || buildDemo()); showEditor(); } });
+}
+bootView();
+new ResizeObserver(() => { if (P()) fitStage(); }).observe($('#stage'));
 window.addEventListener('resize', () => renderTimeline());
 if (document.fonts) {
-  Promise.all(FONTS.map(f => document.fonts.load(`700 40px "${f}"`).catch(() => {}))).then(() => refreshTime());
-  document.fonts.ready.then(() => refreshTime());
+  Promise.all(FONTS.map(f => document.fonts.load(`700 40px "${f}"`).catch(() => {}))).then(() => { if (P()) refreshTime(); });
+  document.fonts.ready.then(() => { if (P()) refreshTime(); });
 }
 window.__motion = {
   S, A, P, byId, select, setTime, setParent, makeLayer, addLayer, splitLayer, freezeFrame, registerAsset, commit,
@@ -6404,4 +6787,8 @@ window.__motion = {
 };
 // câmera lenta (testes)
 Object.assign(window.__motion, { RAMPS, speedAt, srcTime, timeAtSrc, applyRamp, blendInfo, setProject, renderAudioMix, renderFrame, seekVideosExact, VIDS, VIDS2 });
+Object.assign(window.__motion, {
+  flushSave, goHome, startProject, openProjectById, cleanupAssets, renderHome,
+  libAll: () => libQueue(libAll), isHome: () => homeOpen && !home.hidden,
+});
 })();
