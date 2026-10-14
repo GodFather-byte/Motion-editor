@@ -6,6 +6,21 @@ Editor de motion graphics que roda direto no navegador e pode ser instalado como
 
 ## Recursos
 
+**Creator Workstation OS**
+- Dock com Vídeo, Áudio, Pixel, Roteiro e Arquivos. O editor de vídeo original continua no mesmo DOM, inclusive as folhas do celular.
+- Todos os módulos usam o **projeto aberto do editor**, seu histórico de desfazer/refazer e sua biblioteca. Trocar de módulo não cria outro projeto.
+- Arquivos compartilhados ficam no OPFS em `creator-workstation/<id-do-projeto>/{audio,pixel,video}`. Revisões são imutáveis para permitir desfazer; metadados e vínculos ficam em `project.workstation`. Não apague os dados do site sem baixar seus arquivos.
+- **Link** envia novas mídias salvas e atualiza as camadas vinculadas nas substituições, sem duplicar clipes. Desligado, só envia por ação explícita (Enviar ou Salvar e enviar). Fontes importadas/gravadas para Áudio e Pixel ficam no módulo até exportar o mix/overlay; fontes enviadas manualmente também recebem atualizações vinculadas. Gravações de câmera sempre aguardam confirmação. BroadcastChannel aplica as mesmas regras entre abas do projeto.
+- A barra mostra uso / quota e espaço livre em MB/GB (estimativa da origem, incluindo outros dados do app). Atualiza a cada 10 segundos, ao salvar arquivos e ao voltar à aba; pausa o monitor em segundo plano e no fechamento. APIs sem estimativa mostram valores indisponíveis, não zero fictício.
+- APIs públicas: `WorkstationShell` (ativação, projeto, Link e armazenamento), `ProjectAssetBus` (OPFS/eventos), `AudioLabModule`, `PixelStudioModule` e `AIScriptCamModule` expõem as operações reais dos módulos. `getProject()`/`getState()` e `ProjectAssetBus.list()`/`get(key)` devolvem cópias, sempre do projeto atual. O estado continua único em `project.workstation`; `CreatorWorkstation` permanece como interface legada.
+- `ProjectAssetBus.save(blob, kind, name, {key, send, role, suppressAutoSend, duration})`, `read(key)` e `send(key)` reutilizam OPFS e os vínculos existentes. `subscribe(listener, {replay: true})` entrega metadados de arquivos já existentes (`type: 'existing'`) e eventos CustomEvent `workstation:asset` (`saved`/`received`), filtrados pelo projeto atual; retorna uma função de cancelamento. Também há `unsubscribe(listener)`. `role: 'source'` reserva fontes dos módulos; `suppressAutoSend: true` exige envio explícito, inclusive entre abas. Os eventos legados `workstation:asset-saved` e `workstation:asset-received` continuam disponíveis.
+- **Áudio:** importe várias faixas, ajuste início/volume/mudo ou grave o microfone. Espectro e onda usam Web Audio/rAF. Preset de voz: passa-altas 80 Hz, presença 3 kHz (+4 dB/Q 1), compressor −24 dB, knee 30, ratio 12:1, ataque 3 ms/release 250 ms. Monitor opcional (use fones), desligado inicialmente. O mix aplica o processamento aos samples via OfflineAudioContext, salva WAV PCM estéreo ou WebM em tempo real e envia à timeline.
+- **Pixel:** imagens e textos em camadas, seleção, arraste, ordem, remoção, contorno/neon/degradê e ajustes de brilho, contraste, saturação e matiz. Importa o quadro exato da composição de vídeo na resolução do projeto. Salva PNG com transparência e o envia como overlay vinculado.
+- **Roteiro:** tabela editável de áudio/vídeo, geração estruturada com o LanguageModel local pelo adaptador ChromeAIService (sem respostas simuladas), teleprompter com velocidade ajustável e acompanhamento opcional de palavras reconhecidas. Captura tela e/ou webcam, sobrepõe a webcam na tela e mistura áudio de tela/microfone. Ao finalizar, salva e pergunta “Deseja abrir na timeline e aplicar o corte automático de silêncios agora?”. Ambas as escolhas abrem Vídeo; só “Enviar e cortar silêncios” abre também o cortador nativo.
+- Sem pedidos de câmera/microfone ao abrir. Trocar de projeto/módulo cancela tarefas antigas e desliga os dispositivos; finalizar também libera todas as pistas. O teleprompter não aparece no vídeo gravado.
+- Requer HTTPS/localhost e APIs compatíveis. Sem OPFS, ações de arquivo/gravação ficam indisponíveis; erros de gravação não são apresentados como salvamento. LanguageModel, captura de tela, bateria e reconhecimento de fala variam por navegador/dispositivo. Reconhecimento de fala é opt-in e pode usar o serviço do navegador; apenas a geração de roteiro é garantidamente local. WAV é a alternativa quando WebM não é suportado.
+- O OPFS é privado por origem/dispositivo, não é uma pasta pública nem uma sincronização em nuvem. Arquivos `.motion.json` continuam sendo o formato do editor; para transportar a sessão inteira, baixe também os arquivos OPFS pelo módulo Arquivos.
+
 **Camadas**
 - Texto, retângulo, círculo, estrela, traço livre (caneta), imagem, vídeo, música, Lottie / dotLottie e grupo.
 - Grupos e "Seguir camada": uma camada herda posição, giro, escala e opacidade de outra.
@@ -116,6 +131,7 @@ node --test tests/music.cjs            # batidas, montagem, batidas prontas, nar
 node --test tests/ai-edit-plan.cjs tests/ai-edit.cjs # edição por pedido, corte de pausas e Gemini simulado
 node --test tests/lottie.cjs           # runtime real, JSON/dotLottie v1/v2, cortes, transparência e exportação
 node --test tests/short-form.cjs       # legendas, marcadores, guia seguro e 360 px
+node --test tests/workstation-unit.cjs tests/workstation.cjs # OS, OPFS/Link, áudio/Pixel/roteiro/captura e 360 px
 ```
 
 O teste inicia seu próprio servidor e gera mídia temporária. Confere recorte, cores, transições, divisão, desfazer/refazer, persistência, exportação e áudio em diferentes velocidades; inclui layout de 360 px. Defina `CHROMIUM_PATH` se o Chromium não estiver em `/usr/bin/chromium`. Essas ferramentas são apenas para testes; o app continua sem instalação de dependências ou build.

@@ -2,37 +2,38 @@
 Atualizado por: Copilot em 14/10/2026
 
 ## Objetivo atual
-Resolver o merge com main preservando módulos nativos e fluxo de vídeo curto.
+Entregar Creator Workstation OS preservando o editor de vídeo e os módulos nativos.
 
 ## Estado agora
-- Quatro módulos IIFE/globais carregados antes de app.js, sem novas dependências do app.
-- ChromeAIService adapta APIs modernas/legadas; progresso, frame JPEG, metadados, cortes e legendas.
-- SmartSilenceCutter usa RMS de 20 ms; chip "Cortar silêncios" na IA para vídeo/áudio selecionado.
-- Ripple mantém trim/speed, rampas, keyframes e histórico por conversores injetados.
-- Camadas-pai cortadas deixam grupo-âncora para preservar transformações dos filhos.
-- MobilePWAIntegration oferece OPFS, Wake Lock durante exportVideo/fastExport e vibração.
-- Share Target POST guarda File em shared-media; boot importa e limpa somente entregas concluídas.
-- TimelineTouchEngine: pinça, scroll nos dois eixos, seleção por toque, toque longo, snap e trim de 44 px.
-- Mouse e keyframes mantêm handlers existentes; cancelamento de gesto restaura a camada.
-- Estúdio de Legendas mantém cinco estilos e cartão de fundo com aplicação em lote.
-- Marcadores persistentes têm edição e snap no mouse e no motor de toque.
-- Guia seguro 9:16 fica só na prévia; atalhos rápidos ficam no desktop.
-- `sw.js` está em `motion-v31`; shell inclui os quatro módulos.
-- Testes novos: native-services, silence-cutter, share-target e media-modules.
-- Regressões: short-form, mobile-sheets, preview-controls, ai-edit-plan e slowmo.
+- Shell responsivo e estado único em `project.workstation`; vídeo original mantém DOM e folhas.
+- APIs reais: WorkstationShell, ProjectAssetBus, AudioLabModule, PixelStudioModule, AIScriptCamModule.
+- APIs novas devolvem snapshots seguros; bus oferece OPFS, subscribe/unsubscribe e replay de existentes.
+- OPFS usa revisões imutáveis; CustomEvents e BroadcastChannel compartilham metadados por projeto.
+- Link envia novas mídias e atualiza vínculos sem duplicar; desligado só envia por ação explícita.
+- Fontes Áudio/Pixel ficam no módulo até exportar; se enviadas manualmente, recebem atualizações.
+- Áudio multifaixa e preset exato: 80 Hz, 3 kHz/+4 dB, compressor −24 dB, ratio 12:1.
+- Mix WAV/WebM processado via OfflineAudioContext; Pixel exporta overlay PNG transparente.
+- Roteiro LanguageModel local, teleprompter, fala opcional e captura composta tela/webcam/áudio.
+- Câmera salva sem envio automático e pergunta sobre timeline/corte; ambas as escolhas abrem Vídeo.
+- Uso/quota/livre em MB/GB: polling 10 s, saves e visibility; pagehide/pageshow limpam/restauram.
+- Tokens isolam operações obsoletas; troca de módulo/projeto libera dispositivos e contextos.
+- `sw.js`: motion-v33 inclui workstation.js/css no shell offline.
+- Validação final: 94 testes executados; 93 passaram e 1 timeout de exportação já existe no HEAD.
+- Workstation: 18/18 passaram; sintaxe app/workstation/chrome-ai/sw/teste e git diff --check OK.
 
 ## Como retomar
-1. Rode `git pull` e confira `git status`.
-2. Consulte `README.md` e `.ai/MAPA.md` para localizar recursos e testes.
-3. Teste com `python3 -m http.server 8000`, `node --check app.js` e os testes citados.
-4. Testes de navegador usam Playwright/Chromium; slowmo também precisa de FFmpeg.
+1. Confira `git status`; refinamento entregue sem commit/push por instrução do coordenador.
+2. Suítes: workstation-unit/workstation/native-services/silence-cutter/share-target/ai-local.
+3. Regressões: mobile-sheets/media-modules/home/short-form/preview-controls/slowmo/video-editor.
+4. Use CHROMIUM_PATH=/usr/bin/chromium e TMPDIR apontando para a raiz do projeto; FFmpeg instalado.
+5. Coordenador conclui scan de segredos, validação de segurança e commit; não precisa repetir testes.
 
 ## Arquivos relevantes
-- `chrome-ai.js`, `silence-cutter.js`, `mobile-pwa.js`, `timeline-touch.js`.
-- `app.js`, `index.html`, `style.css`: integração e chip IA.
-- `sw.js`, `manifest.webmanifest`: shell offline e Share Target.
+- workstation.js/css, chrome-ai.js, ponte app.js, index.html, sw.js, README/MAPA e testes workstation.
 
 ## Pendências e limitações
-- Sem teste em celular físico ou modelo Gemini Nano real; APIs nativas cobertas por mocks.
-- APIs ausentes retornam null/false; diagnóstico da IA fica em ChromeAIService.reason.
-- OPFS é serviço opt-in; IndexedDB continua sendo o armazenamento padrão do editor.
+- video-editor.cjs:192 espera “Vídeo pronto” e estoura 15 s; reproduzido em cópia limpa do HEAD.
+- Alteração alheia de seleção MediaRecorder em video-editor.cjs foi removida; fixture share-target mantida.
+- APIs de captura/OPFS/LanguageModel/fala exigem navegador compatível e HTTPS/localhost.
+- Modelo real e celular físico não verificados; testes usam API LanguageModel controlada.
+- OPFS é privado por origem; reconhecimento de fala opt-in pode usar serviço do navegador.

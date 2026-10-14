@@ -1,0 +1,85 @@
+:root { --ws-top: 36px; --ws-dock: 48px; }
+.ws-top, .ws-dock, .ws-module { display: none; }
+html[data-view=editor] .ws-top {
+  display: flex; position: fixed; inset: 0 0 auto; height: var(--ws-top);
+  align-items: center; justify-content: space-between; gap: 8px; padding: 0 12px;
+  background: var(--panel); border-bottom: 1px solid var(--line); z-index: 39;
+  font-size: 11px; color: var(--muted);
+}
+.ws-top strong { color: var(--accent); }
+.ws-indicators { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.ws-top label { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+html[data-view=editor] .ws-dock {
+  display: flex; position: fixed; inset: auto 0 0; height: var(--ws-dock); z-index: 39;
+  gap: 4px; justify-content: center; padding: 4px 8px; background: var(--panel);
+  border-top: 1px solid var(--line);
+}
+.ws-dock button { flex: 1; max-width: 180px; border: 0; background: transparent; color: var(--muted); border-radius: 8px; font: inherit; font-size: 12px; cursor: pointer; }
+.ws-dock button[aria-pressed=true] { background: var(--accent-soft); color: var(--accent); }
+html[data-view=editor] #app { position: fixed; inset: var(--ws-top) 0 var(--ws-dock); margin: 0; height: calc(100dvh - var(--ws-top) - var(--ws-dock)); }
+html[data-view=editor][data-workspace]:not([data-workspace=video]) #app { display: none; }
+html[data-view=editor] .ws-module:not([hidden]) {
+  display: block; position: fixed; inset: var(--ws-top) 0 var(--ws-dock);
+  overflow: auto; overscroll-behavior: contain; padding: 18px; background: var(--bg); color: var(--fg);
+}
+.ws-module * { box-sizing: border-box; }
+.ws-module h1 { margin: 0; font-size: 22px; }
+.ws-module h2 { font-size: 16px; }
+.ws-module p { color: var(--muted); }
+.ws-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 10px 0; }
+.ws-module button, .ws-top button {
+  min-height: 36px; padding: 7px 12px; border: 1px solid var(--line);
+  background: var(--panel-2); color: var(--fg); border-radius: 8px; cursor: pointer; font: inherit;
+}
+.ws-module button:disabled { opacity: .45; cursor: not-allowed; }
+.ws-module input:not([type=checkbox]):not([type=range]), .ws-module select, .ws-module textarea {
+  border: 1px solid var(--line); border-radius: 6px; color: var(--fg); background: var(--panel-2);
+  padding: 8px; max-width: 100%; font: inherit;
+}
+.ws-module textarea { width: 100%; min-height: 100px; resize: vertical; }
+.ws-module label { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; }
+.ws-module input[type=range] { width: 110px; accent-color: var(--accent); }
+.ws-module input[type=number] { width: 90px; }
+.ws-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr); gap: 18px; }
+.ws-card { background: var(--panel); border: 1px solid var(--line); padding: 14px; border-radius: 12px; min-width: 0; }
+.ws-visualizer { width: 100%; height: 150px; display: block; background: var(--panel-2); border-radius: 8px; }
+.ws-track { padding: 10px 0; border-bottom: 1px solid var(--line); display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.ws-track input[aria-label="Nome da faixa"] { width: 160px; }
+.ws-track audio { width: 100%; height: 36px; }
+.ws-status { margin: 0; position: fixed; top: var(--ws-top); left: 50%; transform: translateX(-50%); max-width: 95%; z-index: 100; padding: 8px 12px; background: var(--panel-2); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; font-size: 13px; }
+.ws-status:empty { display: none; }
+html[data-view=home] .ws-status { display: none; }
+.ws-pixel-wrap { overflow: hidden; background: repeating-conic-gradient(var(--panel-2) 0% 25%, var(--raise) 0% 50%) 0 / 20px 20px; display: grid; place-items: center; min-height: 220px; }
+#wsPixelCanvas { display: block; max-width: 100%; max-height: 60dvh; width: auto; height: auto; touch-action: none; }
+.ws-layer { display: flex; gap: 6px; margin: 5px 0; }
+.ws-layer button:first-child { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; }
+.ws-layer[aria-selected=true] button:first-child { border-color: var(--accent); color: var(--accent); }
+.ws-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.ws-controls label { flex-wrap: wrap; min-width: 0; }
+.ws-controls input:not([type=range]) { width: 100%; }
+.ws-script-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.ws-script-table td, .ws-script-table th { width: 50%; padding: 6px; text-align: left; vertical-align: top; }
+.ws-script-table textarea { min-height: 130px; }
+.ws-capture { position: relative; overflow: hidden; border-radius: 8px; background: var(--panel-2); }
+#wsCaptureCanvas { width: 100%; display: block; }
+.ws-prompter { position: absolute; top: 0; left: 5%; right: 5%; height: 35%; overflow: auto; background: var(--overlay-backdrop); color: var(--fg); text-align: center; font-size: 24px; line-height: 1.6; padding: 8px; scrollbar-width: none; }
+.ws-prompter mark { color: var(--accent-ink); background: var(--accent); }
+.ws-library { display: grid; gap: 8px; }
+.ws-library article { display: flex; align-items: center; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--line); padding: 8px 0; overflow-wrap: anywhere; }
+.ws-hidden { display: none !important; }
+@media (max-width: 860px) {
+  :root { --ws-top: 52px; --ws-dock: calc(48px + env(safe-area-inset-bottom, 0px)); }
+  .ws-top { padding: 0 8px !important; gap: 4px !important; }
+  .ws-top strong { font-size: 10px; }
+  .ws-indicators { gap: 6px; font-size: 9px; flex-wrap: wrap; justify-content: flex-end; }
+  #wsStorage { flex-basis: 100%; text-align: right; }
+  .ws-top label { font-size: 9px; }
+  .ws-dock { padding-bottom: calc(4px + env(safe-area-inset-bottom, 0px)) !important; }
+  .ws-dock button { font-size: 10px; min-height: 40px; padding: 2px; }
+  .ws-module { padding: 10px !important; }
+  .ws-grid { grid-template-columns: minmax(0, 1fr); }
+  .ws-module button { min-height: 44px; }
+  #app .sheet { bottom: calc(var(--tab-h) + var(--ws-dock)); }
+  #app .sheet-scrim { bottom: calc(var(--tab-h) + var(--ws-dock)); }
+  .ws-prompter { font-size: 18px; }
+}

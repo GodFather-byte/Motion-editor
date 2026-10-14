@@ -362,6 +362,35 @@
     }
   }
 
+  async function generateScript(request, options = {}) {
+    const job = begin();
+    let session;
+    try {
+      session = await create(getAPI(), { monitor: monitor(options) }, job);
+      if (!session) return fail('IA local indisponível neste navegador.');
+      const schema = {
+        type: 'object', properties: { scenes: { type: 'array', items: {
+          type: 'object', properties: { audio: { type: 'string' }, video: { type: 'string' } },
+          required: ['audio', 'video'], additionalProperties: false
+        } } }, required: ['scenes'], additionalProperties: false
+      };
+      const data = await jsonPrompt(session,
+        'Escreva um roteiro em português do Brasil para o pedido abaixo. Retorne apenas JSON ' +
+        '{"scenes":[{"audio":"fala / narração","video":"ação visual / enquadramento"}]}. ' +
+        'Não inclua markdown. Pedido:\n' + String(request).slice(0, 20000), schema, job);
+      if (!data || !Array.isArray(data.scenes) || !data.scenes.length ||
+          !data.scenes.every(s => nonempty(s.audio) && nonempty(s.video))) {
+        return fail('A IA não retornou um roteiro válido.');
+      }
+      return { scenes: data.scenes.slice(0, 100).map(s => ({ audio: s.audio, video: s.video })) };
+    } catch (_) {
+      return fail('Não foi possível gerar o roteiro local.');
+    } finally {
+      dispose(session);
+      jobs.delete(job);
+    }
+  }
+
   /** Cancela operações e destrói sessões atuais e sessões que ainda estão sendo criadas. */
   function destroy() {
     generation++;
@@ -373,7 +402,7 @@
   const service = {
     getAPI, checkAvailability, availability: checkAvailability, analyzeVideoFrame,
     generateVideoMetadata, generateMetadata: generateVideoMetadata,
-    suggestSmartCuts, translateSubtitles, destroy,
+    suggestSmartCuts, translateSubtitles, generateScript, destroy,
     /** Callback público substituível; recebe a fração baixada entre 0 e 1. */
     onDownloadProgress(pct) {},
     get reason() { return reason; }

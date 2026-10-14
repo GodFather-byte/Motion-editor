@@ -39,7 +39,7 @@ test('ativação preserva compartilhamentos ainda não consumidos', async () => 
   const handlers = {}, removed = [];
   vm.runInNewContext(code, {
     self: { addEventListener: (name, fn) => { handlers[name] = fn; }, clients: { claim: async () => {} } },
-    caches: { keys: async () => ['motion-v29', 'motion-v30', 'motion-v31', 'shared-media'],
+    caches: { keys: async () => ['motion-v29', 'motion-v30', code.match(/const VERSION = '([^']+)'/)[1], 'shared-media'],
       delete: async name => removed.push(name) }
   });
   let pending;
