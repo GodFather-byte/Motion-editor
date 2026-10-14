@@ -7253,7 +7253,16 @@ window.MotionWorkstationBridge = {
     }
     const linked = project.layers.filter(l => l.s.workstationAsset === assetKey);
     if (linked.length) {
+      pause();
       for (const L of linked) {
+        const previous = A.get(L.s.asset);
+        // Só a borda que ainda alcançava o fim da fonte acompanha a nova duração.
+        if (MEDIA(L.type) && previous?.duration > 0 && rec.duration > 0 &&
+            Math.abs(srcTime(L, L.end) - previous.duration) <= 1e-4) {
+          const end = Math.max(L.start + Math.max(0.1, 1 / project.fps), timeAtSrc(L, rec.duration));
+          growProjectTo(end);
+          L.end = Math.min(project.duration, end);
+        }
         L.s.asset = rec.id;
         const old = VIDS.get(L.id);
         if (old) { old.pause(); VIDS.delete(L.id); }

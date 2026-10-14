@@ -260,13 +260,18 @@
       if (!asset || !['audio', 'video', 'image'].includes(asset.kind) ||
           !/^[\w-]+$/.test(asset.key) || !/^[\w-]+$/.test(asset.revision) ||
           !asset.path?.startsWith(`creator-workstation/${t.project.id}/`) || typeof asset.name !== 'string') return;
-      const current = state().assets[asset.key];
-      if (current?.revision === asset.revision) return;
-      // Não sobrescreve uma edição concorrente que já divergiu da revisão recebida.
-      if (current && current.revision !== detail.previousRevision) {
-        status('Outro estúdio alterou este arquivo. Reabra o projeto para revisar.', true); return;
-      }
+      const acceptsRevision = () => {
+        const current = state().assets[asset.key];
+        if (current?.revision === asset.revision) return false;
+        // Não sobrescreve uma edição concorrente que já divergiu da revisão recebida.
+        if (current && current.revision !== detail.previousRevision) {
+          status('Outro estúdio alterou este arquivo. Reabra o projeto para revisar.', true); return false;
+        }
+        return true;
+      };
+      if (!acceptsRevision()) return;
       await readAsset(asset); requireToken(t);
+      if (!acceptsRevision()) return;
       state().assets[asset.key] = asset; B.commit();
       publishAsset('received', detail);
       void storageStatus();
@@ -282,7 +287,7 @@
   connectAssetChannel();
   function renderAssets() {
     $('#wsAssetList').innerHTML = Object.values(state().assets).map(asset => `
-      <article><span>${esc(asset.name)}<br><small>${esc(asset.kind)} · ${(asset.size / 1024).toFixed(1)} KB</small></span>
+      <article><span>${esc(asset.name)}<br><small>${esc(asset.kind)} · ${esc((asset.size / 1024).toFixed(1))} KB</small></span>
       <div class="ws-toolbar"><button data-send="${esc(asset.key)}" data-opfs>Enviar</button>
       <button data-replace="${esc(asset.key)}" data-opfs>Substituir</button><button data-download="${esc(asset.key)}" data-opfs>Baixar</button></div></article>`).join('') || '<p>Nenhum arquivo salvo neste projeto.</p>';
     unavailable();
@@ -295,7 +300,7 @@
   function stopStreams(streams) { for (const stream of streams || []) for (const track of stream.getTracks()) track.stop(); }
   function clearAudio() {
     const runtime = audioRuntime; audioRuntime = null;
-    if (!runtime) return;
+    if (!runtime) { unavailable(); return; }
     cancelAnimationFrame(runtime.raf);
     clearTimeout(runtime.timer);
     runtime.cancelled = true;
@@ -305,6 +310,7 @@
     void runtime.context?.close().catch(() => {});
     $('#wsAudioStop').disabled = true;
     $('#wsAudioRecord').textContent = 'Gravar microfone';
+    unavailable();
   }
   async function decodeTracks(t, context) {
     const tracks = state().audio.tracks.map(track => ({ ...track }));
@@ -350,8 +356,8 @@
     $('#wsVoice').checked = audio.preset; $('#wsMonitor').checked = audio.monitor;
     $('#wsTracks').innerHTML = audio.tracks.map(track => `<div class="ws-track" data-track="${esc(track.id)}">
       <input aria-label="Nome da faixa" data-track-field="name" value="${esc(track.name)}">
-      <label>Início (s) <input aria-label="Início da faixa" type="number" min="0" max="3600" step=".1" data-track-field="start" value="${track.start}"></label>
-      <label>Volume <input aria-label="Volume da faixa" type="range" min="0" max="2" step=".01" data-track-field="gain" value="${track.gain}"></label>
+      <label>Início (s) <input aria-label="Início da faixa" type="number" min="0" max="3600" step=".1" data-track-field="start" value="${esc(track.start)}"></label>
+      <label>Volume <input aria-label="Volume da faixa" type="range" min="0" max="2" step=".01" data-track-field="gain" value="${esc(track.gain)}"></label>
       <label><input type="checkbox" data-track-field="muted" ${track.muted ? 'checked' : ''}> Mudo</label><button data-track-remove="${esc(track.id)}">Remover</button>
       </div>`).join('') || '<p>Importe ou grave uma faixa para começar.</p>';
     unavailable();
@@ -484,14 +490,14 @@
       <button data-pixel-select="${esc(layer.id)}">${esc(layer.name)}</button><button data-pixel-up="${esc(layer.id)}" aria-label="Trazer para frente">↑</button>
       <button data-pixel-down="${esc(layer.id)}" aria-label="Enviar para trás">↓</button><button data-pixel-remove="${esc(layer.id)}" aria-label="Remover camada">×</button></div>`).join('') || '<p>Adicione imagem, quadro ou texto.</p>';
     const layer = pixel.layers.find(layer => layer.id === pixel.selected);
-    const range = (label, field, min, max, step = 1) => `<label>${label}<input data-pixel-field="${field}" type="range" min="${min}" max="${max}" step="${step}" value="${layer[field]}"><output>${layer[field]}</output></label>`;
+    const range = (label, field, min, max, step = 1) => `<label>${esc(label)}<input data-pixel-field="${esc(field)}" type="range" min="${esc(min)}" max="${esc(max)}" step="${esc(step)}" value="${esc(layer[field])}"><output>${esc(layer[field])}</output></label>`;
     $('#wsPixelProps').innerHTML = !layer ? '' : `<div class="ws-controls">
-      <label>X<input data-pixel-field="x" type="number" value="${layer.x}"></label><label>Y<input data-pixel-field="y" type="number" value="${layer.y}"></label>
-      <label>Largura<input data-pixel-field="w" type="number" min="1" max="16384" value="${layer.w}"></label><label>Altura<input data-pixel-field="h" type="number" min="1" max="16384" value="${layer.h}"></label>
+      <label>X<input data-pixel-field="x" type="number" value="${esc(layer.x)}"></label><label>Y<input data-pixel-field="y" type="number" value="${esc(layer.y)}"></label>
+      <label>Largura<input data-pixel-field="w" type="number" min="1" max="16384" value="${esc(layer.w)}"></label><label>Altura<input data-pixel-field="h" type="number" min="1" max="16384" value="${esc(layer.h)}"></label>
       ${range('Opacidade', 'opacity', 0, 1, .01)}${range('Brilho', 'brightness', 0, 200)}${range('Contraste', 'contrast', 0, 200)}
       ${range('Saturação', 'saturation', 0, 200)}${range('Matiz', 'hue', -180, 180)}
-      ${layer.type === 'text' ? `<label>Texto<input data-pixel-field="text" value="${esc(layer.text)}"></label><label>Tamanho<input data-pixel-field="size" type="number" min="1" max="1000" value="${layer.size}"></label>
-      <label>Cor<input data-pixel-field="color" type="color" value="${layer.color}"></label><label>Cor 2<input data-pixel-field="color2" type="color" value="${layer.color2}"></label>
+      ${layer.type === 'text' ? `<label>Texto<input data-pixel-field="text" value="${esc(layer.text)}"></label><label>Tamanho<input data-pixel-field="size" type="number" min="1" max="1000" value="${esc(layer.size)}"></label>
+      <label>Cor<input data-pixel-field="color" type="color" value="${esc(layer.color)}"></label><label>Cor 2<input data-pixel-field="color2" type="color" value="${esc(layer.color2)}"></label>
       <label>Estilo<select data-pixel-field="style">${['solid', 'stroke', 'neon', 'gradient'].map((style, i) => `<option value="${style}" ${style === layer.style ? 'selected' : ''}>${['Sólido', 'Contorno', 'Neon', 'Degradê'][i]}</option>`).join('')}</select></label>
       ${range('Contorno', 'stroke', 0, 30)}${range('Neon', 'glow', 0, 100)}` : ''}</div>`;
     void run(null, () => drawPixel());
@@ -934,7 +940,7 @@
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       stopStorageMonitor(); clearAudio(); if (capture?.recorder?.state === 'recording') capture.recorder.stop();
-    } else startStorageMonitor();
+    } else { startStorageMonitor(); unavailable(); }
   });
   startStorageMonitor();
   navigator.getBattery?.().then(battery => {

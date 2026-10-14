@@ -2,38 +2,37 @@
 Atualizado por: Copilot em 14/10/2026
 
 ## Objetivo atual
-Entregar Creator Workstation OS preservando o editor de vídeo e os módulos nativos.
+Corrigir revisão do Creator Workstation OS, preservando as correções DOM XSS anteriores.
 
 ## Estado agora
-- Shell responsivo e estado único em `project.workstation`; vídeo original mantém DOM e folhas.
-- APIs reais: WorkstationShell, ProjectAssetBus, AudioLabModule, PixelStudioModule, AIScriptCamModule.
-- APIs novas devolvem snapshots seguros; bus oferece OPFS, subscribe/unsubscribe e replay de existentes.
-- OPFS usa revisões imutáveis; CustomEvents e BroadcastChannel compartilham metadados por projeto.
-- Link envia novas mídias e atualiza vínculos sem duplicar; desligado só envia por ação explícita.
-- Fontes Áudio/Pixel ficam no módulo até exportar; se enviadas manualmente, recebem atualizações.
-- Áudio multifaixa e preset exato: 80 Hz, 3 kHz/+4 dB, compressor −24 dB, ratio 12:1.
-- Mix WAV/WebM processado via OfflineAudioContext; Pixel exporta overlay PNG transparente.
-- Roteiro LanguageModel local, teleprompter, fala opcional e captura composta tela/webcam/áudio.
-- Câmera salva sem envio automático e pergunta sobre timeline/corte; ambas as escolhas abrem Vídeo.
-- Uso/quota/livre em MB/GB: polling 10 s, saves e visibility; pagehide/pageshow limpam/restauram.
-- Tokens isolam operações obsoletas; troca de módulo/projeto libera dispositivos e contextos.
-- `sw.js`: motion-v33 inclui workstation.js/css no shell offline.
-- Validação final: 94 testes executados; 93 passaram e 1 timeout de exportação já existe no HEAD.
-- Workstation: 18/18 passaram; sintaxe app/workstation/chrome-ai/sw/teste e git diff --check OK.
+- Shell responsivo e estado único em `project.workstation`; DOM/folhas do vídeo preservados.
+- APIs reais de módulos, ProjectAssetBus, OPFS imutável e Link opcional continuam ativos.
+- Correções DOM XSS anteriores e testes de projetos maliciosos/estado mutado preservados.
+- Reexportar pelo mesmo mixKey ajusta apenas caudas antes completas, comparadas via srcTime.
+- Novo fim usa timeAtSrc (inclusive rampas); trims, cortes, início, velocidade e keyframes preservados.
+- Projeto cresce sem reposicionar clipes, até 600 s; mínimo de 0,1 s ou um frame.
+- Assets anteriores continuam disponíveis para undo; fundo acompanha crescimento do projeto.
+- Substituição vinculada pausa playback após decodificação/guards e antes da troca de assets.
+- BroadcastChannel revalida revisão após leitura OPFS/token, evitando sobrescrever edição concorrente.
+- Corridas determinísticas cobrem arquivo existente, criação concorrente e revisão duplicada.
+- Cancelar microfone por visibilitychange libera dispositivos e reabilita gravação, inclusive ao voltar.
+- `sw.js`: motion-v35; sem novas dependências, ferramentas ou mudanças no README.
+- workstation-unit + workstation: 25/25 aprovados (inclui cinco novas regressões).
+- slowmo + media-modules + native-services + home + mobile-sheets: 52/52 aprovados.
+- Total validado: 77/77; layout de 360/390 px, XSS, captura e áudio real incluídos.
+- Sintaxe app/workstation/sw/teste e git diff --check aprovados.
 
 ## Como retomar
-1. Confira `git status`; refinamento entregue sem commit/push por instrução do coordenador.
-2. Suítes: workstation-unit/workstation/native-services/silence-cutter/share-target/ai-local.
-3. Regressões: mobile-sheets/media-modules/home/short-form/preview-controls/slowmo/video-editor.
-4. Use CHROMIUM_PATH=/usr/bin/chromium e TMPDIR apontando para a raiz do projeto; FFmpeg instalado.
-5. Coordenador conclui scan de segredos, validação de segurança e commit; não precisa repetir testes.
+1. Confira `git status`; alterações anteriores preservadas, sem commit/push por instrução explícita.
+2. Testes usam TMPDIR="$PWD" CHROMIUM_PATH=/usr/bin/chromium node --test e os sete arquivos acima.
+3. Coordenador pode fazer scan de segredos, commit e parallel_validation; não executados nesta revisão.
 
 ## Arquivos relevantes
-- workstation.js/css, chrome-ai.js, ponte app.js, index.html, sw.js, README/MAPA e testes workstation.
+- Correção atual: app.js, workstation.js, sw.js, tests/workstation.cjs e este handoff.
 
 ## Pendências e limitações
-- video-editor.cjs:192 espera “Vídeo pronto” e estoura 15 s; reproduzido em cópia limpa do HEAD.
-- Alteração alheia de seleção MediaRecorder em video-editor.cjs foi removida; fixture share-target mantida.
+- video-editor.cjs:192 tem timeout de exportação reproduzido no HEAD pelo coordenador; não alterado/reexecutado.
+- CodeQL/parallel_validation precisam ser reexecutados pelo coordenador, se necessário.
 - APIs de captura/OPFS/LanguageModel/fala exigem navegador compatível e HTTPS/localhost.
 - Modelo real e celular físico não verificados; testes usam API LanguageModel controlada.
 - OPFS é privado por origem; reconhecimento de fala opt-in pode usar serviço do navegador.

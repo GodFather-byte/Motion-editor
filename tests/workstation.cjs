@@ -33,6 +33,99 @@ async function editor(t, init) {
   return page;
 }
 const open = (page, module) => page.locator(`.ws-dock [data-workspace="${module}"]`).click();
+async function assertNoInjectedMarkup(page) {
+  assert.deepEqual(await page.evaluate(() => ({
+    executed: window.workstationXSS || 0,
+    markup: document.querySelectorAll('.ws-module img, .ws-module svg, .ws-module script').length,
+    handlers: [...document.querySelectorAll('.ws-module *')].flatMap(el =>
+      [...el.attributes].filter(attr => /^on/i.test(attr.name)).map(attr => attr.name))
+  })), { executed: 0, markup: 0, handlers: [] });
+}
+test('segurança: faixas importadas e estado mutado escapam atributos, inclusive início e volume', async t => {
+  const page = await editor(t);
+  const payloads = [
+    '"><img src=x onerror="window.workstationXSS=1"><input onfocus="window.workstationXSS=2',
+    "' autofocus onfocus='window.workstationXSS=3'><svg onload='window.workstationXSS=4'>"
+  ];
+  for (const payload of payloads) {
+    await page.evaluate(async payload => {
+      const workstation = { active: 'audio', audio: { tracks: [
+        { id: payload, name: payload, start: payload, gain: payload, muted: false }
+      ], preset: true, monitor: false } };
+      await __motion.startProject({ ...JSON.parse(JSON.stringify(__motion.P())), workstation });
+    }, payload);
+    for (const mode of ['imported', 'mutated']) {
+      if (mode === 'mutated') await page.evaluate(payload => {
+        Object.assign(__motion.P().workstation.audio.tracks[0], { id: payload, name: payload, start: payload, gain: payload });
+        WorkstationShell.activate('audio');
+      }, payload + '&mutated');
+      const expected = payload + (mode === 'mutated' ? '&mutated' : '');
+      for (const field of ['name', 'start', 'gain']) {
+        assert.equal(await page.locator(`[data-track-field="${field}"]`).getAttribute('value'), expected);
+      }
+      assert.equal(await page.locator('[data-track]').getAttribute('data-track'), expected);
+      await assertNoInjectedMarkup(page);
+    }
+  }
+  await page.evaluate(() => {
+    Object.assign(__motion.P().workstation.audio.tracks[0], { id: 'normal', name: 'Voz & música', start: 1.5, gain: .75 });
+    WorkstationShell.activate('audio');
+  });
+  assert.equal(await page.locator('[data-track-field="name"]').inputValue(), 'Voz & música');
+  assert.equal(await page.locator('[data-track-field="start"]').inputValue(), '1.5');
+  assert.equal(await page.locator('[data-track-field="gain"]').inputValue(), '0.75');
+});
+test('segurança: Pixel importado e mutado escapa números, cores e saídas de ranges sem perder edição normal', async t => {
+  const page = await editor(t);
+  const fields = ['x', 'y', 'w', 'h', 'size', 'color', 'color2', 'text', 'style',
+    'opacity', 'brightness', 'contrast', 'saturation', 'hue', 'stroke', 'glow'];
+  const ranges = ['opacity', 'brightness', 'contrast', 'saturation', 'hue', 'stroke', 'glow'];
+  const payloads = [
+    '"><img src=x onerror="window.workstationXSS=1"><input onfocus="window.workstationXSS=2',
+    '<img src=x onerror=window.workstationXSS=3>&"\''
+  ];
+  for (const payload of payloads) {
+    await page.evaluate(async ({ payload, fields }) => {
+      const layer = { id: payload, name: payload, type: 'text', ...Object.fromEntries(fields.map(field => [field, payload])) };
+      const workstation = { active: 'pixel', pixel: { width: payload, height: payload, selected: payload, layers: [layer] } };
+      await __motion.startProject({ ...JSON.parse(JSON.stringify(__motion.P())), workstation });
+    }, { payload, fields });
+    for (const mode of ['imported', 'mutated']) {
+      const expected = payload + (mode === 'mutated' ? '&mutated' : '');
+      if (mode === 'mutated') await page.evaluate(({ payload, fields }) => {
+        const pixel = __motion.P().workstation.pixel;
+        Object.assign(pixel.layers[0], Object.fromEntries(fields.map(field => [field, payload])));
+        pixel.layers[0].id = pixel.layers[0].name = pixel.selected = pixel.width = pixel.height = payload;
+        WorkstationShell.activate('pixel');
+      }, { payload: expected, fields });
+      for (const field of fields.filter(field => field !== 'style')) {
+        assert.equal(await page.locator(`[data-pixel-field="${field}"]`).getAttribute('value'), expected, field);
+      }
+      for (const field of ranges) {
+        assert.equal(await page.locator(`[data-pixel-field="${field}"] + output`).textContent(), expected, field);
+      }
+      assert.equal(await page.locator('[data-pixel-select]').textContent(), expected);
+      assert.equal(await page.locator('[data-pixel-select]').getAttribute('data-pixel-select'), expected);
+      assert.deepEqual(await page.locator('[data-pixel-field="style"] option').allTextContents(), ['Sólido', 'Contorno', 'Neon', 'Degradê']);
+      await assertNoInjectedMarkup(page);
+    }
+  }
+  await page.evaluate(() => {
+    const pixel = __motion.P().workstation.pixel;
+    pixel.width = 320; pixel.height = 180;
+    Object.assign(pixel.layers[0], { x: 12, y: 20, w: 200, h: 80, size: 32, color: '#123456', color2: '#abcdef',
+      text: 'Olá & <Pixel>', style: 'gradient', opacity: .75, brightness: 110, contrast: 120, saturation: 90, hue: 15, stroke: 2, glow: 4 });
+    WorkstationShell.activate('pixel');
+  });
+  for (const [field, value] of Object.entries({ x: '12', y: '20', w: '200', h: '80', size: '32',
+    color: '#123456', color2: '#abcdef', text: 'Olá & <Pixel>', style: 'gradient', opacity: '0.75' })) {
+    assert.equal(await page.locator(`[data-pixel-field="${field}"]`).inputValue(), value);
+  }
+  assert.equal(await page.evaluate(() => [...document.querySelector('#wsPixelCanvas').getContext('2d').getImageData(13, 21, 198, 78).data]
+    .some((value, index) => index % 4 === 3 && value > 0)), true);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), 360);
+  await assertNoInjectedMarkup(page);
+});
 async function savePNG(page, key, color, send = false) {
   return page.evaluate(async ({ key, color, send }) => {
     const c = document.createElement('canvas'); c.width = 320; c.height = 180;
@@ -276,6 +369,54 @@ test('bus entre abas envia nova mídia uma vez e preserva Link desligado e confi
   assert.equal(await page.evaluate(() => __motion.P().layers.length), 2);
   await page.evaluate(() => remoteChannel.close());
 });
+test('bus revalida revisões após leitura OPFS: edição local, arquivo novo concorrente e duplicata', async t => {
+  const page = await editor(t);
+  const source = await savePNG(page, null, 'red');
+  await page.evaluate(() => WorkstationShell.setDynamicLink(false));
+  for (const scenario of ['existing', 'new', 'duplicate']) {
+    await page.evaluate(({ source, scenario }) => {
+      const original = ProjectAssetBus.get(source), key = scenario === 'existing' ? source : `race-${scenario}`;
+      const asset = { ...original, key, revision: `remote-${scenario}` };
+      window.race = { key, asset, received: 0, blocked: false };
+      ProjectAssetBus.subscribe(event => { if (event.type === 'received' && event.asset.key === key) race.received++; }, { replay: false });
+      const getFile = FileSystemFileHandle.prototype.getFile;
+      FileSystemFileHandle.prototype.getFile = async function () {
+        const file = await getFile.call(this);
+        if (!race.blocked && this.name === original.path.split('/').pop()) {
+          race.blocked = true;
+          await new Promise(resolve => { race.release = resolve; });
+        }
+        return file;
+      };
+      race.restore = () => { FileSystemFileHandle.prototype.getFile = getFile; };
+      race.channel = new BroadcastChannel('motion-workstation-assets-v1');
+      race.detail = { sender: 'racing-tab', projectId: __motion.P().id, asset,
+        previousRevision: scenario === 'existing' ? original.revision : null };
+      race.channel.postMessage(race.detail);
+    }, { source, scenario });
+    await page.waitForFunction(() => !!window.race?.release);
+    let expectedRevision;
+    if (scenario === 'duplicate') {
+      await page.evaluate(() => race.channel.postMessage(race.detail));
+      await page.waitForFunction(() => race.received === 1);
+      expectedRevision = `remote-${scenario}`;
+    } else {
+      const key = await page.evaluate(() => race.key);
+      await savePNG(page, key, 'blue');
+      expectedRevision = await page.evaluate(key => ProjectAssetBus.get(key).revision, key);
+    }
+    const result = await page.evaluate(async () => {
+      race.release();
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      race.restore(); race.channel.close();
+      return { revision: ProjectAssetBus.get(race.key).revision, received: race.received,
+        message: document.querySelector('#wsStatus').textContent };
+    });
+    assert.equal(result.revision, expectedRevision, scenario);
+    assert.equal(result.received, scenario === 'duplicate' ? 1 : 0, scenario);
+    if (scenario !== 'duplicate') assert.match(result.message, /Outro estúdio alterou/);
+  }
+});
 test('Pixel: texto, estilos, posição, PNG transparente e substituição do overlay', async t => {
   const page = await editor(t); await open(page, 'pixel');
   await page.locator('[data-action="pixel-text"]').click();
@@ -335,6 +476,132 @@ test('mix real OfflineAudioContext: multifaixa, offset, filtro 80 Hz e WAV expor
   });
   assert.equal(await page.evaluate(() => __motion.P().layers.length), 1);
   assert.ok(await page.evaluate(() => __motion.A.get(__motion.P().layers[0].s.asset).buffer.length > 0));
+});
+test('reexportar mix alonga/encurta só caudas completas e preserva trims, cortes, rampas e keyframes', async t => {
+  const page = await editor(t); await open(page, 'audio');
+  const result = await page.evaluate(async () => {
+    const m = __motion, p = m.P(), s = CreatorWorkstation.state();
+    const data = new Float32Array(48000);
+    const wav = AudioLabModule.encodeWav({ numberOfChannels: 1, length: data.length, sampleRate: 48000, getChannelData: () => data });
+    const key = await ProjectAssetBus.save(wav, 'audio', 'Fonte.wav', { role: 'source' });
+    s.audio.tracks = [{ id: 'source', asset: key, name: 'Fonte', start: 0, gain: 1 }];
+    await AudioLabModule.exportMix('wav');
+    const full = p.layers[0], oldAsset = full.s.asset, mixKey = s.audio.mixKey;
+    full.start = 1; full.end = 2;
+    full.kf.volume = [{ t: 1, v: .5, ease: 'linear' }, { t: 2, v: 1, ease: 'linear' }];
+    const clone = () => { const l = JSON.parse(JSON.stringify(full)); l.id = crypto.randomUUID(); p.layers.push(l); return l; };
+    const trimmed = clone(); trimmed.end = 1.5;
+    const ramped = clone();
+    Object.assign(ramped.s, { trimIn: .2, speed: .5, ramp: 'custom', rampPts: [[1, .5], [3, 1.5]] });
+    ramped.end = m.timeAtSrc(ramped, 1);
+    const rampTrimmed = JSON.parse(JSON.stringify(ramped)); rampTrimmed.id = crypto.randomUUID();
+    rampTrimmed.end = m.timeAtSrc(rampTrimmed, .7); p.layers.push(rampTrimmed);
+    const split = clone(); m.splitLayer(split, 1.5);
+    const splitTail = p.layers.find(l => l !== split && l.s.trimIn === .5);
+    p.duration = Math.ceil(ramped.end * 10) / 10;
+    const background = m.makeLayer('rect', { start: 0, end: p.duration }); p.layers.push(background);
+    const layers = [full, trimmed, ramped, rampTrimmed, split, splitTail];
+    const unchanged = l => JSON.stringify({ start: l.start, s: { ...l.s, asset: null }, kf: l.kf });
+    const before = layers.map(unchanged), trimmedEnds = [trimmed.end, rampTrimmed.end, split.end];
+    m.setTime(.3);
+    s.audio.tracks[0].start = 3;
+    await AudioLabModule.exportMix('wav');
+    const longerDuration = m.A.get(full.s.asset).duration;
+    const longer = {
+      key: s.audio.mixKey, layers: p.layers.length,
+      full: full.end, ramp: ramped.end, expectedRamp: m.timeAtSrc(ramped, longerDuration), split: splitTail.end,
+      sourceDuration: longerDuration,
+      trims: [trimmed.end, rampTrimmed.end, split.end], unchanged: layers.map(unchanged),
+      duration: p.duration, background: background.end,
+      sameAsset: new Set(layers.map(l => l.s.asset)).size,
+      oldAvailable: m.A.has(oldAsset) && !!p.assets[oldAsset]
+    };
+    s.audio.tracks[0].start = 0;
+    await AudioLabModule.exportMix('wav');
+    const shorterDuration = m.A.get(full.s.asset).duration;
+    const shorter = { full: full.end, ramp: ramped.end, expectedRamp: m.timeAtSrc(ramped, shorterDuration), sourceDuration: shorterDuration,
+      split: splitTail.end, trims: [trimmed.end, rampTrimmed.end, split.end], unchanged: layers.map(unchanged) };
+    return { mixKey, before, trimmedEnds, longer, shorter };
+  });
+  assert.equal(result.longer.key, result.mixKey);
+  assert.equal(result.longer.layers, 7); assert.equal(result.longer.sameAsset, 1);
+  assert.equal(result.longer.full, 1 + result.longer.sourceDuration);
+  assert.equal(result.longer.split, result.longer.full);
+  assert.ok(Math.abs(result.longer.ramp - result.longer.expectedRamp) < 1e-6);
+  assert.ok(result.longer.duration >= result.longer.ramp);
+  assert.equal(result.longer.background, result.longer.duration);
+  assert.equal(result.longer.oldAvailable, true);
+  assert.equal(result.shorter.full, 1 + result.shorter.sourceDuration);
+  assert.equal(result.shorter.split, result.shorter.full);
+  assert.ok(Math.abs(result.shorter.ramp - result.shorter.expectedRamp) < 1e-6);
+  for (const phase of [result.longer, result.shorter]) {
+    assert.deepEqual(phase.trims, result.trimmedEnds);
+    assert.deepEqual(phase.unchanged, result.before);
+  }
+});
+test('substituição vinculada respeita 600 s, mínimo de clipe e frame sem mover o início', async t => {
+  const page = await editor(t);
+  const result = await page.evaluate(async () => {
+    const m = __motion, p = m.P();
+    const send = async duration => {
+      const data = new Float32Array(48000 * duration);
+      const wav = AudioLabModule.encodeWav({ numberOfChannels: 1, length: data.length, sampleRate: 48000, getChannelData: () => data });
+      await MotionWorkstationBridge.send(new File([wav], 'Mix.wav', { type: 'audio/wav' }), 'limits');
+    };
+    await send(1);
+    const l = p.layers[0]; p.duration = 600; l.start = 599; l.end = 600;
+    await send(2);
+    const capped = { start: l.start, end: l.end, duration: p.duration };
+    p.fps = 5; l.start = 1; l.s.trimIn = 1.99; l.end = 1.01;
+    await send(.1);
+    return { capped, min: l.end - l.start, start: l.start, trim: l.s.trimIn };
+  });
+  assert.deepEqual(result.capped, { start: 599, end: 600, duration: 600 });
+  assert.ok(Math.abs(result.min - .2) < 1e-6);
+  assert.equal(result.start, 1); assert.equal(result.trim, 1.99);
+});
+test('substituir mix durante playback pausa só após decodificar e para fontes antigas antes da troca', async t => {
+  const page = await editor(t, () => {
+    window.scheduledSources = [];
+    const create = AudioContext.prototype.createBufferSource;
+    AudioContext.prototype.createBufferSource = function () {
+      const node = create.call(this), start = node.start.bind(node), stop = node.stop.bind(node);
+      const record = { started: false, stopped: false };
+      scheduledSources.push(record);
+      node.start = (...args) => { record.started = true; return start(...args); };
+      node.stop = (...args) => {
+        if (!args.length || args[0] <= this.currentTime) {
+          record.stopped = true; record.assetAtStop = __motion.P().layers[0].s.asset;
+        }
+        return stop(...args);
+      };
+      return node;
+    };
+  });
+  await page.evaluate(async () => {
+    const data = new Float32Array(48000 * 2);
+    window.playbackWav = AudioLabModule.encodeWav({ numberOfChannels: 1, length: data.length, sampleRate: 48000, getChannelData: () => data });
+    await ProjectAssetBus.save(playbackWav, 'audio', 'Mix.wav', { key: 'playing-mix' });
+    window.oldPlayingAsset = __motion.P().layers[0].s.asset;
+    document.querySelector('#btnPlay').click();
+    const decode = AudioContext.prototype.decodeAudioData;
+    AudioContext.prototype.decodeAudioData = async function (...args) {
+      const buffer = await decode.apply(this, args);
+      await new Promise(resolve => { window.releaseDecode = resolve; });
+      return buffer;
+    };
+    window.replacingMix = ProjectAssetBus.save(playbackWav, 'audio', 'Mix.wav', { key: 'playing-mix' });
+    window.restoreDecode = () => { AudioContext.prototype.decodeAudioData = decode; };
+  });
+  await page.waitForFunction(() => !!window.releaseDecode);
+  assert.equal(await page.evaluate(() => __motion.S.playing), true);
+  assert.ok(await page.evaluate(() => scheduledSources.some(s => s.started && !s.stopped)));
+  const result = await page.evaluate(async () => {
+    releaseDecode(); await replacingMix; restoreDecode();
+    return { playing: __motion.S.playing, changed: __motion.P().layers[0].s.asset !== oldPlayingAsset,
+      stopped: scheduledSources.filter(s => s.started).every(s => s.stopped && s.assetAtStop === oldPlayingAsset) };
+  });
+  assert.deepEqual(result, { playing: false, changed: true, stopped: true });
 });
 test('IA local real via adaptador, roteiro editável e mensagem honesta sem OPFS', async t => {
   const page = await editor(t, () => {
@@ -439,6 +706,41 @@ test('importação multifaixa e microfone real com monitor opcional; falha de pe
   await page.waitForFunction(() => document.querySelector('#wsStatus').textContent.includes('Permissão negada'));
   assert.equal(await page.locator('#wsAudioRecord').isEnabled(), true);
   assert.equal(await page.evaluate(() => CreatorWorkstation.state().audio.tracks.length), 3);
+});
+test('microfone cancelado em segundo plano libera dispositivos e volta a gravar ao retornar', async t => {
+  const page = await editor(t, () => {
+    window.micTracks = []; window.micContexts = [];
+    navigator.mediaDevices.getUserMedia = async () => {
+      const context = new AudioContext(), source = context.createOscillator(), output = context.createMediaStreamDestination();
+      source.connect(output); source.start(); await context.resume();
+      micContexts.push(context); micTracks.push(...output.stream.getTracks());
+      return output.stream;
+    };
+  });
+  await open(page, 'audio');
+  const visibility = hidden => page.evaluate(hidden => {
+    Object.defineProperty(document, 'hidden', { configurable: true, value: hidden });
+    document.dispatchEvent(new Event('visibilitychange'));
+  }, hidden);
+  await page.locator('#wsAudioRecord').click();
+  await page.waitForFunction(() => !document.querySelector('#wsAudioStop').disabled);
+  assert.equal(await page.locator('#wsAudioRecord').isDisabled(), true);
+  await visibility(true);
+  assert.equal(await page.locator('#wsAudioRecord').isEnabled(), true);
+  assert.equal(await page.locator('#wsAudioStop').isDisabled(), true);
+  assert.equal(await page.evaluate(() => micTracks.every(track => track.readyState === 'ended')), true);
+  await visibility(false);
+  assert.equal(await page.locator('#wsAudioRecord').isEnabled(), true);
+  assert.equal(await page.locator('#wsAudioRecord').textContent(), 'Gravar microfone');
+  assert.equal(await page.evaluate(() => CreatorWorkstation.state().audio.tracks.length), 0);
+  await page.locator('#wsAudioRecord').click();
+  await page.waitForFunction(() => micTracks.length === 2 && !document.querySelector('#wsAudioStop').disabled);
+  await page.waitForTimeout(300);
+  await page.locator('#wsAudioStop').click();
+  await page.waitForFunction(() => CreatorWorkstation.state().audio.tracks.length === 1);
+  assert.equal(await page.locator('#wsAudioRecord').isEnabled(), true);
+  assert.equal(await page.evaluate(() => micTracks.every(track => track.readyState === 'ended')), true);
+  await page.evaluate(() => Promise.all(micContexts.map(context => context.close())));
 });
 test('teleprompter acompanha palavras reconhecidas sem destacar palavras ausentes', async t => {
   const page = await editor(t, () => {
