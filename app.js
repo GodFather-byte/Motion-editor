@@ -135,6 +135,7 @@ const S = {
   exporting: false,
   bounds: new Map(),   // id da camada -> {w,h}
   view: 1,
+  stageZoom: 1,
 };
 const A = new Map();    // arquivos carregados: id -> {kind, blob, url, el, buffer, peaks, duration, w, h}
 const VIDS = new Map(); // id da camada -> <video> próprio
@@ -2278,7 +2279,7 @@ function fitStage() {
   const cs = getComputedStyle(stage);
   const aw = stage.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
   const ah = stage.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
-  const r = Math.max(0.01, Math.min(aw / p.width, ah / p.height));
+  const r = Math.max(0.01, Math.min(aw / p.width, ah / p.height)) * S.stageZoom;
   const cw = Math.floor(p.width * r), ch = Math.floor(p.height * r);
   const dpr = window.devicePixelRatio || 1;
   // resolução do preview durante a reprodução: a da tela, nunca mais que o projeto
@@ -2290,6 +2291,22 @@ function fitStage() {
   S.view = cw / p.width;
   renderMain(); drawOverlay();
 }
+
+function syncStageZoom() {
+  $('#btnPreviewFit').textContent = `${Math.round(S.stageZoom * 100)}%`;
+  $('#btnPreviewFit').title = S.stageZoom === 1 ? 'A prévia está ajustada à área' : 'Ajustar prévia à área';
+  $('#btnPreviewZoomOut').disabled = S.stageZoom <= 0.5;
+  $('#btnPreviewZoomIn').disabled = S.stageZoom >= 2;
+}
+function setStageZoom(zoom) {
+  S.stageZoom = clamp(Math.round(zoom * 100) / 100, 0.5, 2);
+  syncStageZoom();
+  fitStage();
+}
+$('#btnPreviewZoomOut').onclick = () => setStageZoom(S.stageZoom - 0.1);
+$('#btnPreviewZoomIn').onclick = () => setStageZoom(S.stageZoom + 0.1);
+$('#btnPreviewFit').onclick = () => setStageZoom(1);
+syncStageZoom();
 
 const toProject = e => { const r = overlay.getBoundingClientRect(); return { x: (e.clientX - r.left) / S.view, y: (e.clientY - r.top) / S.view }; };
 
@@ -6342,14 +6359,7 @@ menu.addEventListener('click', async e => {
   } else if (act === 'demo') {
     openDemo();
   } else if (act === 'save') {
-    toast('Preparando o arquivo…');
-    const out = JSON.parse(snapshot());
-    for (const [id, meta] of Object.entries(out.assets)) {
-      const rec = A.get(id);
-      if (rec) meta.data = await blobToDataURL(rec.blob);
-    }
-    download(new Blob([JSON.stringify(out)], { type: 'application/json' }), `${fileBase()}.motion.json`);
-    toast('Projeto salvo nos seus downloads.');
+    await saveProjectFile();
   } else if (act === 'open') {
     $('#projectInput').click();
   } else if (act === 'png') {
@@ -6371,11 +6381,27 @@ menu.addEventListener('click', async e => {
       <kbd>, .</kbd><span>Quadro anterior / próximo</span>
       <kbd>Home</kbd><span>Voltar ao início</span>
       <kbd>Ctrl+D</kbd><span>Duplicar camada</span>
+      <kbd>Ctrl/Cmd+S</kbd><span>Salvar projeto (.motion.json)</span>
       <kbd>Delete</kbd><span>Excluir camada</span>
       <kbd>Ctrl+Z</kbd><span>Desfazer (Ctrl+Shift+Z refaz)</span>
       <kbd>Shift</kbd><span>Ao girar, prende em 15°</span></div>`, [{ label: 'Fechar', cls: 'btn-primary' }]);
   }
 });
+
+async function saveProjectFile() {
+  toast('Preparando o arquivo…');
+  try {
+    const out = JSON.parse(snapshot());
+    for (const [id, meta] of Object.entries(out.assets)) {
+      const rec = A.get(id);
+      if (rec) meta.data = await blobToDataURL(rec.blob);
+    }
+    download(new Blob([JSON.stringify(out)], { type: 'application/json' }), `${fileBase()}.motion.json`);
+    toast('Projeto salvo nos seus downloads.');
+  } catch {
+    toast('Não foi possível salvar o projeto. Verifique o espaço disponível.');
+  }
+}
 
 $('#projectInput').addEventListener('change', async e => {
   const f = e.target.files[0];
@@ -6430,6 +6456,7 @@ document.addEventListener('keydown', e => {
   const L = selLayer();
   const mod = e.ctrlKey || e.metaKey;
   if (e.code === 'Space') { e.preventDefault(); S.playing ? pause() : play(); }
+  else if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); saveProjectFile(); }
   else if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
   else if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); }
   else if (mod && e.key.toLowerCase() === 'd' && L) { e.preventDefault(); duplicateLayer(L); }

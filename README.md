@@ -101,6 +101,7 @@ Testes de navegador, no ambiente de desenvolvimento com Playwright, Chromium, FF
 ```bash
 node --check app.js
 node --check lottie.js
+node --test tests/preview-controls.cjs # zoom da prévia, layout móvel e salvar por atalho
 node --test tests/video-editor.cjs
 node --test tests/code-animation.cjs   # painel Código (baixa o GSAP, precisa de internet)
 node --test tests/export.cjs           # exportação rápida, GIF e preview leve (precisa de internet)
@@ -147,4 +148,6 @@ Este projeto é licenciado sob **AGPL-3.0** (arquivo [LICENSE](LICENSE)). Ela é
 
 ## Atalhos
 
-`Espaço` reproduz/pausa · `K` keyframe em todas · setas movem (Shift = 10 px) · `,` `.` quadro a quadro · `Ctrl+Z` desfaz · `Ctrl+D` duplica · `Delete` exclui · `Shift` ao girar prende em 15°.
+`Espaço` reproduz/pausa · `K` keyframe em todas · setas movem (Shift = 10 px) · `,` `.` quadro a quadro · `Ctrl+Z` desfaz · `Ctrl+D` duplica · `Ctrl/Cmd+S` salva o projeto `.motion.json` · `Delete` exclui · `Shift` ao girar prende em 15°. Atalhos de edição não atuam enquanto você digita em campos.
+
+Na prévia, use `−` e `+` para ampliar ou reduzir sem mudar a composição; toque na porcentagem para ajustar o quadro à área.
