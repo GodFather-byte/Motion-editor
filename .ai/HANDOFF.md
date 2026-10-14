@@ -1,14 +1,14 @@
 # Handoff
-Atualizado por: Claude em 14/10/2026
+Atualizado por: Jules
 
 ## Objetivo atual
-Motion Editor 100% aberto (AGPL-3.0). Nesta rodada: câmera lenta (rampas de velocidade e quadros suaves) e tela inicial com "Meus projetos" (o app não abre mais direto no editor).
+Motion Editor 100% aberto (AGPL-3.0). Nesta rodada: adicionado teste para a função `rampCum` responsável pelas rampas de velocidade.
 
 ## Estado agora
-- Branch ccr-a74f83ad-cpkqwi = main (683567f) + câmera lenta + tela inicial, em PR de rascunho. sw.js em motion-v25.
-- Câmera lenta: painel do vídeo > Áudio e Velocidade > Câmera lenta. 7 curvas (Herói, Bala, Montagem, lento no fim/começo, entrada/saída rápidas), 0.1x e 0.2x, "Quadros suaves". Som, exportação, divisão, cortes e ondas seguem a curva (`srcTime`).
-- Tela inicial: Novo projeto (formatos), Modelos, Exemplo, Abrir arquivo, Ajuda, Meus projetos (miniatura, renomear, duplicar, excluir). Botão Início no editor; "voltar" do navegador/celular volta ao início. Projetos ficam no IndexedDB (store `projects`).
-- Testes: 71 de 71 (slowmo, home e regressão offline). lottie, code-animation, ai-local e ffmpeg passaram no agente da tela inicial (com internet).
+- `rampCum` exportada no `app.js` e acessível pelo `window.__motion`.
+- Adicionado caso de teste compreensivo em `tests/slowmo.cjs` cobrindo a lógica de cálculo de integral da função.
+- Incremento da versão no arquivo `sw.js` (motion-v26) após alteração do app.
+- Todos os testes aprovados via Playwright local.
 
 ## Como retomar (Codex)
 1. `git fetch origin && git checkout ccr-a74f83ad-cpkqwi && git pull`. Confira `git status` antes de editar.
