@@ -339,9 +339,20 @@ async function registerAsset(blob, kind, name) {
     }
     return rec;
   }
-  P().assets[id] = { kind, name, mime: blob.type };
+  const project = P();
+  project.assets[id] = { kind, name, mime: blob.type };
   try { await idb.put(id, { blob, kind, name, mime: blob.type }); } catch { /* sem IndexedDB: fica só na memória */ }
-  return loadAsset(id, blob, kind, name);
+  if (P() !== project) {
+    delete project.assets[id]; idb.del(id).catch(() => {});
+    throw new Error('O projeto mudou durante a importação.');
+  }
+  const rec = await loadAsset(id, blob, kind, name);
+  if (P() !== project) {
+    URL.revokeObjectURL(rec.url); A.delete(id); delete project.assets[id];
+    idb.del(id).catch(() => {});
+    throw new Error('O projeto mudou durante a importação.');
+  }
+  return rec;
 }
 
 /* fontes próprias: o arquivo é validado com opentype.js e guardado como ativo do projeto */
@@ -3753,6 +3764,7 @@ mediaInput.addEventListener('change', async e => {
 });
 
 async function importMediaFile(file, kind, replaceId = null) {
+  const project = P();
   const fileKind = file.type.split('/')[0];
   if (kind === 'lottie' ? !/\.(json|lottie)$/i.test(file.name) || /\.motion\.json$/i.test(file.name) : fileKind && fileKind !== kind) {
     toast(kind === 'lottie' ? 'Escolha uma animação Lottie .json ou dotLottie .lottie. Projetos .motion.json abrem pelo menu.' : `Esse arquivo não é ${kind === 'image' ? 'uma imagem' : kind === 'video' ? 'um vídeo' : 'um áudio'}.`); return false;
@@ -3760,7 +3772,9 @@ async function importMediaFile(file, kind, replaceId = null) {
   toast('Carregando arquivo…');
   try {
     const blob = kind === 'image' ? await shrinkImage(file) : file;
+    if (P() !== project) return false;
     const rec = await registerAsset(blob, kind, file.name);
+    if (P() !== project) return false;
     if ((kind === 'audio' || kind === 'video') && !rec.duration && kind === 'audio') throw new Error('sem duração');
     const p = P();
     const name = file.name.replace(/\.[^.]+$/, '').slice(0, 24) || TYPE_NAMES[kind];
@@ -3867,6 +3881,7 @@ function commit() {
   S.redo = [];
   updateUndoBtns();
   scheduleSave();
+  window.dispatchEvent(new CustomEvent('motion:project', { detail: { reason: 'commit' } }));
 }
 function restore(json) {
   S.project = normalize(JSON.parse(json));
@@ -3874,6 +3889,7 @@ function restore(json) {
   S.time = clamp(S.time, 0, P().duration);
   fitStage(); renderTimeline(); renderPanel(); refreshTime(); updateUndoBtns(); scheduleSave();
   $('#projectName').value = P().name;
+  window.dispatchEvent(new CustomEvent('motion:project', { detail: { reason: 'restore' } }));
 }
 function undo() { if (S.undo.length < 2) return; pause(); S.redo.push(S.undo.pop()); restore(S.undo[S.undo.length - 1]); }
 function redo() { if (!S.redo.length) return; pause(); const s = S.redo.pop(); S.undo.push(s); restore(s); }
@@ -3928,6 +3944,7 @@ function setProject(p, fresh) {
   $('#projectName').value = P().name;
   fitStage(); renderTimeline(); renderPanel(); refreshTime(); updateUndoBtns(); scheduleSave();
   loadAllAssets().then(() => { if (fresh) cleanupAssets(); });
+  window.dispatchEvent(new CustomEvent('motion:project', { detail: { reason: 'open' } }));
 }
 $('#projectName').addEventListener('change', e => { P().name = e.target.value.trim() || 'Projeto sem título'; e.target.value = P().name; commit(); });
 
@@ -6935,6 +6952,7 @@ function setView(view) {
 }
 function showEditor() {
   setView('editor');
+  window.dispatchEvent(new CustomEvent('motion:view', { detail: { home: false } }));
   fitStage(); renderTimeline(); refreshTime();
 }
 function showHome() {
@@ -6943,6 +6961,7 @@ function showHome() {
   if (!$('#modal').hidden) hideModal();
   if (isPhotopeaOpen()) closePhotopea();
   setView('home');
+  window.dispatchEvent(new CustomEvent('motion:view', { detail: { home: true } }));
   home.scrollTop = 0;
   home.focus({ preventScroll: true });
   renderHome();
@@ -7208,4 +7227,58 @@ Object.assign(window.__motion, {
   flushSave, goHome, startProject, openProjectById, cleanupAssets, renderHome,
   libAll: () => libQueue(libAll), isHome: () => homeOpen && !home.hidden,
 });
+// Ponte pequena: os módulos compartilham o projeto e o histórico do editor.
+window.MotionWorkstationBridge = {
+  project: P, commit, importMediaFile, home: goHome, pause, save: saveProjectFile,
+  refresh() { renderTimeline(); renderPanel(); refreshTime(); },
+  async frame() {
+    const project = P(), t = S.time;
+    pause();
+    await seekVideosExact(t);
+    if (P() !== project) throw new Error('O projeto mudou durante a captura.');
+    const canvas = document.createElement('canvas');
+    canvas.width = project.width; canvas.height = project.height;
+    renderFrame(canvas.getContext('2d'), t, { k: 1 });
+    return new Promise((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Não consegui capturar o quadro.')), 'image/png'));
+  },
+  async send(file, assetKey, valid = () => true, metadata = {}) {
+    const project = P(), kind = file.type.split('/')[0];
+    if (!['audio', 'video', 'image'].includes(kind)) throw new Error('Formato não suportado.');
+    const rec = await registerAsset(file, kind, file.name);
+    if (MEDIA(kind) && !rec.duration) rec.duration = rec.buffer?.duration || (Number.isFinite(metadata.duration) && metadata.duration > 0 ? metadata.duration : 0);
+    if (P() !== project || !valid() || kind === 'image' && !rec.w || kind === 'audio' && !rec.duration) {
+      URL.revokeObjectURL(rec.url); A.delete(rec.id); delete project.assets[rec.id];
+      idb.del(rec.id).catch(() => {});
+      throw new Error('A operação ficou desatualizada ou a mídia não pôde ser lida.');
+    }
+    const linked = project.layers.filter(l => l.s.workstationAsset === assetKey);
+    if (linked.length) {
+      pause();
+      for (const L of linked) {
+        const previous = A.get(L.s.asset);
+        // Só a borda que ainda alcançava o fim da fonte acompanha a nova duração.
+        if (MEDIA(L.type) && previous?.duration > 0 && rec.duration > 0 &&
+            Math.abs(srcTime(L, L.end) - previous.duration) <= 1e-4) {
+          const end = Math.max(L.start + Math.max(0.1, 1 / project.fps), timeAtSrc(L, rec.duration));
+          growProjectTo(end);
+          L.end = Math.min(project.duration, end);
+        }
+        L.s.asset = rec.id;
+        const old = VIDS.get(L.id);
+        if (old) { old.pause(); VIDS.delete(L.id); }
+        dropVideo2(L.id);
+      }
+    } else {
+      const L = makeLayer(kind, {
+        name: file.name.replace(/\.[^.]+$/, ''),
+        s: { asset: rec.id, workstationAsset: assetKey, ...(rec.w ? { w: rec.w, h: rec.h } : {}) }
+      });
+      if (MEDIA(kind)) growForMedia(rec.duration, L);
+      project.layers.unshift(L); S.sel = L.id;
+    }
+    commit(); renderTimeline(); renderPanel(); refreshTime();
+    return linked[0]?.id || S.sel;
+  },
+  silence() { $('#btnSilenceCut').click(); }
+};
 })();
