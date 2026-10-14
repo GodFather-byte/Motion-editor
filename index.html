@@ -108,7 +108,17 @@
   </header>
 
   <main class="stage-wrap" id="stageWrap">
-    <div class="workspace-head"><div><span class="eyebrow">Crie do seu jeito</span><h1>Prévia</h1></div><span class="preview-info" id="previewInfo"></span></div>
+    <div class="workspace-head">
+      <div><span class="eyebrow">Crie do seu jeito</span><h1>Prévia</h1></div>
+      <div class="preview-tools">
+        <div class="preview-zoom" role="group" aria-label="Zoom da prévia">
+          <button class="icon-btn" id="btnPreviewZoomOut" type="button" aria-label="Diminuir zoom da prévia" title="Diminuir zoom"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg></button>
+          <button class="preview-fit" id="btnPreviewFit" type="button" aria-label="Ajustar prévia à área" title="Ajustar prévia à área">100%</button>
+          <button class="icon-btn" id="btnPreviewZoomIn" type="button" aria-label="Aumentar zoom da prévia" title="Aumentar zoom"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+        </div>
+        <span class="preview-info" id="previewInfo"></span>
+      </div>
+    </div>
     <div class="stage" id="stage">
       <canvas id="canvas"></canvas>
       <canvas id="overlay"></canvas>
