@@ -20,6 +20,12 @@ Editor de motion graphics que roda direto no navegador e pode ser instalado como
 
 **Visual**
 - Degradê linear e radial, contorno, sombra, brilho externo e modos de mistura.
+- Fundo arredondado e ajustável atrás de qualquer texto, útil para títulos e legendas sobre cenas claras.
+
+**Vídeos curtos**
+- Estúdio de Legendas com cinco estilos próprios: Destaque, Faixa Motion, Impacto, Conversa e Limpo. Aplique um estilo ao grupo inteiro e depois refine cada trecho.
+- Marcadores de roteiro para entradas, cortes e revisões; os clipes também grudam neles ao arrastar na timeline.
+- Guia de área segura para projetos verticais, visível somente na prévia e fora da exportação.
 
 **Lottie e dotLottie**
 - Importe animações Lottie `.json` e pacotes `.lottie` v1/v2 pelo botão **Lottie / dotLottie** abaixo da prévia. Arquivos de até 20 MB, com animações de até 10 minutos.
@@ -109,6 +115,7 @@ node --test tests/effects.cjs          # câmera, efeitos, chroma key, partícul
 node --test tests/music.cjs            # batidas, montagem, batidas prontas, narração, figurinhas
 node --test tests/ai-edit-plan.cjs tests/ai-edit.cjs # edição por pedido, corte de pausas e Gemini simulado
 node --test tests/lottie.cjs           # runtime real, JSON/dotLottie v1/v2, cortes, transparência e exportação
+node --test tests/short-form.cjs       # legendas, marcadores, guia seguro e 360 px
 ```
 
 O teste inicia seu próprio servidor e gera mídia temporária. Confere recorte, cores, transições, divisão, desfazer/refazer, persistência, exportação e áudio em diferentes velocidades; inclui layout de 360 px. Defina `CHROMIUM_PATH` se o Chromium não estiver em `/usr/bin/chromium`. Essas ferramentas são apenas para testes; o app continua sem instalação de dependências ou build.
@@ -148,6 +155,6 @@ Este projeto é licenciado sob **AGPL-3.0** (arquivo [LICENSE](LICENSE)). Ela é
 
 ## Atalhos
 
-`Espaço` reproduz/pausa · `K` keyframe em todas · setas movem (Shift = 10 px) · `,` `.` quadro a quadro · `Ctrl+Z` desfaz · `Ctrl+D` duplica · `Ctrl/Cmd+S` salva o projeto `.motion.json` · `Delete` exclui · `Shift` ao girar prende em 15°. Atalhos de edição não atuam enquanto você digita em campos.
+`Espaço` reproduz/pausa · `K` keyframe em todas · `Shift+M` cria marcador · setas movem (Shift = 10 px) · `,` `.` quadro a quadro · `Ctrl+Z` desfaz · `Ctrl+D` duplica · `Ctrl/Cmd+S` salva o projeto `.motion.json` · `Delete` exclui · `Shift` ao girar prende em 15°. Atalhos de edição não atuam enquanto você digita em campos.
 
 Na prévia, use `−` e `+` para ampliar ou reduzir sem mudar a composição; toque na porcentagem para ajustar o quadro à área.

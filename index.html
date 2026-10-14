@@ -110,6 +110,12 @@
   <main class="stage-wrap" id="stageWrap">
     <div class="workspace-head">
       <div><span class="eyebrow">Crie do seu jeito</span><h1>Prévia</h1></div>
+      <div class="quick-flow" role="toolbar" aria-label="Fluxo rápido de criação">
+        <span class="quick-flow-label">Fluxo rápido</span>
+        <button class="quick-flow-item" id="btnQuickMedia" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h8A2.5 2.5 0 0 1 17 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-8A2.5 2.5 0 0 1 4 17.5z"/><path d="m10 9 5 3-5 3z"/></svg><span>Importar</span></button>
+        <button class="quick-flow-item" id="btnQuickCaptions" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v9a2.5 2.5 0 0 1-2.5 2.5H11l-4.5 4v-4H6.5A2.5 2.5 0 0 1 4 14.5z"/><path d="M8 8h8M8 12h5"/></svg><span>Legendas</span></button>
+        <button class="quick-flow-item" id="btnQuickTemplates" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg><span>Modelos</span></button>
+      </div>
       <div class="preview-tools">
         <div class="preview-zoom" role="group" aria-label="Zoom da prévia">
           <button class="icon-btn" id="btnPreviewZoomOut" type="button" aria-label="Diminuir zoom da prévia" title="Diminuir zoom"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg></button>
@@ -128,6 +134,8 @@
       <button class="sheet-close" data-sheet-close aria-label="Fechar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
       <span class="add-title" data-g="midia">Mídia</span>
       <button class="chip chip-media" data-g="midia" data-add="video"><i class="sw sw-video"></i> Vídeo</button>
+      <span class="add-title" data-g="ia">Legendas e IA</span>
+      <button class="chip chip-accent" id="btnCaptions" data-g="ia"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v9a2.5 2.5 0 0 1-2.5 2.5H11l-4.5 4v-4H6.5A2.5 2.5 0 0 1 4 14.5z"/><path d="M8 8h8M8 12h5"/></svg> Legendas</button>
       <button class="chip chip-accent" id="btnAIEdit" data-g="ia"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5z"/></svg> Editar com IA</button>
       <button class="fwd" data-g="ia" data-forward="btnAI"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5z"/></svg> Ferramentas de IA</button>
       <button class="chip chip-media" data-g="midia" data-add="image"><i class="sw sw-image"></i> Imagem</button>
@@ -155,7 +163,7 @@
       <button class="chip chip-accent" data-g="modelos" id="btnTemplates"><i class="sw sw-tpl"></i> Modelos</button>
       <button class="chip chip-accent" data-g="modelos" id="btnCode"><i class="sw sw-code"></i> Código</button>
     </div>
-    <p class="stage-hint">Arraste para mover <span>·</span> <kbd>Espaço</kbd> para reproduzir <span>·</span> <kbd>K</kbd> para animar</p>
+    <p class="stage-hint">Arraste para mover <span>·</span> <kbd>Espaço</kbd> para reproduzir <span>·</span> <kbd>K</kbd> para animar <span>·</span> <kbd>Shift M</kbd> para marcar</p>
   </main>
 
   <section class="timeline" id="timeline" aria-label="Linha do tempo">
@@ -164,6 +172,7 @@
       <button class="icon-btn play" id="btnPlay" aria-label="Reproduzir (Espaço)" title="Reproduzir (Espaço)"><svg viewBox="0 0 24 24" class="i-play"><path d="M7 4.5v15l12.5-7.5z"/></svg><svg viewBox="0 0 24 24" class="i-pause"><path d="M7 4.5h3.5v15H7zM13.5 4.5H17v15h-3.5z"/></svg></button>
       <button class="icon-btn" id="btnStart" aria-label="Voltar ao início" title="Voltar ao início (Home)"><svg viewBox="0 0 24 24"><path d="M6 5v14"/><path d="m18 5-9 7 9 7z"/></svg></button>
       <button class="icon-btn" id="btnSplit" aria-label="Dividir camada na agulha (S)" title="Dividir camada na agulha (S)"><svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg></button>
+      <button class="icon-btn" id="btnMarker" aria-label="Adicionar marcador de roteiro (Shift M)" title="Adicionar marcador de roteiro (Shift M)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 21V4"/><path d="M6 5h11l-2.5 4L17 13H6"/></svg></button>
       <div class="timecode" id="timecode">00:00.00</div>
       <span class="tl-dur" id="tlDur">/ 05:00.00</span>
       <div class="tl-spacer"></div>
