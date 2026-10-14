@@ -135,6 +135,7 @@ const S = {
   exporting: false,
   bounds: new Map(),   // id da camada -> {w,h}
   view: 1,
+  stageZoom: 1,
 };
 const A = new Map();    // arquivos carregados: id -> {kind, blob, url, el, buffer, peaks, duration, w, h}
 const VIDS = new Map(); // id da camada -> <video> próprio
@@ -399,23 +400,41 @@ function patchOf(g, w, h, cx, cy, tw, th) {
 }
 /* correlação normalizada: melhor posição do modelo dentro de uma janela de raio r ao redor de (cx, cy) */
 function matchPatch(g, w, h, tpl, tw, th, cx, cy, r) {
-  let mt = 0; for (const v of tpl) mt += v; mt /= tpl.length;
-  let vt = 0; for (const v of tpl) vt += (v - mt) * (v - mt);
+  const n = tw * th;
+  let mt = 0;
+  for (let i = 0; i < n; i++) mt += tpl[i];
+  mt /= n;
+
+  let vt = 0;
+  const tpl_b = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const b = tpl[i] - mt;
+    tpl_b[i] = b;
+    vt += b * b;
+  }
   const st = Math.sqrt(vt) || 1e-6;
   let best = { score: -Infinity, x: cx, y: cy };
-  for (let y = cy - r; y <= cy + r; y++) for (let x = cx - r; x <= cx + r; x++) {
-    const x0 = Math.round(x - tw / 2), y0 = Math.round(y - th / 2);
-    if (x0 < 0 || y0 < 0 || x0 + tw > w || y0 + th > h) continue;
-    let mg = 0;
-    for (let j = 0; j < th; j++) for (let i = 0; i < tw; i++) mg += g[(y0 + j) * w + x0 + i];
-    mg /= tw * th;
-    let num = 0, vg = 0;
-    for (let j = 0; j < th; j++) for (let i = 0; i < tw; i++) {
-      const a = g[(y0 + j) * w + x0 + i] - mg, b = tpl[j * tw + i] - mt;
-      num += a * b; vg += a * a;
+
+  for (let y = cy - r; y <= cy + r; y++) {
+    for (let x = cx - r; x <= cx + r; x++) {
+      const x0 = Math.round(x - tw / 2), y0 = Math.round(y - th / 2);
+      if (x0 < 0 || y0 < 0 || x0 + tw > w || y0 + th > h) continue;
+
+      let sumG = 0, sumG2 = 0, num = 0;
+      let idx = 0;
+      for (let j = 0; j < th; j++) {
+        let gIdx = (y0 + j) * w + x0;
+        for (let i = 0; i < tw; i++) {
+          const val = g[gIdx++];
+          sumG += val;
+          sumG2 += val * val;
+          num += val * tpl_b[idx++];
+        }
+      }
+      const vg = sumG2 - (sumG * sumG) / n;
+      const score = num / ((Math.sqrt(vg > 0 ? vg : 0) * st) || 1e-6);
+      if (score > best.score) best = { score, x: x, y: y };
     }
-    const score = num / ((Math.sqrt(vg) * st) || 1e-6);
-    if (score > best.score) best = { score, x: x, y: y };
   }
   return best;
 }
@@ -452,12 +471,20 @@ async function trackLayer(L) {
   } finally { L.visible = wasVisible; }
   // média móvel de 5 amostras e keyframes de x e y no trecho rastreado
   // janela centrada que encolhe nas pontas: a primeira amostra fica exatamente na posição inicial
-  const smooth = key => samples.map((_, i) => {
-    const h = Math.min(2, i, samples.length - 1 - i);
-    let sum = 0;
-    for (let j = i - h; j <= i + h; j++) sum += samples[j][key];
-    return sum / (2 * h + 1);
-  });
+  const smooth = key => {
+    const n = samples.length;
+    const res = new Array(n);
+    if (n === 0) return res;
+    let sum = 0, L = 0, R = -1;
+    for (let i = 0; i < n; i++) {
+      const h = Math.min(2, i, n - 1 - i);
+      const tL = i - h, tR = i + h;
+      while (R < tR) sum += samples[++R][key];
+      while (L < tL) sum -= samples[L++][key];
+      res[i] = sum / (2 * h + 1);
+    }
+    return res;
+  };
   const sx = smooth('dx'), sy = smooth('dy');
   for (const prop of ['x', 'y']) {
     if (L.kf[prop]) L.kf[prop] = L.kf[prop].filter(k => k.t < t0 - 1e-6 || k.t > tEnd + 1e-6);
@@ -2267,10 +2294,11 @@ function drawOverlay() {
 function fitStage() {
   const p = P();
   const stage = $('#stage');
+  stage.classList.toggle('zoomed', S.stageZoom > 1);
   const cs = getComputedStyle(stage);
   const aw = stage.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
   const ah = stage.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
-  const r = Math.max(0.01, Math.min(aw / p.width, ah / p.height));
+  const r = Math.max(0.01, Math.min(aw / p.width, ah / p.height)) * S.stageZoom;
   const cw = Math.floor(p.width * r), ch = Math.floor(p.height * r);
   const dpr = window.devicePixelRatio || 1;
   // resolução do preview durante a reprodução: a da tela, nunca mais que o projeto
@@ -2282,6 +2310,22 @@ function fitStage() {
   S.view = cw / p.width;
   renderMain(); drawOverlay();
 }
+
+function syncStageZoom() {
+  $('#btnPreviewFit').textContent = `${Math.round(S.stageZoom * 100)}%`;
+  $('#btnPreviewFit').title = S.stageZoom === 1 ? 'A prévia está ajustada à área' : 'Ajustar prévia à área';
+  $('#btnPreviewZoomOut').disabled = S.stageZoom <= 0.5;
+  $('#btnPreviewZoomIn').disabled = S.stageZoom >= 2;
+}
+function setStageZoom(zoom) {
+  S.stageZoom = clamp(Math.round(zoom * 100) / 100, 0.5, 2);
+  syncStageZoom();
+  fitStage();
+}
+$('#btnPreviewZoomOut').onclick = () => setStageZoom(S.stageZoom - 0.1);
+$('#btnPreviewZoomIn').onclick = () => setStageZoom(S.stageZoom + 0.1);
+$('#btnPreviewFit').onclick = () => setStageZoom(1);
+syncStageZoom();
 
 const toProject = e => { const r = overlay.getBoundingClientRect(); return { x: (e.clientX - r.left) / S.view, y: (e.clientY - r.top) / S.view }; };
 
@@ -2506,18 +2550,33 @@ function renderTimeline() {
         ${kfs}
       </div></div>`;
   }).join('') || `<div class="tl-row"><div class="tl-label" style="color:var(--muted)">Vazio</div><div class="tl-track" style="width:${trackW}px"></div></div>`;
+
+  cachedWavesArray = null;
   drawWaves();
   updatePlayhead();
 }
 
+let cachedWavesArray = null;
 function drawWaves() {
   const dpr = window.devicePixelRatio || 1;
-  $$('canvas.wave').forEach(cv => {
+  if (!cachedWavesArray) {
+    cachedWavesArray = $$('canvas.wave');
+  }
+
+  // To prevent layout thrashing (reading clientHeight and writing width/height interleaved),
+  // we first read all required heights from the DOM, then write in a second pass.
+  const heights = [];
+  cachedWavesArray.forEach(cv => {
+    heights.push(cv.parentElement.clientHeight || 22);
+  });
+
+  cachedWavesArray.forEach((cv, i) => {
     const L = byId(cv.dataset.wave);
     const rec = L && A.get(L.s.asset);
     if (!rec || !rec.peaks) return;
+
+    const h = heights[i];
     const w = Math.min(4000, Math.max(1, Math.round((L.end - L.start) * S.pps)));
-    const h = cv.parentElement.clientHeight || 22;
     cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
     const c = cv.getContext('2d');
     c.scale(dpr, dpr);
@@ -2846,6 +2905,8 @@ function layerPanel(L) {
   if (MEDIA(L.type)) {
     const rec = A.get(s.asset);
     const info = rec ? (rec.buffer ? `Duração do arquivo: ${fmtTime(rec.duration || 0)}` : (L.type === 'video' ? 'Este vídeo não tem som (ou o navegador não conseguiu ler o áudio).' : 'Não consegui ler este áudio.')) : 'Arquivo não encontrado neste aparelho. Use "Trocar arquivo".';
+    const dims = L.type === 'video' && rec && rec.w ? `${rec.w}×${rec.h}${Math.min(rec.w, rec.h) >= 2160 ? ' (4K)' : ''}` : '';
+    const dimsInfo = dims ? (rec.buffer ? ` · ${dims}` : ` Resolução: ${dims}.`) : '';
     const fileInfo = rec && rec.info ? ` Arquivo: ${esc(rec.info.codec)}${Number.isFinite(rec.info.fps) ? ` · ${Math.round(rec.info.fps)} fps` : ''}${rec.info.rotation ? ` · gravado girado ${rec.info.rotation}°` : ''}.` : '';
     const speeds = { '0.1': '0.1x (lento 10x)', '0.2': '0.2x (lento 5x)', '0.25': '0.25x (lento 4x)', '0.5': '0.5x (lento 2x)', '0.75': '0.75x', '1': '1x (normal)', '1.25': '1.25x', '1.5': '1.5x (rápido)', '2': '2x (acelerado)', '3': '3x', '4': '4x' };
     media = `<div class="sec"><h3>${L.type === 'video' ? 'Áudio e Velocidade' : 'Som'}</h3>
@@ -2855,7 +2916,7 @@ function layerPanel(L) {
       ${numRow('fadeIn', 'Entrada (s)', 0, 10, 0.1)}
       ${numRow('fadeOut', 'Saída (s)', 0, 10, 0.1)}
       ${numRow('trimIn', 'Começa em (s)', 0, Math.max(1, Math.floor(mediaSourceDur(L) === Infinity ? 60 : mediaSourceDur(L))), 0.1)}
-      <p class="hint">${info}${fileInfo}</p>
+      <p class="hint">${info}${dimsInfo}${fileInfo}</p>
       ${L.type === 'video' ? '<div class="actions"><button class="btn btn-small" data-act="scene-cut">Cortar por cenas</button></div>' : ''}
       ${L.type === 'video' ? rampPanelRows(L) : ''}
       ${L.type === 'audio' && rec && rec.peaks ? '<div class="row plain"><label for="waveZoom">Zoom</label><input type="range" id="waveZoom" min="20" max="400" value="60" aria-label="Zoom da forma de onda"></div><div class="wave-box" id="waveBox"></div>' : ''}
@@ -2990,12 +3051,15 @@ function syncPanel(full) {
       if (el.type === 'checkbox') el.checked = !!L.s[el.dataset.s];
       else el.value = L.s[el.dataset.s] ?? '';
     });
-    $$('[data-show="grad"]', panel).forEach(el => (el.hidden = !L.s.fillType || L.s.fillType === 'solid'));
-    $$('[data-show="fillOn"]', panel).forEach(el => (el.hidden = !L.s.fillOn));
-    $$('[data-show="chroma"]', panel).forEach(el => (el.hidden = !L.s.chromaOn));
-    $$('[data-show="onPath"]', panel).forEach(el => (el.hidden = !L.s.onPath));
-    $$('[data-show="customColors"]', panel).forEach(el => (el.hidden = L.s.colorMode !== 'custom'));
-    $$('[data-show="focal"]', panel).forEach(el => (el.hidden = L.s.mediaFit !== 'cover'));
+    $$('[data-show]', panel).forEach(el => {
+      const show = el.dataset.show;
+      if (show === 'grad') el.hidden = !L.s.fillType || L.s.fillType === 'solid';
+      else if (show === 'fillOn') el.hidden = !L.s.fillOn;
+      else if (show === 'chroma') el.hidden = !L.s.chromaOn;
+      else if (show === 'onPath') el.hidden = !L.s.onPath;
+      else if (show === 'customColors') el.hidden = L.s.colorMode !== 'custom';
+      else if (show === 'focal') el.hidden = L.s.mediaFit !== 'cover';
+    });
     const ts = $('#t-start', panel), te = $('#t-end', panel);
     if (ts && ts !== active) ts.value = round(L.start, 2);
     if (te && te !== active) te.value = round(L.end, 2);
@@ -3773,7 +3837,7 @@ function exportModal() {
     mp4: fast ? 'Monta o vídeo quadro a quadro, com som: não pula quadros, mesmo com efeitos pesados, e continua mesmo se você trocar de aba.' : 'Este navegador não tem o codificador rápido: o vídeo será gravado em tempo real, com a aba aberta.',
     live: 'Grava em tempo real, como uma tela. Mantenha a aba aberta e visível até terminar.',
     gif: 'Sem som. Bom para figurinhas, prévias e mensagens.',
-    png: 'Salva o quadro atual na resolução do projeto.',
+    png: 'Salva o quadro atual na resolução escolhida.',
   };
   showModal('Exportar', `
     <div class="row plain"><label for="expFmt">Formato</label><select class="field" id="expFmt">
@@ -3782,11 +3846,12 @@ function exportModal() {
       <option value="gif">GIF animado</option>
       <option value="png">Imagem PNG do quadro atual</option>
     </select></div>
-    <div class="row plain" data-for="mp4"><label for="expRes">Resolução</label><select class="field" id="expRes">${resOpts}</select></div>
+    <div class="row plain" data-for="${fast ? 'mp4 ' : ''}png"><label for="expRes">Resolução</label><select class="field" id="expRes">${resOpts}</select></div>
     <div class="row plain" data-for="mp4 live"><label for="expFps">Quadros/s</label><select class="field" id="expFps">${fpsOpts}</select></div>
     <div class="row plain" data-for="gif"><label for="expGif">Tamanho</label><select class="field" id="expGif"><option value="320">Pequeno (320 px)</option><option value="480" selected>Médio (480 px)</option><option value="720">Grande (720 px)</option></select></div>
     <label class="check" data-for="gif png"><input type="checkbox" id="expAlpha"> Fundo transparente</label>
     <p class="hint" id="expHint"></p>
+    <p class="hint" id="expSize" data-for="${fast ? 'mp4' : ''}"></p>
     <p class="hint">Duração: ${p.duration} s · ${hasSound() ? 'com som' : 'sem som'}</p>`, [
     { label: 'Cancelar' },
     { label: 'Exportar', cls: 'btn-primary', keepOpen: true, onClick: () => {
@@ -3795,20 +3860,49 @@ function exportModal() {
       const fps = parseInt($('#expFps').value, 10) || p.fps;
       const alpha = $('#expAlpha').checked, gifSide = +$('#expGif').value, side = +$('#expRes').value;
       if ((fmt === 'mp4' || fmt === 'live') && fps !== p.fps) { p.fps = fps; commit(); }
-      if (fmt === 'png') { hideModal(); exportPng(alpha); return; }
+      if (fmt === 'png') { hideModal(); exportPng(alpha, side / short); return; }
       if (fmt === 'gif') { hideModal(); exportGif({ shortSide: gifSide, transparent: alpha }); return; }
       if (fmt === 'live' || !fast) { hideModal(); exportVideo(); return; }
+      if ($('#expRes').selectedOptions[0]?.disabled) { toast('Este aparelho não gera vídeo nessa resolução. Escolha outra.'); return; }
       hideModal();
       fastExport({ k: side / short, fps });
     } },
   ]);
+  // 4K: cada aparelho codifica até um tamanho; testa cada resolução e desliga a que não dá (vale só para o vídeo)
+  const labels = new Map([...$('#expRes').options].map(o => [o, o.textContent]));
+  const support = new Map();
   const sync = () => {
-    const fmt = $('#expFmt').value;
+    const fmt = $('#expFmt').value, fps = parseInt($('#expFps').value, 10) || p.fps, sel = $('#expRes');
     $$('[data-for]', $('#modalBody')).forEach(el => (el.hidden = !el.dataset.for.split(' ').includes(fmt)));
     $('#expHint').textContent = hints[fmt];
+    for (const o of sel.options) {
+      const off = fmt === 'mp4' && support.get(`${o.value}@${fps}`) === false;
+      o.disabled = off;
+      o.textContent = labels.get(o) + (off ? ' · não disponível neste aparelho' : '');
+    }
+    if (sel.selectedOptions[0]?.disabled) {
+      const ok = [...sel.options].filter(o => !o.disabled);
+      if (ok.length) sel.value = ok.reduce((a, b) => (Math.abs(+b.value - short) < Math.abs(+a.value - short) ? b : a)).value;
+    }
+    const side = +sel.value, k = side / short, w = even(p.width * k), h = even(p.height * k);
+    const mb = (videoBitrate(w, h, fps) + (hasSound() ? 192000 : 0)) * p.duration / 8 / 1e6;
+    $('#expSize').textContent = `Tamanho estimado: ${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB${side >= 2160 ? '. 4K demora mais para gerar e usa mais memória.' : ''}`;
+  };
+  const probe = async () => {
+    if (!fast) return;
+    const fps = parseInt($('#expFps').value, 10) || p.fps;
+    for (const o of [...$('#expRes').options]) {
+      const k = +o.value / short, key = `${o.value}@${fps}`;
+      if (support.has(key)) continue;
+      support.set(key, !!(await pickVideoCodec(even(p.width * k), even(p.height * k), fps)));
+      if ($('#expRes')) sync();
+    }
   };
   $('#expFmt').onchange = sync;
+  $('#expRes').onchange = sync;
+  $('#expFps').onchange = () => { sync(); probe(); };
   sync();
+  probe();
 }
 $('#btnExport').onclick = exportModal;
 
@@ -3833,15 +3927,37 @@ function loadScript(src) {
   return scriptCache.get(src);
 }
 
-async function pickVideoCodec(w, h, fps) {
-  const bitrate = Math.round(clamp(w * h * fps * 0.14, 2e6, 60e6));
-  const tries = [
-    ['avc1.640034', 'avc'], ['avc1.640033', 'avc'], ['avc1.640028', 'avc'], ['avc1.4d0034', 'avc'], ['avc1.4d0033', 'avc'], ['avc1.4d0028', 'avc'], ['avc1.42003e', 'avc'], ['avc1.42001f', 'avc'],
-    ['vp09.00.51.08', 'vp9'], ['vp09.00.50.08', 'vp9'], ['vp09.00.40.08', 'vp9'], ['vp09.00.10.08', 'vp9'],
-  ];
+/* nível H.264 mínimo para o tamanho e os quadros/s (tabela A-1 da norma): 4K a 30 fps pede 5.1, a 60 fps pede 5.2 */
+const AVC_LEVELS = [[0x1e, 40500, 1620], [0x1f, 108000, 3600], [0x20, 216000, 5120], [0x28, 245760, 8192], [0x2a, 522240, 8704],
+  [0x32, 589824, 22080], [0x33, 983040, 36864], [0x34, 2073600, 36864], [0x3c, 4177920, 139264], [0x3d, 8355840, 139264], [0x3e, 16711680, 139264]];
+function avcLevel(w, h, fps) {
+  const mbs = Math.ceil(w / 16) * Math.ceil(h / 16);
+  const hit = AVC_LEVELS.find(([, perSec, perFrame]) => mbs <= perFrame && mbs * fps <= perSec) || AVC_LEVELS[AVC_LEVELS.length - 1];
+  return hit[0].toString(16).padStart(2, '0');
+}
+const VIDEO_NAMES = { avc: 'H.264', hevc: 'H.265', vp9: 'VP9', av1: 'AV1' };
+const videoBitrate = (w, h, fps) => Math.round(clamp(w * h * fps * 0.14, 2e6, 80e6));
+const codecCache = new Map();
+function pickVideoCodec(w, h, fps) {
+  const key = `${w}x${h}@${fps}`;
+  if (!codecCache.has(key)) codecCache.set(key, findVideoCodec(w, h, fps));
+  return codecCache.get(key);
+}
+async function findVideoCodec(w, h, fps) {
+  const bitrate = videoBitrate(w, h, fps);
+  const big = w * h > 2228224, huge = w * h > 8912896, fast = fps > 30;
+  const lv = avcLevel(w, h, fps);
+  const hevc = huge ? 'L180' : big ? (fast ? 'L153' : 'L150') : (fast ? 'L123' : 'L120');
+  const vp9 = huge ? '61' : big ? (fast ? '52' : '51') : (fast ? '41' : '40');
+  const av1 = huge ? '16' : big ? (fast ? '13' : '12') : (fast ? '09' : '08');
+  // H.264 primeiro (abre em qualquer lugar); H.265, VP9 e AV1 quando o aparelho não codifica H.264 nesse tamanho
+  const tries = [...new Set([`avc1.6400${lv}`, `avc1.4d00${lv}`, `avc1.4200${lv}`, 'avc1.640033', 'avc1.640028', 'avc1.4d0033', 'avc1.4d0028', 'avc1.42003e', 'avc1.42001f'])]
+    .map(c => [c, 'avc'])
+    .concat([[`hvc1.1.6.${hevc}.B0`, 'hevc'], [`vp09.00.${vp9}.08`, 'vp9'], ['vp09.00.40.08', 'vp9'], ['vp09.00.10.08', 'vp9'], [`av01.0.${av1}M.08`, 'av1']]);
   for (const [codec, mux] of tries) {
     const cfg = { codec, width: w, height: h, bitrate, framerate: fps, latencyMode: 'quality' };
     if (mux === 'avc') cfg.avc = { format: 'avc' };
+    if (mux === 'hevc') cfg.hevc = { format: 'hevc' };
     try { if ((await VideoEncoder.isConfigSupported(cfg)).supported) return { cfg, mux }; } catch { /* tenta o próximo */ }
   }
   return null;
@@ -4002,7 +4118,7 @@ async function fastExport({ k = 1, fps = P().fps } = {}) {
     venc.close();
     muxer.finalize();
     const blob = new Blob([muxer.target.buffer], { type: 'video/mp4' });
-    const vname = video.mux === 'avc' ? 'H.264' : 'VP9';
+    const vname = VIDEO_NAMES[video.mux] || video.mux;
     fileReady(blob, `${fileBase()}.mp4`, `MP4 ${vname}${audio ? ' com som' : ''} · ${W}×${H} · ${fps} fps`);
   } catch (err) {
     try { venc && venc.state !== 'closed' && venc.close(); } catch {}
@@ -4072,13 +4188,13 @@ async function exportGif({ shortSide = 480, fps = 15, transparent = false } = {}
   }
 }
 
-function exportPng(transparent) {
+function exportPng(transparent, k = 1) {
   pause();
   const p = P();
   const c = document.createElement('canvas');
-  c.width = p.width; c.height = p.height;
+  c.width = even(p.width * k); c.height = even(p.height * k);
   const cc = c.getContext('2d');
-  renderFrame(cc, S.time, { transparent });
+  renderFrame(cc, S.time, { transparent, k: c.width / p.width });
   c.toBlob(b => { if (b) download(b, `${fileBase()}-${S.time.toFixed(2)}s.png`); }, 'image/png');
 }
 
@@ -6277,14 +6393,7 @@ menu.addEventListener('click', async e => {
   } else if (act === 'demo') {
     openDemo();
   } else if (act === 'save') {
-    toast('Preparando o arquivo…');
-    const out = JSON.parse(snapshot());
-    for (const [id, meta] of Object.entries(out.assets)) {
-      const rec = A.get(id);
-      if (rec) meta.data = await blobToDataURL(rec.blob);
-    }
-    download(new Blob([JSON.stringify(out)], { type: 'application/json' }), `${fileBase()}.motion.json`);
-    toast('Projeto salvo nos seus downloads.');
+    await saveProjectFile();
   } else if (act === 'open') {
     $('#projectInput').click();
   } else if (act === 'png') {
@@ -6306,11 +6415,27 @@ menu.addEventListener('click', async e => {
       <kbd>, .</kbd><span>Quadro anterior / próximo</span>
       <kbd>Home</kbd><span>Voltar ao início</span>
       <kbd>Ctrl+D</kbd><span>Duplicar camada</span>
+      <kbd>Ctrl/Cmd+S</kbd><span>Salvar projeto (.motion.json)</span>
       <kbd>Delete</kbd><span>Excluir camada</span>
       <kbd>Ctrl+Z</kbd><span>Desfazer (Ctrl+Shift+Z refaz)</span>
       <kbd>Shift</kbd><span>Ao girar, prende em 15°</span></div>`, [{ label: 'Fechar', cls: 'btn-primary' }]);
   }
 });
+
+async function saveProjectFile() {
+  toast('Preparando o arquivo…');
+  try {
+    const out = JSON.parse(snapshot());
+    for (const [id, meta] of Object.entries(out.assets)) {
+      const rec = A.get(id);
+      if (rec) meta.data = await blobToDataURL(rec.blob);
+    }
+    download(new Blob([JSON.stringify(out)], { type: 'application/json' }), `${fileBase()}.motion.json`);
+    toast('Projeto salvo nos seus downloads.');
+  } catch {
+    toast('Não foi possível salvar o projeto. Verifique o espaço disponível.');
+  }
+}
 
 $('#projectInput').addEventListener('change', async e => {
   const f = e.target.files[0];
@@ -6365,6 +6490,7 @@ document.addEventListener('keydown', e => {
   const L = selLayer();
   const mod = e.ctrlKey || e.metaKey;
   if (e.code === 'Space') { e.preventDefault(); S.playing ? pause() : play(); }
+  else if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); saveProjectFile(); }
   else if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
   else if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); }
   else if (mod && e.key.toLowerCase() === 'd' && L) { e.preventDefault(); duplicateLayer(L); }
@@ -6786,7 +6912,8 @@ window.__motion = {
   getMediaPipeVision, getMediaPipeSegmenter, segmentPersonMediaPipe, mediaPipeCutPerson, getMediaPipeFaceDetector, mediaPipeFaceAutoFrame
 };
 // câmera lenta (testes)
-Object.assign(window.__motion, { RAMPS, speedAt, srcTime, timeAtSrc, applyRamp, blendInfo, setProject, renderAudioMix, renderFrame, seekVideosExact, VIDS, VIDS2 });
+Object.assign(window.__motion, { avcLevel, pickVideoCodec });   // 4K (testes)
+Object.assign(window.__motion, { RAMPS, rampCum, speedAt, srcTime, timeAtSrc, applyRamp, blendInfo, setProject, renderAudioMix, renderFrame, seekVideosExact, VIDS, VIDS2 });
 Object.assign(window.__motion, {
   flushSave, goHome, startProject, openProjectById, cleanupAssets, renderHome,
   libAll: () => libQueue(libAll), isHome: () => homeOpen && !home.hidden,
