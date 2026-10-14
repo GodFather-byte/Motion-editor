@@ -197,18 +197,25 @@ const snap = t => Math.round(t * P().fps) / P().fps;
 const idb = (() => {
   let dbp = null;
   const open = () => dbp || (dbp = new Promise((res, rej) => {
-    const r = indexedDB.open('motion-editor', 1);
-    r.onupgradeneeded = () => r.result.createObjectStore('assets');
-    r.onsuccess = () => res(r.result);
+    // v2 cria a biblioteca de projetos ('projects') e mantém os arquivos da v1 ('assets')
+    const r = indexedDB.open('motion-editor', 2);
+    r.onupgradeneeded = () => {
+      const db = r.result;
+      if (!db.objectStoreNames.contains('assets')) db.createObjectStore('assets');
+      if (!db.objectStoreNames.contains('projects')) db.createObjectStore('projects', { keyPath: 'id' });
+    };
+    r.onsuccess = () => { const db = r.result; db.onversionchange = () => { db.close(); dbp = null; }; res(db); };
     r.onerror = () => rej(r.error);
+    r.onblocked = () => toast('Feche as outras abas do Motion para continuar.');
   }));
-  const run = async (mode, fn) => {
+  const run = async (mode, fn, store = 'assets') => {
     const db = await open();
     return new Promise((res, rej) => {
-      const t = db.transaction('assets', mode);
-      const req = fn(t.objectStore('assets'));
+      const t = db.transaction(store, mode);
+      const req = fn(t.objectStore(store));
       t.oncomplete = () => res(req && req.result);
       t.onerror = () => rej(t.error);
+      t.onabort = () => rej(t.error);
     });
   };
   return {
@@ -216,6 +223,7 @@ const idb = (() => {
     get: id => run('readonly', s => s.get(id)),
     del: id => run('readwrite', s => s.delete(id)),
     keys: () => run('readonly', s => s.getAllKeys()),
+    run,
   };
 })();
 
@@ -366,7 +374,7 @@ async function mountPanelWave(L) {
       barWidth: 2, barGap: 1, normalize: true, minPxPerSec: Number($('#waveZoom', panel).value),
     });
     ws.load('', [rec.peaks], rec.duration).catch(() => {});
-    ws.on('interaction', t => setTime(L.start + (t - (L.s.trimIn || 0)) / (Number(L.s.speed) || 1)));
+    ws.on('interaction', t => setTime(timeAtSrc(L, t)));
     $('#waveZoom', panel).oninput = e => ws.zoom(Number(e.target.value));
     panelWave = ws;
   } catch {
@@ -510,16 +518,223 @@ async function loadAllAssets() {
       }
     } catch { /* arquivo perdido: a camada mostra um aviso */ }
   }
+  if (!P()) return;   // o projeto foi excluído enquanto carregava
   renderMain(); drawOverlay(); renderTimeline();
   if (selLayer()?.type === 'lottie') renderPanel();
 }
 
-async function cleanupAssets() {
-  try {
-    const used = new Set(Object.keys(P().assets || {}));
+/* Só apaga do IndexedDB o arquivo que nenhum projeto da biblioteca usa, nem o projeto aberto.
+   Roda na fila da biblioteca, depois das gravações pendentes. Da memória sai o que o projeto aberto não usa. */
+function cleanupAssets() {
+  const cur = () => (P() && P().assets) || {};
+  for (const [id, rec] of A) if (!cur()[id]) { rec.player?.destroy(); URL.revokeObjectURL(rec.url); A.delete(id); }
+  return libQueue(async () => {
+    const used = new Set(Object.keys(cur()));
+    for (const r of await libAll()) for (const k of recordAssets(r)) used.add(k);
     for (const k of await idb.keys()) if (!used.has(k)) await idb.del(k);
-  } catch { /* ignora */ }
-  for (const [id, rec] of A) if (!P().assets[id]) { rec.player?.destroy(); URL.revokeObjectURL(rec.url); A.delete(id); }
+  }).catch(() => { /* sem IndexedDB: não apaga nada */ });
+}
+
+/* ======================= câmera lenta (velocidade e rampas) ======================= */
+/* Vídeo e áudio tocam a L.s.speed vezes um multiplicador opcional m(t), guardado em L.s.rampPts como [[t, m], ...].
+   t usa segundos ABSOLUTOS da linha do tempo, como os keyframes: dividir deixa os mesmos pontos nas duas partes
+   e mover o bloco desloca os pontos junto. m é linear entre os pontos e constante (primeiro/último) fora deles.
+   Tempo no arquivo = trimIn + integral da velocidade de L.start até t, em fórmula fechada por trecho.
+   Sem pontos, a conta é exatamente a antiga: (t − start) · speed + trimIn. Lottie fica sempre constante. */
+const SPEED_MIN = 0.1, RAMP_MIN = 0.01, PROJECT_MAX = 600;
+/* multiplicadores ao longo do bloco: u vai de 0 (início) a 1 (fim) */
+const RAMPS = {
+  hero: { label: 'Herói (lento no meio)', pts: [[0, 1], [0.3, 1], [0.42, 0.25], [0.62, 0.25], [0.74, 1], [1, 1]] },
+  bullet: { label: 'Bala (quase parado no meio)', pts: [[0, 1.6], [0.38, 1.6], [0.48, 0.12], [0.58, 0.12], [0.68, 1.6], [1, 1.6]] },
+  montage: { label: 'Montagem (rápido e lento)', pts: [[0, 1.8], [0.2, 1.8], [0.3, 0.35], [0.45, 0.35], [0.55, 1.8], [0.7, 1.8], [0.8, 0.35], [1, 0.35]] },
+  slowEnd: { label: 'Câmera lenta no fim', pts: [[0, 1], [0.55, 1], [0.7, 0.25], [1, 0.25]] },
+  slowStart: { label: 'Câmera lenta no começo', pts: [[0, 0.25], [0.3, 0.25], [0.45, 1], [1, 1]] },
+  flashIn: { label: 'Entrada rápida', pts: [[0, 3], [0.25, 3], [0.4, 1], [1, 1]] },
+  flashOut: { label: 'Saída rápida', pts: [[0, 1], [0.6, 1], [0.75, 3], [1, 3]] },
+};
+const VIDS2 = new Map(); // id da camada -> segundo <video>, parado no quadro seguinte (quadros suaves)
+let liveSync = false;   // true enquanto os vídeos tocam de verdade (prévia em reprodução ou gravação em tempo real)
+
+const rampOf = L => (MEDIA(L.type) && L.s && Array.isArray(L.s.rampPts) && L.s.rampPts.length ? L.s.rampPts : null);
+const baseSpeed = L => Number(L.s && L.s.speed) || 1;
+/* pontos válidos, em ordem, com multiplicador positivo (projetos antigos ou arquivos editados à mão) */
+function cleanRamp(pts) {
+  if (!Array.isArray(pts)) return [];
+  return pts.filter(q => Array.isArray(q) && Number.isFinite(+q[0]) && Number.isFinite(+q[1]))
+    .map(([t, m]) => [+t, Math.max(RAMP_MIN, +m)]).sort((a, b) => a[0] - b[0]);
+}
+/* multiplicador no instante t */
+function rampMul(pts, t) {
+  const n = pts.length;
+  if (t <= pts[0][0]) return pts[0][1];
+  for (let i = 0; i < n - 1; i++) {
+    const [a, ma] = pts[i], [b, mb] = pts[i + 1];
+    if (t <= b) return b > a ? ma + (mb - ma) * (t - a) / (b - a) : mb;
+  }
+  return pts[n - 1][1];
+}
+/* integral do multiplicador desde o primeiro ponto até t (negativa antes dele) */
+function rampCum(pts, t) {
+  const n = pts.length, t0 = pts[0][0];
+  if (t <= t0) return (t - t0) * pts[0][1];
+  let acc = 0;
+  for (let i = 0; i < n - 1; i++) {
+    const [a, ma] = pts[i], [b, mb] = pts[i + 1];
+    if (t <= b) { const x = t - a, mx = b > a ? ma + (mb - ma) * x / (b - a) : mb; return acc + (ma + mx) * x / 2; }
+    acc += (ma + mb) * (b - a) / 2;
+  }
+  return acc + (t - pts[n - 1][0]) * pts[n - 1][1];
+}
+/* inversa de rampCum: resolve a equação do 2º grau do trecho (m > 0, então sempre há uma única saída) */
+function rampInv(pts, y) {
+  const n = pts.length;
+  if (y <= 0) return pts[0][0] + y / pts[0][1];
+  let acc = 0;
+  for (let i = 0; i < n - 1; i++) {
+    const [a, ma] = pts[i], [b, mb] = pts[i + 1], h = b - a, seg = (ma + mb) * h / 2;
+    if (h > 0 && y <= acc + seg) {
+      // ma·x + (mb − ma)·x²/(2h) = d  →  m(x)² = ma² + 2(mb − ma)·d/h  e  x = 2d / (ma + m(x)), forma estável
+      const d = y - acc, mx = Math.sqrt(Math.max(0, ma * ma + 2 * (mb - ma) * d / h));
+      return a + 2 * d / (ma + mx);
+    }
+    acc += seg;
+  }
+  return pts[n - 1][0] + (y - acc) / pts[n - 1][1];
+}
+/* velocidade real no instante t da linha do tempo */
+function speedAt(L, t) {
+  const pts = rampOf(L);
+  return pts ? baseSpeed(L) * rampMul(pts, t) : baseSpeed(L);
+}
+/* segundo do arquivo mostrado no instante t; start/trim permitem simular outra borda (arrastar) */
+function srcTime(L, t, start = L.start, trim = L.s.trimIn || 0) {
+  const pts = rampOf(L), sp = baseSpeed(L);
+  if (!pts) return (t - start) * sp + trim;
+  return trim + sp * (rampCum(pts, t) - rampCum(pts, start));
+}
+/* inversa exata de srcTime: em que instante da linha do tempo aparece o segundo s do arquivo */
+function timeAtSrc(L, s, start = L.start, trim = L.s.trimIn || 0) {
+  const pts = rampOf(L), sp = baseSpeed(L);
+  if (!pts) return start + (s - trim) / sp;
+  return rampInv(pts, rampCum(pts, start) + (s - trim) / sp);
+}
+/* quantos segundos do arquivo o bloco mostra */
+const srcSpan = L => (rampOf(L) ? srcTime(L, L.end) - (L.s.trimIn || 0) : (L.end - L.start) * baseSpeed(L));
+/* trechos com tempo de arquivo (contado a partir de "from") viram tempo do bloco, com velocidade e rampa */
+function srcSegsToClip(L, from, segs) {
+  if (!rampOf(L) && baseSpeed(L) === 1) return segs;
+  return segs.map(s => ({ ...s, start: timeAtSrc(L, from + s.start) - L.start, end: timeAtSrc(L, from + s.end) - L.start }));
+}
+/* curva de playbackRate do som (~60 amostras por segundo) para o trecho tocado, em qualquer AudioContext */
+function automateRate(param, L, t0, when, dur) {
+  const n = Math.min(60 * PROJECT_MAX, Math.max(2, Math.ceil(dur * 60) + 1));
+  const curve = new Float32Array(n);
+  for (let i = 0; i < n; i++) curve[i] = speedAt(L, t0 + dur * i / (n - 1));
+  try { param.setValueCurveAtTime(curve, when, dur); }
+  catch { try { param.setValueAtTime(curve[0], when); } catch {} }
+}
+
+/* aumenta o projeto até "end" (limite de PROJECT_MAX), como ao importar mídia longa */
+function growProjectTo(end) {
+  const p = P(), old = p.duration;
+  const need = Math.min(PROJECT_MAX, Math.ceil(end * 10 - 1e-6) / 10);
+  if (need <= old) return;
+  p.duration = need;
+  for (const l of p.layers) if (Math.abs(l.end - old) < 1e-6 && (!TIMED_MEDIA(l.type) || l.type === 'lottie' && l.s.loop)) l.end = need;
+}
+/* aplica uma rampa pronta (ou nenhuma) mantendo o MESMO trecho do arquivo: o bloco alonga ou encurta.
+   Devolve true se o projeto chegou ao limite e o fim do trecho ficou de fora. */
+function applyRamp(L, id) {
+  if (!MEDIA(L.type)) return false;
+  const preset = RAMPS[id] || null, span = srcSpan(L);
+  if (!(span > 0)) return false;
+  const mean = preset ? rampCum(preset.pts, 1) - rampCum(preset.pts, 0) : 1;   // média do multiplicador de 0 a 1
+  const D = span / (baseSpeed(L) * mean), oldEnd = L.end;
+  if (L.start + D > P().duration) growProjectTo(L.start + D);
+  L.s.ramp = preset ? id : '';
+  L.s.rampPts = preset ? preset.pts.map(([u, m]) => [L.start + u * D, m]) : [];
+  L.end = Math.min(P().duration, L.start + D);
+  if (L.end !== oldEnd) delete L.s.transitionEnd;
+  return L.start + D > P().duration + 1e-6;
+}
+
+/* quadros suaves: com velocidade < 1, mistura o quadro a do arquivo com o a+1 (alfa = parte fracionária).
+   Vale para a prévia PAUSADA e para a exportação quadro a quadro. Na reprodução em tempo real o vídeo
+   está tocando e não há como manter o segundo elemento no quadro seguinte: desenha só o principal. */
+const srcFps = L => { const f = A.get(L.s.asset)?.info?.fps; return Number.isFinite(f) && f > 0 ? f : 30; };
+function blendInfo(L, t) {
+  if (L.type !== 'video' || !L.s.smoothSlow || speedAt(L, t) >= 1) return null;
+  const f = srcFps(L), x = Math.max(0, srcTime(L, t)) * f, a = Math.floor(x + 1e-6);
+  return { f, frac: Math.max(0, x - a), t1: (a + 0.5) / f, t2: (a + 1.5) / f };
+}
+let blendCanvas = null;
+function video2For(L) {
+  const rec = A.get(L.s.asset);
+  if (!rec) return null;
+  let v = VIDS2.get(L.id);
+  if (!v || v.dataset.asset !== L.s.asset) {
+    v = document.createElement('video');
+    v.muted = true; v.playsInline = true; v.preload = 'auto';
+    v.dataset.asset = L.s.asset;
+    v.src = rec.url;
+    // antes dos metadados o Chromium ignora currentTime e para no 0: a busca só acontece depois deles
+    v.addEventListener('loadedmetadata', () => { if (!S.playing && !S.exporting && !exactSeeks) syncMedia(); });
+    v.addEventListener('seeked', () => { if (!S.playing && !S.exporting) { renderMain(); drawOverlay(); } });
+    VIDS2.set(L.id, v);
+  }
+  return v;
+}
+function dropVideo2(id) {
+  const v = VIDS2.get(id);
+  if (!v) return;
+  v.pause(); v.removeAttribute('src'); v.load();
+  VIDS2.delete(id);
+}
+/* segundo quadro a desenhar por cima, só quando os dois vídeos estão parados nos quadros certos */
+function nextFrameOf(L, t, v) {
+  if (liveSync || S.playing || !v.paused) return null;
+  const b = blendInfo(L, t), v2 = VIDS2.get(L.id);
+  if (!b || b.frac < 0.002 || !v2 || v2.readyState < 2) return null;
+  if (Math.abs(v.currentTime - b.t1) > 0.25 / b.f || Math.abs(v2.currentTime - b.t2) > 0.25 / b.f) return null;
+  return { v: v2, frac: b.frac };
+}
+
+/* painel: rampas prontas, quadros suaves e a curva de velocidade do bloco */
+function rampPoints(L) {
+  const pts = rampOf(L), a = L.start, b = L.end;
+  if (!pts || !(b > a)) return null;
+  const ts = [a, ...pts.map(q => q[0]).filter(t => t > a && t < b), b];
+  return ts.map(t => [(t - a) / (b - a), speedAt(L, t)]);
+}
+function rampSvg(L) {
+  const q = rampPoints(L);
+  if (!q) return '';
+  const sp = q.map(p => p[1]), lo = Math.min(...sp), hi = Math.max(...sp), top = Math.max(1.2, hi) * 1.12;
+  const W = 240, H = 60, Y = v => (H - 4 - v / top * (H - 8)).toFixed(1);
+  return `<svg class="ramp-curve" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Velocidade ao longo do bloco">
+    <line class="ramp-one" x1="0" x2="${W}" y1="${Y(1)}" y2="${Y(1)}"/>
+    <polyline points="${q.map(([u, v]) => `${(u * W).toFixed(1)},${Y(v)}`).join(' ')}"/></svg>
+    <div class="ramp-scale"><span>Mais lento ${round(lo, 2)}x</span><span>Tracejado = 1x</span><span>Mais rápido ${round(hi, 2)}x</span></div>`;
+}
+/* linha fina na parte de baixo do bloco da linha do tempo (o nome do bloco fica no meio) */
+function rampLine(L) {
+  const q = rampPoints(L);
+  if (!q) return '';
+  const top = Math.max(1.2, ...q.map(p => p[1]));
+  return `<svg class="ramp-line" viewBox="0 0 100 20" preserveAspectRatio="none" aria-hidden="true"><polyline points="${q.map(([u, v]) => `${(u * 100).toFixed(2)},${(19.5 - v / top * 7).toFixed(2)}`).join(' ')}"/></svg>`;
+}
+function rampPanelRows(L) {
+  return `<h4 class="subhead">Câmera lenta</h4>
+    ${selectRow('ramp', 'Rampa', { '': 'Nenhuma (velocidade constante)', ...Object.fromEntries(Object.entries(RAMPS).map(([k, r]) => [k, r.label])) })}
+    <div class="ramp-box" id="rampBox"${rampOf(L) ? '' : ' hidden'}>${rampSvg(L)}</div>
+    ${checkRow('smoothSlow', 'Quadros suaves (mistura de quadros)')}
+    <p class="hint">A rampa mantém o mesmo trecho do vídeo. Quadros suaves aparecem com o vídeo pausado e na exportação quadro a quadro (MP4 e GIF), não na gravação em tempo real.</p>`;
+}
+function syncRampBox(L) {
+  const box = $('#rampBox', panel);
+  if (!box) return;
+  box.innerHTML = rampSvg(L);
+  box.hidden = !rampOf(L);
 }
 
 function videoFor(L) {
@@ -542,25 +757,40 @@ function videoFor(L) {
 /* mantém os vídeos no tempo certo (preview e exportação) */
 function syncMedia() {
   const running = S.playing || S.exporting;
+  liveSync = running;
   for (const L of P().layers) {
     if (L.type !== 'video') continue;
     const v = videoFor(L);
     if (!v) continue;
+    if (!L.s.smoothSlow && VIDS2.has(L.id)) dropVideo2(L.id);
     const rec = A.get(L.s.asset);
-    const sp = L.s.speed || 1;
-    const local = (S.time - L.start) * sp + (L.s.trimIn || 0);
+    const local = srcTime(L, S.time);
     const active = L.visible && S.time >= L.start && (S.time < L.end || S.time === P().duration && L.end === P().duration) && local <= (rec.duration || Infinity);
     if (!active) { if (!v.paused) v.pause(); continue; }
-    if (Math.abs(v.playbackRate - sp) > 1e-4) { try { v.playbackRate = sp; } catch {} }
+    // velocidade do instante (constante ou rampa); o navegador só toca entre ~0.06x e 16x
+    const sp = speedAt(L, S.time), rate = clamp(sp, SPEED_MIN, 8);
+    if (Math.abs(v.playbackRate - rate) > 1e-4) { try { v.playbackRate = rate; } catch {} }
     if (running) {
-      if (v.paused) { try { v.currentTime = local; } catch {} v.play().catch(() => {}); }
+      if (sp < SPEED_MIN) {
+        // mais lento do que o vídeo consegue tocar: segura o quadro e avança por busca
+        if (!v.paused) v.pause();
+        if (Math.abs(v.currentTime - local) > 0.5 / srcFps(L)) { try { v.currentTime = local; } catch {} }
+      } else if (v.paused) { try { v.currentTime = local; } catch {} v.play().catch(() => {}); }
       else if (Math.abs(v.currentTime - local) > 0.25) v.currentTime = local;
     } else {
       if (!v.paused) v.pause();
-      if (Math.abs(v.currentTime - local) > 0.5 / P().fps) { try { v.currentTime = local; } catch {} }
+      const bl = blendInfo(L, S.time);
+      if (bl) {
+        // quadros suaves: principal no centro do quadro a, segundo vídeo no centro do quadro a+1
+        const last = Math.max(0, (rec.duration || 1e9) - 0.001), t1 = Math.min(bl.t1, last), t2 = Math.min(bl.t2, last);
+        if (Math.abs(v.currentTime - t1) > 1e-3) { try { v.currentTime = t1; } catch {} }
+        const v2 = video2For(L);
+        if (v2 && v2.readyState >= 1 && Math.abs(v2.currentTime - t2) > 1e-3) { try { v2.currentTime = t2; } catch {} }
+      } else if (Math.abs(v.currentTime - local) > 0.5 / P().fps) { try { v.currentTime = local; } catch {} }
     }
   }
   for (const [id, v] of VIDS) if (!byId(id)) { v.pause(); VIDS.delete(id); }
+  for (const id of [...VIDS2.keys()]) if (!byId(id)) dropVideo2(id);
 }
 const pauseAllVideos = () => VIDS.forEach(v => v.pause());
 
@@ -573,20 +803,23 @@ function scheduleAudio(ac, dest, from, lead = 0.03) {
     if (!rec || !rec.buffer) continue;
     const vol = (L.s.volume ?? 100) / 100;
     if (vol <= 0) continue;
-    const sp = L.s.speed || 1;
+    const sp = L.s.speed || 1, ramp = rampOf(L);
     const len = L.end - L.start;
     const into = Math.max(0, from - L.start);
-    const offset = (L.s.trimIn || 0) + into * sp;
+    const t0 = Math.max(from, L.start);   // primeiro instante tocado, na linha do tempo
+    const offset = srcTime(L, t0);
     if (offset >= rec.buffer.duration) continue;
     const when = ac.currentTime + Math.max(0, L.start - from) + lead;
     const src = ac.createBufferSource();
     src.buffer = rec.buffer;
-    if (src.playbackRate) { try { src.playbackRate.setValueAtTime(sp, when); } catch {} }
+    if (src.playbackRate && !ramp) { try { src.playbackRate.setValueAtTime(sp, when); } catch {} }
     const g = ac.createGain();
     src.connect(g); g.connect(dest);
-    const rem = (rec.buffer.duration - offset) / sp;
+    const rem = ramp ? timeAtSrc(L, rec.buffer.duration) - t0 : (rec.buffer.duration - offset) / sp;
     const duration = Math.min(len - into, rem);
     if (duration <= 0) continue;
+    // rampa: a velocidade do som segue a mesma curva do vídeo
+    if (ramp && src.playbackRate) automateRate(src.playbackRate, L, t0, when, duration);
     let fi = Math.max(0, L.s.fadeIn || 0), fo = Math.max(0, L.s.fadeOut || 0);
     // Fades longos dividem o clipe proporcionalmente, sem eventos no passado.
     const fadeScale = Math.min(1, len / (fi + fo || 1));
@@ -606,7 +839,7 @@ function scheduleAudio(ac, dest, from, lead = 0.03) {
       }
     }
     // start() usa segundos da fonte; stop() usa segundos de reprodução.
-    src.start(when, offset, duration * sp);
+    src.start(when, offset, ramp ? Math.max(0, srcTime(L, t0 + duration) - offset) : duration * sp);
     src.stop(when + duration);
     out.push(src);
   }
@@ -626,7 +859,7 @@ function defaultS(type) {
   const chroma = { chromaOn: false, chromaColor: '#00ff00', chromaTol: 30, chromaSoft: 10 };
   const look = { blend: 'source-over', clip: false, shadowX: 0, shadowY: 0, shadowBlur: 0, shadowColor: '#000000', shadowOpacity: 60, fillType: 'solid', gradAngle: 90, flipH: false, flipV: false, colorLook: 'none', lookIntensity: 100, transitionIn: 'none', transitionOut: 'none', transitionInDuration: 0.5, transitionOutDuration: 0.5, parallax: 100 };
   const framing = { mediaFit: 'stretch', focalX: 50, focalY: 50 };
-  const media = { asset: null, trimIn: 0, volume: 100, fadeIn: 0, fadeOut: 0, speed: 1, muted: false };
+  const media = { asset: null, trimIn: 0, volume: 100, fadeIn: 0, fadeOut: 0, speed: 1, muted: false, rampPts: [], ramp: '', smoothSlow: false };
   switch (type) {
     case 'text': return { ...look, text: 'Seu texto', font: 'Montserrat', size: Math.round(m * 0.11), weight: 900, color: '#ffffff', fill2: '#ffb547', align: 'center', stroke: 0, strokeColor: '#000000', glowColor: '#ffb547', anim: 'none', curve: 0, onPath: '', pathStart: 0 };
     case 'rect': return { ...look, w: Math.round(m * 0.4), h: Math.round(m * 0.4), radius: 28, fill: '#ff8f6b', fill2: '#b89cff', glowColor: '#ff8f6b' };
@@ -672,6 +905,11 @@ function normalize(p) {
     if (TIMED_MEDIA(L.type)) {
       L.s.speed = Number(L.s.speed) || 1;
       if (L.s.muted == null) L.s.muted = false;
+    }
+    if (MEDIA(L.type)) {   // câmera lenta: sem rampa, a velocidade continua constante como antes
+      L.s.rampPts = cleanRamp(L.s.rampPts);
+      if (typeof L.s.ramp !== 'string') L.s.ramp = '';
+      L.s.smoothSlow = !!L.s.smoothSlow;
     }
     if (L.s.flipH == null) L.s.flipH = false;
     if (L.s.flipV == null) L.s.flipV = false;
@@ -1014,8 +1252,20 @@ function drawShape(c, L, local) {
     }
     case 'video': {
       const v = VIDS.get(L.id) || videoFor(L);
-      if (v && v.readyState >= 2) drawFramedMedia(c, v, v.videoWidth, v.videoHeight, s);
-      else drawMissing(c, s.w, s.h, A.get(s.asset) ? 'Carregando…' : 'Vídeo');
+      if (v && v.readyState >= 2) {
+        // quadros suaves (câmera lenta): mistura os quadros a e a+1 num canvas próprio e desenha o resultado uma vez,
+        // assim o modo de mesclagem e a opacidade da camada valem para o quadro misturado
+        const nx = s.smoothSlow ? nextFrameOf(L, L.start + local, v) : null;
+        if (nx) {
+          const w = v.videoWidth, h = v.videoHeight;
+          if (!blendCanvas) blendCanvas = document.createElement('canvas');
+          if (blendCanvas.width !== w || blendCanvas.height !== h) { blendCanvas.width = w; blendCanvas.height = h; }
+          const bc = blendCanvas.getContext('2d');
+          bc.globalAlpha = 1; bc.drawImage(v, 0, 0, w, h);
+          bc.globalAlpha = nx.frac; bc.drawImage(nx.v, 0, 0, w, h); bc.globalAlpha = 1;
+          drawFramedMedia(c, blendCanvas, w, h, s);
+        } else drawFramedMedia(c, v, v.videoWidth, v.videoHeight, s);
+      } else drawMissing(c, s.w, s.h, A.get(s.asset) ? 'Carregando…' : 'Vídeo');
       return { w: s.w, h: s.h };
     }
     case 'lottie': {
@@ -1489,8 +1739,7 @@ async function detectBeats(buffer) {
 /* batidas na linha do tempo, vindas da primeira música (ou vídeo) analisada */
 function beatsOf(L) {
   if (!L.s.beats || !L.s.beats.length) return [];
-  const sp = L.s.speed || 1, ti = L.s.trimIn || 0;
-  return L.s.beats.map(b => round(L.start + (b - ti) / sp, 4)).filter(t => t >= L.start - 1e-6 && t <= L.end + 1e-6);
+  return L.s.beats.map(b => round(timeAtSrc(L, b), 4)).filter(t => t >= L.start - 1e-6 && t <= L.end + 1e-6);
 }
 function beatSource() {
   const ls = P().layers.filter(L => MEDIA(L.type) && L.visible && L.s.beats && L.s.beats.length);
@@ -1563,6 +1812,8 @@ function beatMontage(every) {
     }
     const shift = a - L.start;
     for (const prop of Object.keys(L.kf)) L.kf[prop].forEach(k => (k.t = round(k.t + shift, 4)));
+    // a rampa de velocidade anda junto com o início do bloco, como os keyframes
+    if (rampOf(L)) { const ds = snap(a) - L.start; L.s.rampPts = L.s.rampPts.map(([t, m]) => [t + ds, m]); }
     L.start = snap(a); L.end = Math.max(L.start + 0.1, snap(b));
     if (L.type === 'video') L.end = Math.min(L.end, L.start + mediaRemaining(L));
     used.push(L);
@@ -2209,8 +2460,9 @@ $('#btnSplit').onclick = () => splitLayer();
 const labelW = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--label-w')) || 112;
 const tx = t => TL_PAD + t * S.pps;
 const mediaSourceDur = L => { const r = A.get(L.s.asset); return (L.type === 'lottie' ? window.MotionLottie.sourceInfo(r, L.s)?.duration : r?.duration) || Infinity; };
-const mediaDur = L => mediaSourceDur(L) / (L.s && L.s.speed ? L.s.speed : 1);
-const mediaRemaining = L => L.type === 'lottie' && L.s.loop ? Infinity : Math.max(0, (mediaSourceDur(L) - (L.s.trimIn || 0)) / (L.s && L.s.speed ? L.s.speed : 1));
+// com rampa de velocidade, a duração na linha do tempo vem da inversa exata (timeAtSrc)
+const mediaDur = L => (rampOf(L) ? timeAtSrc(L, mediaSourceDur(L)) - timeAtSrc(L, 0) : mediaSourceDur(L) / (L.s && L.s.speed ? L.s.speed : 1));
+const mediaRemaining = L => L.type === 'lottie' && L.s.loop ? Infinity : rampOf(L) ? Math.max(0, timeAtSrc(L, mediaSourceDur(L)) - L.start) : Math.max(0, (mediaSourceDur(L) - (L.s.trimIn || 0)) / (L.s && L.s.speed ? L.s.speed : 1));
 
 function renderTimeline() {
   const p = P();
@@ -2250,7 +2502,7 @@ function renderTimeline() {
     return `<div class="tl-row${L.id === S.sel ? ' sel' : ''}${L.visible ? '' : ' off'}" data-id="${L.id}">
       <div class="tl-label" style="padding-left:${8 + d * 10}px"><button class="eye" data-eye aria-label="${L.visible ? 'Ocultar' : 'Mostrar'} camada">${L.visible ? eyeOn : eyeOff}</button>${muteBtn}<i class="type-dot ${L.type}"></i>${tag}<span class="name">${esc(L.name)}</span></div>
       <div class="tl-track" style="width:${trackW}px">
-        <div class="clip ${L.type}" style="left:${tx(L.start)}px;width:${(L.end - L.start) * S.pps}px">${MEDIA(L.type) ? `<canvas class="wave" data-wave="${L.id}"></canvas>` : ''}<span class="clip-label">${esc(L.name)}</span><span class="h l"></span><span class="h r"></span></div>
+        <div class="clip ${L.type}" style="left:${tx(L.start)}px;width:${(L.end - L.start) * S.pps}px">${MEDIA(L.type) ? `<canvas class="wave" data-wave="${L.id}"></canvas>${rampLine(L)}` : ''}<span class="clip-label">${esc(L.name)}</span><span class="h l"></span><span class="h r"></span></div>
         ${kfs}
       </div></div>`;
   }).join('') || `<div class="tl-row"><div class="tl-label" style="color:var(--muted)">Vazio</div><div class="tl-track" style="width:${trackW}px"></div></div>`;
@@ -2271,9 +2523,9 @@ function drawWaves() {
     c.scale(dpr, dpr);
     c.fillStyle = hexA(L.type === 'audio' ? theme.audio : theme.white, L.type === 'audio' ? 0.55 : 0.25);
     const mid = h / 2;
-    const sp = L.s && L.s.speed ? L.s.speed : 1;
+    const sp = L.s && L.s.speed ? L.s.speed : 1, ramp = rampOf(L);
     for (let x = 0; x < w; x += 2) {
-      const src = (L.s.trimIn || 0) + (x / S.pps) * sp;
+      const src = ramp ? srcTime(L, L.start + x / S.pps) : (L.s.trimIn || 0) + (x / S.pps) * sp;
       const amp = rec.peaks[Math.floor(src * PEAKS_PER_SEC)] || 0;
       const bh = Math.max(1, amp * (h - 6));
       c.fillRect(x, mid - bh / 2, 1.2, bh);
@@ -2353,7 +2605,7 @@ rows.addEventListener('pointerdown', e => {
   const mode = e.target.classList.contains('l') ? 'l' : e.target.classList.contains('r') ? 'r' : 'move';
   const s0 = L.start, e0 = L.end, dur = P().duration, trim0 = L.s.trimIn || 0, isMedia = TIMED_MEDIA(L.type);
   const trStart0 = L.s.transitionStart, trEnd0 = L.s.transitionEnd;
-  const sp = L.s.speed || 1;
+  const ramp0 = rampOf(L) ? L.s.rampPts.map(q => q.slice()) : null;   // a rampa anda junto com o bloco
   if (L.id !== S.sel) select(L.id);
   const clip = row.querySelector('.clip');
   const kfEls = $$('.kf', row).map(el => ({ el, t: +el.dataset.kfT }));
@@ -2369,15 +2621,17 @@ rows.addEventListener('pointerdown', e => {
       L.start = ns; L.end = ne;
       if (trStart0 != null) L.s.transitionStart = trStart0 + dt;
       if (trEnd0 != null) L.s.transitionEnd = trEnd0 + dt;
+      if (ramp0) L.s.rampPts = ramp0.map(([t, m]) => [t + dt, m]);
       kfEls.forEach(k => (k.el.style.left = tx(k.t + dt) + 'px'));
     } else if (mode === 'l') {
-      const minStart = isMedia ? Math.max(0, s0 - trim0 / sp) : 0;
+      // o início não passa do começo do arquivo (segundo 0), mesmo com rampa
+      const minStart = isMedia ? Math.max(0, timeAtSrc(L, 0, s0, trim0)) : 0;
       let ns = clamp(snap(s0 + dt), minStart, L.end - 0.1);
       { const mg = magnet(ns); if (mg != null && mg >= minStart && mg <= L.end - 0.1) ns = snap(mg); }
       L.start = ns;
       if (ns !== s0) delete L.s.transitionStart;
       else if (trStart0 != null) L.s.transitionStart = trStart0;
-      if (isMedia) L.s.trimIn = round(trim0 + (L.start - s0) * sp, 4);
+      if (isMedia) L.s.trimIn = round(srcTime(L, L.start, s0, trim0), 4);
     } else {
       const maxEnd = isMedia ? Math.min(dur, L.start + mediaRemaining(L)) : dur;
       let ne = clamp(snap(e0 + dt), L.start + 0.1, maxEnd);
@@ -2593,7 +2847,7 @@ function layerPanel(L) {
     const rec = A.get(s.asset);
     const info = rec ? (rec.buffer ? `Duração do arquivo: ${fmtTime(rec.duration || 0)}` : (L.type === 'video' ? 'Este vídeo não tem som (ou o navegador não conseguiu ler o áudio).' : 'Não consegui ler este áudio.')) : 'Arquivo não encontrado neste aparelho. Use "Trocar arquivo".';
     const fileInfo = rec && rec.info ? ` Arquivo: ${esc(rec.info.codec)}${Number.isFinite(rec.info.fps) ? ` · ${Math.round(rec.info.fps)} fps` : ''}${rec.info.rotation ? ` · gravado girado ${rec.info.rotation}°` : ''}.` : '';
-    const speeds = { '0.25': '0.25x (lento 4x)', '0.5': '0.5x (lento 2x)', '0.75': '0.75x', '1': '1x (normal)', '1.25': '1.25x', '1.5': '1.5x (rápido)', '2': '2x (acelerado)', '3': '3x', '4': '4x' };
+    const speeds = { '0.1': '0.1x (lento 10x)', '0.2': '0.2x (lento 5x)', '0.25': '0.25x (lento 4x)', '0.5': '0.5x (lento 2x)', '0.75': '0.75x', '1': '1x (normal)', '1.25': '1.25x', '1.5': '1.5x (rápido)', '2': '2x (acelerado)', '3': '3x', '4': '4x' };
     media = `<div class="sec"><h3>${L.type === 'video' ? 'Áudio e Velocidade' : 'Som'}</h3>
       ${checkRow('muted', 'Mudo (sem som)')}
       ${selectRow('speed', 'Velocidade', speeds)}
@@ -2603,6 +2857,7 @@ function layerPanel(L) {
       ${numRow('trimIn', 'Começa em (s)', 0, Math.max(1, Math.floor(mediaSourceDur(L) === Infinity ? 60 : mediaSourceDur(L))), 0.1)}
       <p class="hint">${info}${fileInfo}</p>
       ${L.type === 'video' ? '<div class="actions"><button class="btn btn-small" data-act="scene-cut">Cortar por cenas</button></div>' : ''}
+      ${L.type === 'video' ? rampPanelRows(L) : ''}
       ${L.type === 'audio' && rec && rec.peaks ? '<div class="row plain"><label for="waveZoom">Zoom</label><input type="range" id="waveZoom" min="20" max="400" value="60" aria-label="Zoom da forma de onda"></div><div class="wave-box" id="waveBox"></div>' : ''}
       ${rec && rec.buffer ? '<div class="actions"><button class="btn btn-small btn-ai" data-act="captions"><i class="sw sw-whisper"></i> Legendas (Whisper / IA)</button></div>' : ''}
       ${rec && rec.buffer ? `<h4 class="subhead">Ritmo</h4>
@@ -2775,14 +3030,29 @@ panel.addEventListener('input', e => {
     }
     if (key === 'iconName' && ICONS[v]) { L.s.d = ICONS[v]; L.s.line = false; }
     if (key === 'speed') {
-      v = clamp(parseFloat(v) || 1, 0.25, 4);
+      v = clamp(parseFloat(v) || 1, L.type === 'lottie' ? 0.25 : SPEED_MIN, 4);
       const old = Number(L.s.speed) || 1;
       const oldEnd = L.end;
-      L.s.speed = v;
-      // mantém o mesmo trecho do arquivo: mais rápido encurta o bloco, mais lento alonga
-      L.end = clamp(snap(L.start + (L.end - L.start) * old / v), L.start + 0.1, Math.min(P().duration, L.start + mediaRemaining(L)));
+      if (rampOf(L)) {
+        // com rampa: a curva escala em torno do início e o fim sai da inversa, sem perder o trecho do arquivo
+        const srcEnd = srcTime(L, L.end), k = old / v;
+        L.s.rampPts = L.s.rampPts.map(([t, m]) => [L.start + (t - L.start) * k, m]);
+        L.s.speed = v;
+        L.end = clamp(timeAtSrc(L, srcEnd), L.start + 0.1, Math.min(P().duration, L.start + mediaRemaining(L)));
+      } else {
+        L.s.speed = v;
+        // mantém o mesmo trecho do arquivo: mais rápido encurta o bloco, mais lento alonga
+        L.end = clamp(snap(L.start + (L.end - L.start) * old / v), L.start + 0.1, Math.min(P().duration, L.start + mediaRemaining(L)));
+      }
       if (L.end !== oldEnd) delete L.s.transitionEnd;
-      renderTimeline(); refreshTime(); syncPanel(true);
+      renderTimeline(); refreshTime(); syncPanel(true); syncRampBox(L);
+      return;
+    }
+    if (key === 'ramp') {
+      if (!MEDIA(L.type)) return;
+      const cut = applyRamp(L, v);
+      commit(); renderTimeline(); refreshTime(); syncPanel(true); syncRampBox(L);
+      toast(cut ? `O projeto tem no máximo ${PROJECT_MAX} s. O fim do trecho ficou de fora.` : v ? 'Rampa aplicada. Dê play para ver.' : 'Velocidade constante de novo.');
       return;
     }
     if (['lookIntensity', 'focalX', 'focalY'].includes(key)) v = clamp(v, 0, 100);
@@ -3092,12 +3362,12 @@ function splitLayer(L, t = S.time) {
   L2.end = origEnd;
 
   if (TIMED_MEDIA(L.type)) {
-    const sp = L.s.speed || 1;
-    L2.s.trimIn = round((L.s.trimIn || 0) + (cut - L.start) * sp, 4);
+    // L ainda começa no início original aqui (só o fim mudou), então srcTime vê o bloco inteiro
+    L2.s.trimIn = round(srcTime(L, cut), 4);
   }
 
-  // os keyframes usam tempo absoluto: as duas partes mantêm todos eles,
-  // então a animação continua idêntica dos dois lados do corte
+  // os keyframes e a rampa de velocidade usam tempo absoluto: as duas partes mantêm todos eles,
+  // então a animação e a câmera lenta continuam idênticas dos dois lados do corte
   const p = P();
   const idx = p.layers.indexOf(L);
   p.layers.splice(idx, 0, L2);
@@ -3221,7 +3491,7 @@ mediaInput.addEventListener('change', async e => {
       if (rec.w) existing.s.h = Math.round(existing.s.w * rec.h / rec.w);
       existing.s.trimIn = 0;
       if (kind === 'lottie') existing.s.animationId = rec.defaultId;
-      if (TIMED_MEDIA(kind)) existing.end = Math.min(p.duration, existing.start + (rec.duration || p.duration) / (existing.s.speed || 1));
+      if (TIMED_MEDIA(kind)) existing.end = Math.min(p.duration, rampOf(existing) && rec.duration ? timeAtSrc(existing, rec.duration) : existing.start + (rec.duration || p.duration) / (existing.s.speed || 1));
       commit(); renderPanel(); renderTimeline(); refreshTime();
       return;
     }
@@ -3308,11 +3578,29 @@ function scheduleSave() {
   clearTimeout(saveTimer);
   const status = $('#saveStatus');
   status.textContent = 'Salvando…'; status.dataset.state = 'pending';
-  saveTimer = setTimeout(() => {
-    try { localStorage.setItem(STORE_KEY, snapshot()); status.textContent = 'Salvo neste aparelho'; status.dataset.state = 'saved'; }
-    catch { status.textContent = 'Só nesta sessão'; status.dataset.state = 'error'; toast('Não consegui salvar neste aparelho. Salve o projeto pelo menu para guardar esta versão.'); }
-  }, 600);
+  saveTimer = setTimeout(saveNow, 600);
 }
+/* grava já: cópia rápida no localStorage (projeto aberto) e o registro na biblioteca (IndexedDB) */
+function saveNow() {
+  clearTimeout(saveTimer); saveTimer = null;
+  const p = P();
+  if (!p) return libQueue(() => {}).catch(() => {});
+  if (!p.id) p.id = uid();
+  const json = snapshot(), status = $('#saveStatus');
+  let local = true;
+  try { localStorage.setItem(STORE_KEY, json); }
+  catch { local = false; try { localStorage.removeItem(STORE_KEY); } catch { /* sem localStorage */ } }   // cópia velha não pode valer mais que a biblioteca
+  try { localStorage.setItem(LAST_KEY, p.id); } catch { /* sem localStorage */ }
+  const job = libSave(p, json, homeOpen ? null : canvasThumb()).then(() => true, () => false);
+  job.then(ok => {
+    if (saveTimer || P() !== p) return;   // já há outra gravação a caminho
+    if (ok || local) { status.textContent = 'Salvo neste aparelho'; status.dataset.state = 'saved'; }
+    else { status.textContent = 'Só nesta sessão'; status.dataset.state = 'error'; toast('Não consegui salvar neste aparelho. Salve o projeto pelo menu para guardar esta versão.'); }
+  });
+  return job;
+}
+/* antes de sair do editor ou trocar de projeto: grava o que estiver pendente e espera a biblioteca */
+const flushSave = () => saveNow();
 function loadSaved() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
@@ -3325,6 +3613,8 @@ function loadSaved() {
 function setProject(p, fresh) {
   if (S.project) pause();
   VIDS.forEach(v => v.pause()); VIDS.clear();
+  [...VIDS2.keys()].forEach(dropVideo2);
+  if (!p.id) p.id = uid();   // id estável do projeto na biblioteca
   S.project = normalize(p); S.sel = null; S.selKf = null; S.time = 0;
   S.undo = [snapshot()]; S.redo = [];
   $('#projectName').value = P().name;
@@ -3595,24 +3885,36 @@ async function encodeAudio(buf, acfg, muxer) {
 }
 
 /* posiciona cada vídeo exatamente no quadro pedido e espera ele aparecer */
+let exactSeeks = 0;   // buscas exatas em andamento: o syncMedia não pode mover os vídeos no meio delas
 async function seekVideosExact(t) {
   const waits = [];
+  liveSync = false;   // os vídeos ficam parados em quadros exatos (vale para os quadros suaves)
+  const seek = (v, local, tol) => {
+    if (Math.abs(v.currentTime - local) < tol && v.readyState >= 2) return;
+    waits.push(new Promise(res => {
+      const done = () => { clearTimeout(to); v.removeEventListener('seeked', done); v.removeEventListener('loadedmetadata', go); res(); };
+      // antes dos metadados o Chromium ignora a busca e para no 0: espera os metadados e só então busca
+      const go = () => { v.removeEventListener('loadedmetadata', go); v.addEventListener('seeked', done); try { v.currentTime = local; } catch { done(); } };
+      const to = setTimeout(done, 3000);
+      if (v.readyState < 1) v.addEventListener('loadedmetadata', go); else go();
+    }));
+  };
   for (const L of P().layers) {
     if (L.type !== 'video' || !L.visible || t < L.start || t > L.end) continue;
     const v = videoFor(L);
     if (!v) continue;
     if (!v.paused) v.pause();
-    const rec = A.get(L.s.asset);
-    const local = clamp((t - L.start) * (L.s.speed || 1) + (L.s.trimIn || 0), 0, Math.max(0, ((rec && rec.duration) || 1e9) - 0.001));
-    if (Math.abs(v.currentTime - local) < 0.25 / P().fps && v.readyState >= 2) continue;
-    waits.push(new Promise(res => {
-      const done = () => { clearTimeout(to); v.removeEventListener('seeked', done); res(); };
-      const to = setTimeout(done, 3000);
-      v.addEventListener('seeked', done);
-      try { v.currentTime = local; } catch { done(); }
-    }));
+    const rec = A.get(L.s.asset), last = Math.max(0, ((rec && rec.duration) || 1e9) - 0.001);
+    const bl = blendInfo(L, t);
+    if (bl) {
+      // quadros suaves: os dois vídeos nos centros dos quadros a e a+1
+      seek(v, clamp(bl.t1, 0, last), 1e-3);
+      const v2 = video2For(L);
+      if (v2) seek(v2, clamp(bl.t2, 0, last), 1e-3);
+    } else seek(v, clamp(srcTime(L, t), 0, last), 0.25 / P().fps);
   }
-  await Promise.all(waits);
+  exactSeeks++;
+  try { await Promise.all(waits); } finally { exactSeeks--; }
 }
 
 function exportProgress(title) {
@@ -3881,7 +4183,7 @@ function editWithAIModal(previous = {}, error = '') {
   const chosen = videos.find(L => L.id === previous.layerId) || videos.find(L => L.id === S.sel) || videos[0];
   const rec = A.get(chosen.s.asset), speed = clamp(Number(chosen.s.speed) || 1, 0.25, 4);
   const from = previous.sourceFrom ?? chosen.s.trimIn ?? 0;
-  const to = previous.sourceTo ?? Math.min(rec.duration, from + Math.min(AI_EDIT_MAX, (chosen.end - chosen.start) * speed));
+  const to = previous.sourceTo ?? Math.min(rec.duration, from + Math.min(AI_EDIT_MAX, srcSpan(chosen)));
   showModal('Editar com IA', `
     <p>Transforme seu vídeo em uma montagem com cortes, legendas e destaques. Você revisa o plano antes de aplicar.</p>
     <div class="row plain"><label for="editVideo">Vídeo</label><select id="editVideo">${videos.map(L => `<option value="${L.id}"${L === chosen ? ' selected' : ''}>${esc(L.name)}</option>`).join('')}</select></div>
@@ -3911,7 +4213,7 @@ function editWithAIModal(previous = {}, error = '') {
   $('#editFit').value = previous.fit || 'cover';
   $('#editVideo').onchange = () => {
     const L = byId($('#editVideo').value), r = A.get(L.s.asset), sp = clamp(Number(L.s.speed) || 1, 0.25, 4);
-    const a = L.s.trimIn || 0, b = Math.min(r.duration, a + Math.min(AI_EDIT_MAX, (L.end - L.start) * sp));
+    const a = L.s.trimIn || 0, b = Math.min(r.duration, a + Math.min(AI_EDIT_MAX, srcSpan(L)));
     $('#editFrom').value = round(a, 3); $('#editTo').value = round(b, 3);
     $('#editTarget').value = Math.max(0.5, round(Math.min(30, (b - a) / sp), 2));
   };
@@ -4097,7 +4399,8 @@ function wrapAIEditCaption(text, width, size) {
 }
 
 function switchAIEditProject(next, selectId = null) {
-  pause(); setPen(false); pauseAllVideos(); VIDS.clear();
+  pause(); setPen(false); pauseAllVideos(); VIDS.clear(); [...VIDS2.keys()].forEach(dropVideo2);
+  next.id = P().id;   // o backup pode ser de antes da biblioteca ou de outro projeto: o id continua o deste
   S.project = normalize(next); S.sel = selectId; S.selKf = null; S.time = 0;
   commit(); $('#projectName').value = next.name;
   fitStage(); renderTimeline(); renderPanel(); refreshTime();
@@ -4373,7 +4676,7 @@ async function runCaptionsWhisper(L, { style = 'pop', lang = 'portuguese', actio
     const rec = A.get(L.s.asset);
     if (!rec || !rec.buffer) throw new Error('Áudio da camada não encontrado.');
     const from = L.s.trimIn || 0;
-    const len = Math.min(L.end - L.start, rec.buffer.duration - from);
+    const len = Math.min(srcSpan(L), rec.buffer.duration - from);   // segundos do arquivo que o bloco mostra
     if (len <= 0.1) throw new Error('Duração do áudio muito curta.');
 
     const result = await transcribeAudioWhisper(rec.buffer, {
@@ -4411,6 +4714,8 @@ async function runCaptionsWhisper(L, { style = 'pop', lang = 'portuguese', actio
         segs.push({ start: i * step, end: Math.min((i + 1) * step, len), text: slice });
       }
     }
+
+    segs = srcSegsToClip(L, from, segs);   // tempo do arquivo vira tempo do bloco (velocidade e rampa)
 
     if (action === 'text') {
       hideModal();
@@ -4509,7 +4814,7 @@ async function runCaptions(L, style) {
   try {
     const rec = A.get(L.s.asset);
     const from = L.s.trimIn || 0;
-    const len = Math.min(L.end - L.start, rec.buffer.duration - from);
+    const len = Math.min(srcSpan(L), rec.buffer.duration - from);   // segundos do arquivo que o bloco mostra
     const CHUNK = 240;
     const segs = [];
     for (let off = 0; off < len - 0.05; off += CHUNK) {
@@ -4527,7 +4832,7 @@ async function runCaptions(L, style) {
       }
     }
     if (!segs.length) throw new Error('Não encontrei fala nesse áudio.');
-    createCaptionLayers(L, segs, style, 'Legendas (Gemini)');
+    createCaptionLayers(L, srcSegsToClip(L, from, segs), style, 'Legendas (Gemini)');
   } catch (err) {
     aiError(err, () => runCaptions(L, style));
   }
@@ -4893,13 +5198,8 @@ function templatesModal() {
         <span class="tpl-name">${esc(t.name)}</span>
         <span class="tpl-meta">${t.aspect} · ${t.dur}s</span>
       </button>`).join('')}</div>`, [{ label: 'Fechar' }]);
-  $$('[data-tpl]').forEach(b => (b.onclick = () => {
-    const t = TEMPLATES.find(x => x.id === b.dataset.tpl);
-    const use = () => { setProject(buildTemplate(t), true); toast('Modelo aberto. Toque nos textos para trocar.'); };
-    hideModal();
-    if (P().layers.length) setTimeout(() => showModal('Usar este modelo?', '<p>O projeto atual será substituído. Se quiser guardar, use Salvar projeto antes.</p>', [{ label: 'Cancelar' }, { label: 'Usar modelo', cls: 'btn-primary', onClick: use }]), 30);
-    else use();
-  }));
+  // cada modelo vira um projeto novo; o atual continua em Meus projetos
+  $$('[data-tpl]').forEach(b => (b.onclick = () => { hideModal(); useTemplate(b.dataset.tpl); }));
 }
 $('#btnTemplates').onclick = templatesModal;
 
@@ -5970,15 +6270,12 @@ menu.addEventListener('click', async e => {
   if (!b) return;
   menu.hidden = true;
   const act = b.dataset.menu;
-  if (act === 'new') {
-    showModal('Começar um projeto novo?', '<p>O projeto atual será substituído. Se quiser guardar, use Salvar projeto antes.</p>', [
-      { label: 'Cancelar' },
-      ...Object.keys(ASPECTS).map(a => ({ label: `Novo ${a}`, cls: a === '9:16' ? 'btn-primary' : '', onClick: () => setProject(newProject(a), true) })),
-    ]);
+  if (act === 'home') {
+    goHome();
+  } else if (act === 'new') {
+    newProjectModal();
   } else if (act === 'demo') {
-    showModal('Carregar o exemplo?', '<p>O projeto atual será substituído pelo exemplo.</p>', [
-      { label: 'Cancelar' }, { label: 'Carregar exemplo', cls: 'btn-primary', onClick: () => setProject(demoProject(), true) },
-    ]);
+    openDemo();
   } else if (act === 'save') {
     toast('Preparando o arquivo…');
     const out = JSON.parse(snapshot());
@@ -6022,8 +6319,7 @@ $('#projectInput').addEventListener('change', async e => {
   try {
     const p = JSON.parse(await f.text());
     if (!p || !Array.isArray(p.layers) || !p.width || !p.height) throw new Error('formato');
-    setProject(p, true);
-    toast('Projeto aberto.');
+    if (await startProject(p)) toast('Projeto aberto.');   // entra na biblioteca como projeto novo (id novo)
   } catch {
     toast('Esse arquivo não é um projeto do Motion Editor (.motion.json).');
   }
@@ -6065,7 +6361,7 @@ let arrowTimer;
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && isPhotopeaOpen()) { e.preventDefault(); closePhotopea(); return; }
   if (e.key === 'Escape' && sheetOpen()) { e.preventDefault(); closeSheet(); return; }
-  if (isTyping(e.target) || !$('#modal').hidden || isPhotopeaOpen() || S.exporting || sheetOpen()) return;
+  if (isTyping(e.target) || !$('#modal').hidden || isPhotopeaOpen() || S.exporting || sheetOpen() || homeOpen) return;
   const L = selLayer();
   const mod = e.ctrlKey || e.metaKey;
   if (e.code === 'Space') { e.preventDefault(); S.playing ? pause() : play(); }
@@ -6127,13 +6423,361 @@ function showDonate() {
 }
 $$('[data-menu="donate"]').forEach(b => { b.hidden = !(DONATE.pix || DONATE.links.length); });
 
+/* ======================= biblioteca de projetos e tela inicial ======================= */
+/* Cada projeto é um registro em IndexedDB ('projects'): metadados, miniatura e o JSON.
+   STORE_KEY (localStorage) é só a cópia rápida do projeto aberto; LAST_KEY diz qual projeto ela é.
+   Sem #editor no endereço, o app abre na tela inicial (#home) e o editor (#app) fica escondido. */
+const LAST_KEY = 'motion-editor:last';
+const home = $('#home');
+let homeOpen = true;        // o editor não está na tela (início visível ou projeto ainda carregando)
+let pushedEditor = false;   // o editor entrou por pushState nesta página: Início usa history.back()
+let libChain = Promise.resolve();
+const homeRecs = new Map();
+let homeToken = 0, migration = null, opening = false;
+
+/* fila única da biblioteca: gravações, exclusões, limpeza e leituras na ordem em que foram pedidas */
+function libQueue(fn) { const run = libChain.then(fn); libChain = run.catch(() => {}); return run; }
+const libStore = (mode, fn) => idb.run(mode, fn, 'projects');
+function libAll() { return libStore('readonly', s => s.getAll()).then(r => r || []); }
+function libGet(id) { return libStore('readonly', s => s.get(id)); }
+function libPut(rec) { return libStore('readwrite', s => s.put(rec)); }
+function libDel(id) { return libStore('readwrite', s => s.delete(id)); }
+function recordAssets(r) {
+  if (Array.isArray(r.assets)) return r.assets;
+  try { return Object.keys(JSON.parse(r.json).assets || {}); } catch { return []; }
+}
+const byUpdated = (a, b) => (b.updated || 0) - (a.updated || 0);
+const recordOf = (p, json) => ({ id: p.id, name: p.name || 'Projeto sem título', aspect: p.aspect, width: p.width, height: p.height,
+  duration: p.duration, layerCount: (p.layers || []).length, assets: Object.keys(p.assets || {}), json });
+function parseProject(json) {
+  try { const p = JSON.parse(json); return p && Array.isArray(p.layers) && p.width && p.height ? p : null; } catch { return null; }
+}
+/* "updated" só muda quando o conteúdo muda; sem miniatura nova, fica a anterior */
+function libSave(p, json, thumb) {
+  const rec = recordOf(p, json);
+  return libQueue(async () => {
+    const old = await libGet(rec.id).catch(() => null);
+    await libPut({ ...rec, thumb: thumb || old?.thumb || null, updated: old && old.json === json ? old.updated : Date.now() });
+  });
+}
+/* miniatura JPEG (lado maior ~240 px) do que a prévia mostra agora */
+function canvasThumb() {
+  if (app.hidden || !canvas.width || !canvas.height) return null;
+  const k = Math.min(1, 240 / Math.max(canvas.width, canvas.height));
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(canvas.width * k)); c.height = Math.max(1, Math.round(canvas.height * k));
+  c.getContext('2d').drawImage(canvas, 0, 0, c.width, c.height);
+  try { return c.toDataURL('image/jpeg', 0.75); } catch { return null; }
+}
+/* a cópia rápida nunca pode ficar mais velha que a biblioteca para o mesmo projeto */
+function syncStoreCopy(id, json) {
+  const s = loadSaved();
+  if (!s || s.id !== id) return;
+  try { if (json) localStorage.setItem(STORE_KEY, json); else localStorage.removeItem(STORE_KEY); }
+  catch { try { localStorage.removeItem(STORE_KEY); } catch { /* sem localStorage */ } }
+}
+/* quem já usava o app: o projeto do localStorage entra na biblioteca (e qualquer cópia mais nova que ela) */
+function migrateStore() {
+  return migration || (migration = libQueue(async () => {
+    const p = loadSaved();
+    if (!p) return;
+    let raw = localStorage.getItem(STORE_KEY);
+    if (!p.id) {
+      p.id = uid(); raw = JSON.stringify(p);
+      try { localStorage.setItem(STORE_KEY, raw); localStorage.setItem(LAST_KEY, p.id); } catch { /* fica só na biblioteca */ }
+    }
+    const old = await libGet(p.id);
+    if (old && old.json === raw) return;
+    await libPut({ ...recordOf(p, raw), thumb: old?.thumb || null, updated: Date.now() });
+  }).catch(() => {}));
+}
+window.addEventListener('pagehide', () => { if (saveTimer) saveNow(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && saveTimer) saveNow(); });
+
+/* textos dos cartões */
+function relTime(ms) {
+  const now = Date.now(), s = Math.max(0, now - (ms || 0)) / 1000;
+  if (s < 60) return 'agora';
+  if (s < 3600) return `há ${Math.floor(s / 60)} min`;
+  if (s < 86400) return `há ${Math.floor(s / 3600)} h`;
+  const d = new Date(ms), y = new Date(now); y.setDate(y.getDate() - 1);
+  if (d.toDateString() === y.toDateString()) return 'ontem';
+  return d.toLocaleDateString('pt-BR', d.getFullYear() === new Date(now).getFullYear() ? { day: 'numeric', month: 'short' } : { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+function fmtDur(d) {
+  d = Math.max(0, Number(d) || 0);
+  if (d < 59.95) return `${String(round(d, 1)).replace('.', ',')}s`;
+  const m = Math.floor(d / 60), s = Math.round(d - m * 60);
+  return s ? `${m}min ${s}s` : `${m}min`;
+}
+/* forma proporcional ao formato (ícone dos formatos e capa sem miniatura) */
+function aspectShape(w, h, size = 40) {
+  const k = size / Math.max(w || 1, h || 1);
+  return `<span class="fmt-shape" style="width:${Math.max(6, Math.round((w || 1) * k))}px;height:${Math.max(6, Math.round((h || 1) * k))}px" aria-hidden="true"></span>`;
+}
+const FORMATS = { '9:16': 'Stories, Reels e TikTok', '16:9': 'YouTube e tela cheia', '1:1': 'Feed quadrado', '4:5': 'Feed retrato' };
+
+/* ---------- abrir e criar projetos ---------- */
+function setView(view) {
+  homeOpen = view !== 'editor';
+  document.documentElement.dataset.view = view;
+  home.hidden = view !== 'home';
+  app.hidden = view !== 'editor';
+}
+function showEditor() {
+  setView('editor');
+  fitStage(); renderTimeline(); refreshTime();
+}
+function showHome() {
+  if (P()) { if (S.playing) pause(); flushSave(); }
+  closeSheet(false); menu.hidden = true;
+  if (!$('#modal').hidden) hideModal();
+  if (isPhotopeaOpen()) closePhotopea();
+  setView('home');
+  home.scrollTop = 0;
+  home.focus({ preventScroll: true });
+  renderHome();
+}
+function enterEditor() {
+  if (location.hash !== '#editor') { history.pushState({ motion: 'editor' }, '', '#editor'); pushedEditor = true; }
+  showEditor();
+}
+function goHome() {
+  if (S.exporting) { toast('Espere a exportação terminar.'); return; }
+  if (pushedEditor && location.hash === '#editor') { pushedEditor = false; history.back(); return; }   // o popstate mostra o início
+  history.replaceState(null, '', location.pathname + location.search);
+  showHome();
+}
+window.addEventListener('popstate', () => {
+  const wantEditor = location.hash === '#editor';
+  if (!wantEditor && !homeOpen) {
+    if (S.exporting) { history.pushState({ motion: 'editor' }, '', '#editor'); pushedEditor = true; toast('Espere a exportação terminar.'); return; }
+    pushedEditor = false; showHome();
+  } else if (wantEditor && homeOpen && !home.hidden) {
+    if (P()) { pushedEditor = true; showEditor(); } else history.replaceState(null, '', location.pathname + location.search);
+  }
+});
+
+/* projeto novo (em branco, modelo, exemplo ou arquivo): sempre ganha um id novo; o anterior fica na biblioteca */
+async function startProject(p) {
+  if (opening) return null;   // toque duplo não cria dois projetos
+  opening = true;
+  try {
+    if (P()) await flushSave();
+    p.id = uid();
+    setProject(p, true);
+    if (homeOpen) enterEditor();
+    return p;
+  } finally { opening = false; }
+}
+async function openProjectById(id) {
+  if (opening) return;
+  opening = true;
+  try {
+    if (P() && P().id === id) { enterEditor(); return; }   // ainda carregado: mantém o desfazer
+    if (P()) await flushSave();
+    const rec = await libQueue(() => libGet(id));
+    const p = rec && parseProject(rec.json);
+    if (!p) { toast('Não consegui abrir esse projeto.'); renderHome(); return; }
+    setProject(p, true);
+    enterEditor();
+  } catch { toast('Não consegui abrir esse projeto.'); }
+  finally { opening = false; }
+}
+function buildDemo() { const keep = S.project; try { return demoProject(); } finally { S.project = keep; } }
+function openDemo() { startProject(buildDemo()).then(p => p && toast('Exemplo aberto.')); }
+function useTemplate(id) {
+  const t = TEMPLATES.find(x => x.id === id);
+  if (t) startProject(buildTemplate(t)).then(p => p && toast('Modelo aberto. Toque nos textos para trocar.'));
+}
+function newProjectModal() {
+  showModal('Novo projeto', `<p>Escolha o formato do vídeo.${P() && !homeOpen ? ' O projeto atual continua em Meus projetos.' : ''}</p>
+    <div class="fmt-grid">${Object.keys(ASPECTS).map(a => `<button class="fmt" data-fmt="${a}"><span class="fmt-box">${aspectShape(...ASPECTS[a], 44)}</span><b>${a}</b><span>${esc(FORMATS[a] || '')}</span></button>`).join('')}</div>`, [{ label: 'Cancelar' }]);
+  $$('#modalBody [data-fmt]').forEach(b => (b.onclick = () => { hideModal(); startProject(newProject(b.dataset.fmt)); }));
+  $('#modalBody [data-fmt]').focus({ preventScroll: true });
+}
+/* o projeto aberto foi excluído: o editor fica sem projeto até abrir outro */
+function closeProject() {
+  clearTimeout(saveTimer); saveTimer = null;
+  if (S.playing) pause();
+  VIDS.forEach(v => { v.pause(); v.removeAttribute('src'); v.load(); }); VIDS.clear();
+  S.project = null; S.sel = null; S.selKf = null; S.undo = []; S.redo = [];
+}
+
+/* ---------- opções do projeto ---------- */
+function projectOptions(id) {
+  const rec = homeRecs.get(id);
+  if (!rec) return;
+  showModal(rec.name || 'Projeto sem título', `<div class="opt-list">
+    <button class="opt" data-opt="rename"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg>Renomear</button>
+    <button class="opt" data-opt="dup"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>Duplicar</button>
+    <button class="opt opt-danger" data-opt="del"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>Excluir</button>
+  </div>`, [{ label: 'Fechar' }]);
+  $$('#modalBody [data-opt]').forEach(b => (b.onclick = () => {
+    const act = b.dataset.opt;
+    if (act === 'rename') renameModal(rec);
+    else if (act === 'dup') { hideModal(); duplicateProject(id); }
+    else confirmDelete(rec);
+  }));
+}
+function renameModal(rec) {
+  showModal('Renomear projeto', `<input class="field rename-field" id="renameField" maxlength="80" spellcheck="false" aria-label="Nome do projeto" value="${esc(rec.name || '')}">`, [
+    { label: 'Cancelar' }, { label: 'Salvar', cls: 'btn-primary', onClick: () => renameProject(rec.id, $('#renameField').value) }]);
+  const f = $('#renameField');
+  f.focus(); f.select();
+  f.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); $('#modalActions .btn-primary').click(); } };
+}
+async function renameProject(id, name) {
+  name = String(name || '').trim().slice(0, 80) || 'Projeto sem título';
+  try {
+    if (P() && P().id === id) {
+      if (P().name !== name) { P().name = name; $('#projectName').value = name; commit(); }
+      await flushSave();
+    } else {
+      await libQueue(async () => {
+        const rec = await libGet(id), p = rec && parseProject(rec.json);
+        if (!p) throw new Error('sem projeto');
+        p.name = name;
+        const json = JSON.stringify(p);
+        await libPut({ ...rec, ...recordOf(p, json), updated: Date.now() });
+        syncStoreCopy(id, json);
+      });
+    }
+    toast('Nome alterado.');
+  } catch { toast('Não consegui renomear.'); }
+  renderHome();
+}
+async function duplicateProject(id) {
+  try {
+    if (P() && P().id === id) await flushSave();
+    await libQueue(async () => {
+      const rec = await libGet(id), p = rec && parseProject(rec.json);
+      if (!p) throw new Error('sem projeto');
+      p.id = uid(); p.name = `${p.name || 'Projeto sem título'} (cópia)`.slice(0, 80);
+      const json = JSON.stringify(p);
+      await libPut({ ...rec, ...recordOf(p, json), updated: Date.now() });
+    });
+    toast('Projeto duplicado.');
+  } catch { toast('Não consegui duplicar.'); }
+  renderHome();
+}
+function confirmDelete(rec) {
+  showModal('Excluir este projeto?', `<p>Não dá para desfazer. “${esc(rec.name || 'Projeto sem título')}” e os arquivos que só ele usa saem deste aparelho.</p>`, [
+    { label: 'Cancelar' }, { label: 'Excluir', cls: 'btn-danger', onClick: () => deleteProject(rec.id) }]);
+}
+async function deleteProject(id) {
+  try {
+    if (P() && P().id === id) closeProject();
+    await libQueue(() => libDel(id));
+    syncStoreCopy(id, null);
+    let last = null;
+    try { last = localStorage.getItem(LAST_KEY); } catch { /* sem localStorage */ }
+    if (last === id) {
+      const next = (await libQueue(libAll)).sort(byUpdated)[0];
+      try { if (next) localStorage.setItem(LAST_KEY, next.id); else localStorage.removeItem(LAST_KEY); } catch { /* sem localStorage */ }
+    }
+    await cleanupAssets();   // arquivos que só este projeto usava
+    toast('Projeto excluído.');
+  } catch { toast('Não consegui excluir.'); }
+  renderHome();
+}
+
+/* ---------- tela inicial ---------- */
+function projectCard(r) {
+  const name = esc(r.name || 'Projeto sem título');
+  const [w, h] = ASPECTS[r.aspect] || [r.width, r.height];
+  const cover = r.thumb ? `<img src="${esc(r.thumb)}" alt="" decoding="async">` : `<span class="proj-ph">${aspectShape(w, h, 56)}</span>`;
+  return `<article class="proj">
+    <button class="proj-open" data-open="${esc(r.id)}">
+      <span class="proj-thumb">${cover}</span>
+      <span class="proj-info"><span class="proj-name">${name}</span>
+        <span class="proj-meta">${esc(r.aspect || `${r.width}×${r.height}`)} · ${fmtDur(r.duration)}</span>
+        <span class="proj-time">${esc(relTime(r.updated))}</span></span>
+    </button>
+    <button class="proj-more" data-more="${esc(r.id)}" aria-label="Opções do projeto" title="Opções do projeto"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="19" r="1.4"/></svg></button>
+  </article>`;
+}
+async function renderHome() {
+  const token = ++homeToken, grid = $('#homeGrid');
+  renderHomeTemplates();
+  let recs = [], failed = false;
+  try { await migrateStore(); recs = await libQueue(libAll); } catch { failed = true; }
+  if (token !== homeToken) return;
+  recs.sort(byUpdated);
+  homeRecs.clear();
+  recs.forEach(r => homeRecs.set(r.id, r));
+  grid.innerHTML = recs.map(projectCard).join('');
+  $('#homeCount').textContent = recs.length ? String(recs.length) : '';
+  $('#homeEmpty').hidden = recs.length > 0;
+  $('#homeEmptyText').textContent = failed ? 'Não consegui ler os projetos deste aparelho.' : 'Seus vídeos ficam aqui, salvos neste aparelho.';
+}
+/* modelos: a linha aparece na hora; as miniaturas chegam aos poucos, depois das fontes */
+let tplThumbs = null;
+function renderHomeTemplates() {
+  const row = $('#homeTpls');
+  if (row.childElementCount) return;
+  row.innerHTML = TEMPLATES.map(t => `<button class="home-tpl" data-tpl-new="${t.id}">
+      <span class="home-tpl-img" data-tpl-img="${t.id}">${thumbCache.has(t.id) ? `<img src="${thumbCache.get(t.id)}" alt="">` : aspectShape(...ASPECTS[t.aspect], 44)}</span>
+      <span class="home-tpl-name">${esc(t.name)}</span><span class="home-tpl-meta">${t.aspect} · ${fmtDur(t.dur)}</span></button>`).join('');
+  tplThumbs = tplThumbs || templateFonts().then(async () => {
+    for (const t of TEMPLATES) {
+      await new Promise(r => (window.requestIdleCallback ? requestIdleCallback(() => r(), { timeout: 400 }) : setTimeout(r, 30)));
+      const box = $(`[data-tpl-img="${t.id}"]`);
+      try { if (box && !box.querySelector('img')) box.innerHTML = `<img src="${templateThumb(t)}" alt="">`; } catch { /* fica a forma */ }
+    }
+  });
+}
+/* carrega as fontes usadas pelos modelos antes da primeira miniatura (o cache não refaz) */
+function templateFonts() {
+  if (!document.fonts) return Promise.resolve();
+  const specs = new Set();
+  for (const t of TEMPLATES) for (const L of buildTemplate(t).layers) if (L.type === 'text') specs.add(`${L.s.weight || 400} 40px "${L.s.font}"`);
+  return Promise.race([Promise.all([...specs].map(s => document.fonts.load(s).catch(() => {}))), wait(3000)]);
+}
+home.addEventListener('click', e => {
+  const b = e.target.closest('[data-home], [data-tpl-new], [data-open], [data-more]');
+  if (!b) return;
+  if (b.dataset.tplNew) return useTemplate(b.dataset.tplNew);
+  if (b.dataset.open) return openProjectById(b.dataset.open);
+  if (b.dataset.more) return projectOptions(b.dataset.more);
+  const act = b.dataset.home;
+  if (act === 'new') newProjectModal();
+  else if (act === 'templates') templatesModal();
+  else if (act === 'demo') openDemo();
+  else if (act === 'open') $('#projectInput').click();
+  else if (act === 'help') $('#menu [data-menu="help"]').click();
+  else if (act === 'donate') showDonate();
+  else if (act === 'install') $('#btnInstall').click();
+});
+$$('[data-home="donate"]').forEach(b => { b.hidden = !(DONATE.pix || DONATE.links.length); });
+{
+  const inst = $('#btnInstall'), sync = () => { $('#homeInstall').hidden = inst.hidden; };
+  new MutationObserver(sync).observe(inst, { attributes: true, attributeFilter: ['hidden'] });
+  sync();
+}
+$('#btnHome').onclick = goHome;
+
 /* ======================= início ======================= */
-setProject(loadSaved() || demoProject());
-new ResizeObserver(() => fitStage()).observe($('#stage'));
+/* #editor abre direto o último projeto (recarregar fica no editor); sem ele, abre a tela inicial */
+function bootView() {
+  if (location.hash !== '#editor') { setView('home'); renderHome(); return; }
+  const saved = loadSaved();
+  let last = null;
+  try { last = localStorage.getItem(LAST_KEY); } catch { /* sem localStorage */ }
+  if (saved || !last) { setProject(saved || buildDemo()); showEditor(); return; }
+  // a cópia rápida sumiu (ex.: localStorage cheio): abre o último projeto da biblioteca
+  app.hidden = true;
+  libQueue(libAll).then(recs => {
+    const r = recs.find(x => x.id === last) || recs.sort(byUpdated)[0];
+    return r ? parseProject(r.json) : null;
+  }).catch(() => null).then(p => { if (!P()) { setProject(p || buildDemo()); showEditor(); } });
+}
+bootView();
+new ResizeObserver(() => { if (P()) fitStage(); }).observe($('#stage'));
 window.addEventListener('resize', () => renderTimeline());
 if (document.fonts) {
-  Promise.all(FONTS.map(f => document.fonts.load(`700 40px "${f}"`).catch(() => {}))).then(() => refreshTime());
-  document.fonts.ready.then(() => refreshTime());
+  Promise.all(FONTS.map(f => document.fonts.load(`700 40px "${f}"`).catch(() => {}))).then(() => { if (P()) refreshTime(); });
+  document.fonts.ready.then(() => { if (P()) refreshTime(); });
 }
 window.__motion = {
   S, A, P, byId, select, setTime, setParent, makeLayer, addLayer, splitLayer, freezeFrame, registerAsset, commit,
@@ -6141,4 +6785,10 @@ window.__motion = {
   getWhisper, transcribeAudioWhisper, runCaptionsWhisper, aiCaptionsPicker,
   getMediaPipeVision, getMediaPipeSegmenter, segmentPersonMediaPipe, mediaPipeCutPerson, getMediaPipeFaceDetector, mediaPipeFaceAutoFrame
 };
+// câmera lenta (testes)
+Object.assign(window.__motion, { RAMPS, speedAt, srcTime, timeAtSrc, applyRamp, blendInfo, setProject, renderAudioMix, renderFrame, seekVideosExact, VIDS, VIDS2 });
+Object.assign(window.__motion, {
+  flushSave, goHome, startProject, openProjectById, cleanupAssets, renderHome,
+  libAll: () => libQueue(libAll), isHome: () => homeOpen && !home.hidden,
+});
 })();

@@ -28,7 +28,7 @@ test('Apoiar: item escondido sem chave PIX nem links configurados', async t => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: 'block' });
   t.after(() => context.close());
   const page = await context.newPage();
-  await page.goto(origin, { waitUntil: 'load' });
+  await page.goto(origin + '/#editor', { waitUntil: 'load' });
   await page.waitForFunction(() => window.__motion);
   await page.locator('#btnMenu').click();
   assert.equal(await page.locator('#menu [data-menu="donate"]').isHidden(), true, 'Apoiar fica escondido por padrão');

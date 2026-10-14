@@ -60,7 +60,7 @@ async function editor(t, width = 1280, offlineAudio = false) {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   t.after(() => assert.deepEqual(errors, [], 'sem erros de JavaScript'));
-  await page.goto(origin, { waitUntil: 'networkidle' });
+  await page.goto(origin + '/#editor', { waitUntil: 'networkidle' });
   await page.waitForFunction(() => !!window.__motion);
   return page;
 }
