@@ -2443,6 +2443,13 @@ function fmtTime(t) {
   const m = Math.floor(t / 60), s = t - m * 60;
   return `${String(m).padStart(2, '0')}:${s.toFixed(2).padStart(5, '0')}`;
 }
+function formatSrtTime(sec) {
+  const h = String(Math.floor(sec / 3600)).padStart(2, '0');
+  const m = String(Math.floor((sec % 3600) / 60)).padStart(2, '0');
+  const sc = String(Math.floor(sec % 60)).padStart(2, '0');
+  const ms = String(Math.round((sec % 1) * 1000)).padStart(3, '0');
+  return `${h}:${m}:${sc},${ms}`;
+}
 function refreshTime() {
   syncMedia();
   renderMain(); drawOverlay(); updatePlayhead();
@@ -4818,14 +4825,7 @@ async function runCaptionsWhisper(L, { style = 'pop', lang = 'portuguese', actio
       };
       $('#btnDownloadSrt').onclick = () => {
         const srtContent = segs.map((s, idx) => {
-          const fmt = sec => {
-            const h = String(Math.floor(sec / 3600)).padStart(2, '0');
-            const m = String(Math.floor((sec % 3600) / 60)).padStart(2, '0');
-            const sc = String(Math.floor(sec % 60)).padStart(2, '0');
-            const ms = String(Math.round((sec % 1) * 1000)).padStart(3, '0');
-            return `${h}:${m}:${sc},${ms}`;
-          };
-          return `${idx + 1}\n${fmt(L.start + s.start)} --> ${fmt(L.start + s.end)}\n${s.text}\n`;
+          return `${idx + 1}\n${formatSrtTime(L.start + s.start)} --> ${formatSrtTime(L.start + s.end)}\n${s.text}\n`;
         }).join('\n');
         const blob = new Blob([srtContent], { type: 'text/plain;charset=utf-8' });
         const a = document.createElement('a');
