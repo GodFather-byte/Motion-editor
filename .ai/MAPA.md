@@ -17,6 +17,7 @@
 - `tests/lottie.cjs`: runtime real, pacotes v1/v2 com imagens, frames/trim/speed/loop/reverso, clones, portabilidade, MP4/GIF, falhas e troca de projeto.
 - `tests/effects.cjs`: câmera, efeitos WebGL, chroma key, partículas, texto curvo/no traço.
 - `tests/export.cjs`: exportação rápida, GIF e preview leve.
+- `tests/res4k.cjs`: 4K (nível H.264, janela Exportar com tamanho estimado, PNG e MP4 em 2160 px).
 - `tests/music.cjs`: detecção de batida, pulso e montagem na batida, batidas prontas, narração (microfone falso do Chromium), figurinhas.
 - `tests/photopea.cjs`: integração do Photopea (Live Messaging, API hash, salvar no projeto, responsividade).
 - `tests/ffmpeg.cjs`: integração do FFmpeg WebAssembly (conversão, extração de áudio, compressão, GIF).
@@ -44,7 +45,7 @@
 | desfazer / salvar | `commit` (sempre chame após uma mudança), `scheduleSave` (status real em #saveStatus), localStorage, `setProject` |
 | exemplo inicial | `demoProject` |
 | exportação | `exportModal`, `exportVideo` (MediaRecorder + Web Audio, fallback MP4 → WEBM) |
-| exportação rápida | `fastExport` (WebCodecs + mp4-muxer), `renderAudioMix` (OfflineAudioContext), `seekVideosExact`, `exportGif` (gifenc), `exportPng`, `fileReady`. `renderFrame(c, t, {k, transparent})` desenha em qualquer escala (`RK`) |
+| exportação rápida | `fastExport` (WebCodecs + mp4-muxer), `pickVideoCodec` (cache por tamanho e fps; H.264 com nível de `avcLevel`, depois H.265, VP9 e AV1; 4K a 30 e 60 fps), `videoBitrate` (até 80 Mbps), `renderAudioMix` (OfflineAudioContext), `seekVideosExact`, `exportGif` (gifenc), `exportPng`, `fileReady`. `renderFrame(c, t, {k, transparent})` desenha em qualquer escala (`RK`) |
 | IA | `gemini()` (nuvem), legendas e transcrição local com Transformers.js / Whisper (`getWhisper`, `runCaptionsWhisper`), Google MediaPipe (`segmentPersonMediaPipe`, `mediaPipeCutPerson`, `mediaPipeFaceAutoFrame`), remoção de fundo (@imgly) |
 | edição de vídeo com IA | `editWithAIModal`, `beginAIEdit` (áudio/quadros em partes), `reviewAIEdit`, `applyAIEditAssembly`, `restoreAIEditOriginal`; `gemini(parts,json,{signal,temperature})` |
 | animação por código (GSAP) | `codeWorkerMain` (roda no worker isolado), `runCodeSandbox`, `simplifySeries`, `bakeCode`, `applyCode`, `codeModal`, `CODE_EXAMPLES`, `aiWriteCode` |
