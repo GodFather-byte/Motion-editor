@@ -12,11 +12,13 @@
 - `tests/home.cjs`: tela inicial e biblioteca (novo projeto, reabrir, mídia por projeto, renomear/duplicar/excluir, modelos, migração, voltar do navegador, celular).
 - Todos os testes abrem `origin + '/#editor'`: sem o hash o app mostra a tela inicial.
 - `tests/mobile-sheets.cjs`: celular (360 e 390 px): tela fixa, abas, folhas, toque na prévia e na linha do tempo, Projeto, Play e largura.
+- `tests/preview-controls.cjs`: zoom da prévia, ajuste à área, layout de 360 px e salvar com Ctrl/Cmd+S.
 - `tests/video-editor.cjs`: testes funcionais com Playwright/Chromium, mídia gerada pelo FFmpeg e servidor Python temporário. Em 360 px usa `sheet()`/`closeSheet()` para abrir a folha certa antes de cada clique.
 - `tests/ai-edit-plan.cjs` e `tests/ai-edit.cjs`: plano, pausas e edição por pedido com Gemini simulado, mídia real, exportação e backup.
 - `tests/lottie.cjs`: runtime real, pacotes v1/v2 com imagens, frames/trim/speed/loop/reverso, clones, portabilidade, MP4/GIF, falhas e troca de projeto.
 - `tests/effects.cjs`: câmera, efeitos WebGL, chroma key, partículas, texto curvo/no traço.
 - `tests/export.cjs`: exportação rápida, GIF e preview leve.
+- `tests/res4k.cjs`: 4K (nível H.264, janela Exportar com tamanho estimado, PNG e MP4 em 2160 px).
 - `tests/music.cjs`: detecção de batida, pulso e montagem na batida, batidas prontas, narração (microfone falso do Chromium), figurinhas.
 - `tests/photopea.cjs`: integração do Photopea (Live Messaging, API hash, salvar no projeto, responsividade).
 - `tests/ffmpeg.cjs`: integração do FFmpeg WebAssembly (conversão, extração de áudio, compressão, GIF).
@@ -35,7 +37,7 @@
 | efeitos, partículas e câmera | `GL` (WebGL compartilhado, `GL_FRAG` com os shaders), `chromaSource`, `applyFx` (camada fx em `renderFrame`), `PARTICLES`/`drawParticles` (sem estado), `activeCamera`/`cameraMatrix` (entra no `parentMatrix` das camadas raiz), `textPathPoints`/`pointOnPath` |
 | batida, narração, batidas prontas e figurinhas | `detectBeats` (BPM por autocorrelação), `beatsOf`/`projectBeats` (batidas no tempo da timeline), `magnet` (gruda nas batidas), `analyzeBeats`, `applyBeatPreset` (beatPulse/beatFlash/beatShake), `beatMontage`, `BEAT_STYLES`/`synthBeat`/`beatMakerModal`, `recordVoiceModal` (MediaRecorder), `EMOJIS`, `ICONS` (path SVG 24x24), `iconPath`, `drawIcon`, `stickersModal` |
 | câmera lenta (velocidade e rampas) | `RAMPS`, `speedAt`, `srcTime` (tempo da linha → tempo do arquivo, integral exata), `timeAtSrc` (inversa), `applyRamp` (mantém o mesmo trecho e aumenta o projeto até 600 s), `automateRate` (som segue a curva), quadros suaves: `blendInfo`, `video2For`/`VIDS2`, `nextFrameOf`, `blendCanvas`; `exactSeeks` impede o `syncMedia` de mexer nos vídeos durante uma busca exata |
-| seleção no preview | caminho de movimento, caneta, alças, `fitStage`, arrastar no canvas |
+| seleção no preview | caminho de movimento, caneta, alças, `fitStage` com zoom visual (`S.stageZoom`, 50–200%), arrastar no canvas |
 | tempo e reprodução | `refreshTime`, `play`, `pause` |
 | linha do tempo | `renderTimeline`, forma de onda, arrastar keyframes e blocos, botão de mudo, snap magnético |
 | painel de propriedades | `renderPanel` (cabeçalho fixo e cartões), `layerPanel`, `projectPanel`, `syncPanel`, editor de curva `setupCurve`, eventos do painel |
@@ -44,7 +46,7 @@
 | desfazer / salvar | `commit` (sempre chame após uma mudança), `scheduleSave` (status real em #saveStatus), localStorage, `setProject` |
 | exemplo inicial | `demoProject` |
 | exportação | `exportModal`, `exportVideo` (MediaRecorder + Web Audio, fallback MP4 → WEBM) |
-| exportação rápida | `fastExport` (WebCodecs + mp4-muxer), `renderAudioMix` (OfflineAudioContext), `seekVideosExact`, `exportGif` (gifenc), `exportPng`, `fileReady`. `renderFrame(c, t, {k, transparent})` desenha em qualquer escala (`RK`) |
+| exportação rápida | `fastExport` (WebCodecs + mp4-muxer), `pickVideoCodec` (cache por tamanho e fps; H.264 com nível de `avcLevel`, depois H.265, VP9 e AV1; 4K a 30 e 60 fps), `videoBitrate` (até 80 Mbps), `renderAudioMix` (OfflineAudioContext), `seekVideosExact`, `exportGif` (gifenc), `exportPng`, `fileReady`. `renderFrame(c, t, {k, transparent})` desenha em qualquer escala (`RK`) |
 | IA | `gemini()` (nuvem), legendas e transcrição local com Transformers.js / Whisper (`getWhisper`, `runCaptionsWhisper`), Google MediaPipe (`segmentPersonMediaPipe`, `mediaPipeCutPerson`, `mediaPipeFaceAutoFrame`), remoção de fundo (@imgly) |
 | edição de vídeo com IA | `editWithAIModal`, `beginAIEdit` (áudio/quadros em partes), `reviewAIEdit`, `applyAIEditAssembly`, `restoreAIEditOriginal`; `gemini(parts,json,{signal,temperature})` |
 | animação por código (GSAP) | `codeWorkerMain` (roda no worker isolado), `runCodeSandbox`, `simplifySeries`, `bakeCode`, `applyCode`, `codeModal`, `CODE_EXAMPLES`, `aiWriteCode` |
@@ -56,7 +58,7 @@
 | FFmpeg | `getFFmpeg`, `ffmpegModal` (converter para MP4 H.264, extrair áudio WAV, comprimir CRF, gerar GIF animado, mudo, comandos livres) |
 | abas e folhas (celular) | logo após `const app`: `phoneMQ`, `openSheet`/`closeSheet`, estado em `app.dataset.sheet`, clique delegado (abas, X, fundo, encaminhamentos), fechamento antes de ações de chip e de Projeto |
 | biblioteca de projetos e tela inicial | `libAll/libGet/libPut/libDel` (fila `libQueue`), `libSave` (registro com miniatura), `migrateStore`, `showHome/showEditor/enterEditor/goHome` (history: `#editor`), `startProject` (sempre id novo), `openProjectById`, `renderHome`, renomear/duplicar/excluir, `newProjectModal` (formatos) |
-| menu, modal, teclado, PWA, início | resto da interface e inicialização |
+| menu, modal, teclado, PWA, início | atalhos, inclusive Ctrl/Cmd+S para exportar `.motion.json`, resto da interface e inicialização |
 
 ## Modelo de dados (resumo)
 Projeto: `{ name, aspect, width, height, fps, duration, background, layers[], assets{} }`.
